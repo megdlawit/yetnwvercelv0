@@ -1,0 +1,20 @@
+{
+  "name": "@ethi/indoor-maps-sdk",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Drop-in indoor map widget for internal apps and partners.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "three": ">=0.160.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ethi/indoor-core": "0.1.0"
+  }
+}

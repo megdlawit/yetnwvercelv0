@@ -1,0 +1,13 @@
+{
+  "name": "@ethi/indoor-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Indoor venue model, routing, turn-by-turn guidance and the IndoorViewer3D renderer.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "peerDependencies": {
+    "three": ">=0.160.0"
+  }
+}

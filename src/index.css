@@ -1,0 +1,347 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 98%;
+    --foreground: 160 40% 8%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 160 40% 8%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 160 40% 8%;
+
+    /* Deep forest green - exact from Figma */
+    --primary: 152 70% 22%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Bright lime green - the active/highlight green */
+    --accent-green: 133 60% 50%;
+
+    --secondary: 150 20% 95%;
+    --secondary-foreground: 160 40% 8%;
+
+    --muted: 150 15% 93%;
+    --muted-foreground: 160 15% 50%;
+
+    --accent: 152 70% 22%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 150 12% 88%;
+    --input: 150 12% 88%;
+    --ring: 152 70% 22%;
+
+    --radius: 0.875rem;
+
+    /* Nav map colors */
+    --nav-current: 133 60% 50%;
+    --nav-destination: 0 84% 60%;
+    --nav-path: 133 60% 50%;
+    --nav-room: 150 20% 95%;
+    --nav-room-hover: 150 40% 88%;
+    --nav-wall: 150 10% 70%;
+    --nav-hallway: 150 15% 96%;
+
+    --glass: 0 0% 100% / 0.92;
+    --glass-border: 0 0% 100% / 0.3;
+    --glass-blur: 16px;
+
+    --shadow-card: 0 2px 20px -2px hsl(152 40% 10% / 0.08);
+    --shadow-elevated: 0 8px 32px -4px hsl(152 40% 10% / 0.12);
+    --shadow-glow: 0 4px 20px -4px hsl(133 60% 50% / 0.4);
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 160 40% 8%;
+    --sidebar-primary: 152 70% 22%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 150 20% 95%;
+    --sidebar-accent-foreground: 160 40% 8%;
+    --sidebar-border: 150 12% 88%;
+    --sidebar-ring: 152 70% 22%;
+  }
+
+  .dark {
+    --background: 160 25% 6%;
+    --foreground: 150 10% 92%;
+
+    --card: 160 22% 10%;
+    --card-foreground: 150 10% 92%;
+
+    --popover: 160 22% 10%;
+    --popover-foreground: 150 10% 92%;
+
+    --primary: 133 55% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 160 18% 15%;
+    --secondary-foreground: 150 10% 92%;
+
+    --muted: 160 18% 15%;
+    --muted-foreground: 150 8% 55%;
+
+    --accent: 133 55% 45%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 65% 50%;
+    --destructive-foreground: 150 10% 92%;
+
+    --border: 160 15% 18%;
+    --input: 160 15% 18%;
+    --ring: 133 55% 45%;
+
+    --nav-current: 133 55% 45%;
+    --nav-room: 160 18% 15%;
+    --nav-room-hover: 133 35% 20%;
+    --nav-wall: 150 10% 38%;
+    --nav-hallway: 160 20% 9%;
+
+    --glass: 160 22% 10% / 0.92;
+    --glass-border: 150 15% 30% / 0.3;
+
+    --sidebar-background: 160 25% 6%;
+    --sidebar-foreground: 150 10% 92%;
+    --sidebar-primary: 133 55% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 160 18% 15%;
+    --sidebar-accent-foreground: 150 10% 92%;
+    --sidebar-border: 160 15% 18%;
+    --sidebar-ring: 133 55% 45%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+
+  html, body {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+    overscroll-behavior: none;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
+  }
+}
+
+@layer components {
+  .glass {
+    background: hsl(var(--glass));
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid hsl(var(--glass-border));
+  }
+
+  .glow-primary {
+    box-shadow: var(--shadow-glow);
+  }
+
+  /* The dark pill bottom nav exactly from Figma */
+  .bottom-nav-pill {
+    background: hsl(152 65% 12%);
+    border-radius: 9999px;
+    padding: 6px 8px;
+  }
+
+  /* Active nav tab - bright green pill */
+  .nav-tab-active {
+    background: hsl(133 60% 48%);
+    border-radius: 9999px;
+    padding: 8px 18px;
+  }
+
+  /* POI image card - full-width hero with text overlay */
+  .poi-image-card {
+    @apply relative rounded-2xl overflow-hidden;
+    box-shadow: 0 2px 16px -2px hsl(152 40% 10% / 0.1);
+  }
+
+  /* The "ALL DAY" / "LIVE NOW" badge */
+  .poi-timing-badge {
+    @apply absolute top-3 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide text-white;
+  }
+
+  /* Navigate circle button on image cards */
+  .navigate-circle-btn {
+    @apply absolute bottom-3 right-3 w-10 h-10 rounded-full flex items-center justify-center;
+    background: hsl(133 60% 48%);
+    box-shadow: 0 2px 12px hsl(133 60% 48% / 0.5);
+  }
+
+  /* Map control button - white circle */
+  .map-ctrl-btn {
+    @apply w-11 h-11 rounded-full bg-white flex items-center justify-center shadow-md border border-border/30;
+  }
+
+  /* Map control button - green (active layer) */
+  .map-ctrl-btn-green {
+    @apply w-11 h-11 rounded-full flex items-center justify-center shadow-md;
+    background: hsl(133 60% 48%);
+    box-shadow: 0 2px 12px hsl(133 60% 48% / 0.4);
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+  }
+
+  .tap-scale {
+    @apply transition-transform active:scale-95;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Swipe hint text style */
+  .swipe-hint {
+    @apply text-sm text-muted-foreground;
+  }
+  .swipe-hint strong {
+    @apply font-bold text-foreground;
+  }
+
+  /* Safe area insets for notch/home-indicator devices */
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  /* Scrollable inner panels - momentum scroll on iOS */
+  .scroll-touch {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+
+  /* Hide scrollbar but keep scrollability (horizontal filter rows) */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Map background style - light park/outdoor theme */
+.outdoor-map-bg {
+  background: #f0f4f0;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { @apply bg-muted-foreground/20 rounded-full; }
+
+/* Pulse for user position dot */
+@keyframes user-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.5; }
+}
+.user-dot-pulse { animation: user-pulse 2s ease-in-out infinite; }
+
+/* GPS inactive pill */
+.gps-inactive-pill {
+  @apply flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold;
+  background: hsl(152 70% 22% / 0.12);
+  color: hsl(152 70% 22%);
+  border: 1px solid hsl(152 70% 22% / 0.2);
+}
+
+/* ════════════════════ The Indoor theme ════════════════════
+   Fonts, page tokens and animations of the Indoor design (the landing page
+   and the visitor map). Subset fonts ship with the app so a slow network
+   can't stall the intro. */
+@font-face{font-family:'Bricolage Grotesque';src:url('/fonts/bricolage-grotesque.woff') format('woff');font-weight:200 800;font-display:block}
+@font-face{font-family:'Instrument Serif';src:url('/fonts/instrument-serif-italic.woff') format('woff');font-style:italic;font-display:block}
+@font-face{font-family:'Instrument Serif';src:url('/fonts/instrument-serif.woff') format('woff');font-display:block}
+/* named apart: the app also loads Google's Inter, a different cut with other widths */
+@font-face{font-family:'Indoor Inter';src:url('/fonts/inter.woff') format('woff');font-weight:100 900;font-display:block}
+@font-face{font-family:'Newsreader';src:url('/fonts/newsreader.woff') format('woff');font-weight:200 800;font-display:block}
+@font-face{font-family:'Newsreader';src:url('/fonts/newsreader-italic.woff') format('woff');font-style:italic;font-weight:200 800;font-display:block}
+@font-face{font-family:'Noto Sans Ethiopic';src:url('/fonts/noto-sans-ethiopic.woff') format('woff');font-weight:100 900;font-display:block}
+/* page tokens used inside gradients (the 3D engine reads --bg from :root) */
+:root {
+  --bg: #f8f6f1;
+  --bgt: rgba(248, 246, 241, 0);
+  --lime: #3fdc2c;
+}
+/* animations (referenced from utility classes as animate-[name_…]) */
+@keyframes fin { from { opacity: 0 } }
+@keyframes fogA { to { transform: translate(8vw, 4vh) scale(1.12) } }
+@keyframes fogB { to { transform: translate(-6vw, -5vh) scale(1.08) } }
+@keyframes inpulse { from { transform: scale(.6); opacity: 1 } to { transform: scale(1.5); opacity: 0 } }
+@keyframes hin { from { opacity: 0; transform: translateY(14px) } }
+@keyframes sgshine { from { background-position: 100% 0 } to { background-position: -150% 0 } }
+@keyframes sgchev { 0%, 100% { opacity: .35; transform: translateX(0) } 50% { opacity: 1; transform: translateX(4px) } }
+@keyframes sgnudge { 0%, 70%, 100% { margin-left: 0 } 78% { margin-left: 14px } 86% { margin-left: 0 } 92% { margin-left: 6px } }
+@keyframes grflow { to { stroke-dashoffset: -13.2 } }
+@keyframes tap { 0%, 100% { transform: scale(1) } 40% { transform: scale(.82) } 55% { transform: scale(1.05) } }
+@keyframes capin { from { opacity: 0; transform: translateY(calc(-50% + 18px)) } to { opacity: 1; transform: translateY(-50%) } }
+@keyframes hint { 50% { transform: translateY(5px); opacity: .6 } }
+@keyframes pingblue { 0% { box-shadow: 0 0 0 0 rgba(47, 107, 255, .5) } 100% { box-shadow: 0 0 0 10px rgba(47, 107, 255, 0) } }
+@keyframes pinglime { 0% { box-shadow: 0 0 0 0 rgba(63, 220, 44, .55) } 100% { box-shadow: 0 0 0 8px rgba(63, 220, 44, 0) } }
+@keyframes bubin { from { opacity: 0; transform: translateY(10px) scale(.96) } }
+@keyframes hudin { from { opacity: 0; transform: translate(-50%, -10px) } }
+@keyframes ring { from { transform: scale(1); opacity: .9 } to { transform: scale(2.3); opacity: 0 } }
+@keyframes nudge { 50% { transform: scale(1.045); box-shadow: 0 0 0 8px rgba(63, 220, 44, .35) } }
+@keyframes cin { from { opacity: 0; transform: translate(-50%, 10px) } }
+@keyframes cin2 { from { opacity: 0; transform: translateY(10px) } }
+@keyframes wv { 0%, 100% { height: 25% } 50% { height: 100% } }
+@keyframes poiin { from { opacity: 0; transform: translateX(30px) } }
+@keyframes poiup { from { opacity: 0; transform: translateY(40px) } }
+@keyframes spin { to { transform: rotate(360deg) } }
+/* the Indoor page's focus ring */
+.indoor-landing button:focus-visible, .indoor-landing a:focus-visible { outline: 3px solid #3ea44a; outline-offset: 3px; }
+
+/* ── The venue map in the Indoor design ──────────────────────────────────────
+   The map page (Index / ExploreMap) wraps itself in .indoor-map: the app's
+   theme tokens are re-pointed at the Indoor palette there (ink #0f3d26, paper
+   #f8f6f1, card #fffdf8, sub #6b7168, lime #3fdc2c, navblue #2f6bff), so the
+   search, sheets, sidebar and dialogs on the map all share the landing page's
+   look. Light only, like the prototype. */
+.indoor-map {
+  color-scheme: light;
+  --background: 43 33% 96%;
+  --foreground: 150 61% 15%;
+  --card: 43 100% 99%;
+  --card-foreground: 150 61% 15%;
+  --popover: 43 100% 99%;
+  --popover-foreground: 150 61% 15%;
+  --primary: 150 61% 15%;
+  --primary-foreground: 0 0% 100%;
+  --accent-green: 138 61% 47%;
+  --secondary: 43 25% 92%;
+  --secondary-foreground: 150 61% 15%;
+  --muted: 43 22% 92%;
+  --muted-foreground: 100 4% 43%;
+  --accent: 150 61% 15%;
+  --accent-foreground: 0 0% 100%;
+  --border: 43 15% 86%;
+  --input: 43 15% 86%;
+  --ring: 114 72% 52%;
+  --nav-current: 223 100% 59%;
+  --nav-path: 138 61% 47%;
+  --shadow-card: 0 10px 24px rgba(20, 40, 25, .10);
+  --shadow-elevated: 0 16px 40px rgba(30, 20, 10, .18);
+  --shadow-glow: 0 6px 18px rgba(63, 220, 44, .35);
+  font-family: 'Indoor Inter', 'Noto Sans Ethiopic', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+.indoor-map .map-ctrl-btn { box-shadow: 0 6px 20px rgba(20, 50, 30, .14); border: 0; }
+.indoor-map .map-ctrl-btn-green { background: #0f3d26; box-shadow: 0 6px 20px rgba(15, 61, 38, .3); }
+.indoor-map button:focus-visible, .indoor-map a:focus-visible { outline: 3px solid #3ea44a; outline-offset: 2px; }

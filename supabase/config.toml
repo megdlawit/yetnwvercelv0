@@ -1,0 +1,4 @@
+project_id = "utlrpeyplazojlwostor"
+
+[functions.indoor-maps-api]
+verify_jwt = false

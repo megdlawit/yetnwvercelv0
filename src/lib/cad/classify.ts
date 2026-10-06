@@ -1,0 +1,134 @@
+// Suggests what each CAD layer is, with a confidence the user can see and
+// override. Names are the strongest signal: most offices follow the AIA/NCS
+// convention (A-WALL, A-DOOR, A-FLOR-STRS, A-FURN, L-PLNT …) or something
+// close in English, French or German. Content backs the name up or, when the
+// name says nothing ("0", "Layer 3"), decides on its own.
+
+import type { CadDrawing, Category } from './types';
+
+export interface LayerInfo {
+  name: string;
+  counts: { lines: number; closed: number; open: number; texts: number; inserts: number; circles: number; arcs: number };
+  blocks: string[];          // most common block names inserted on this layer
+  suggested: Category;
+  confidence: number;        // 0..1
+  reason: string;
+}
+
+// Order matters: the first rule that matches wins ("A-WALL-HATCH" is a fill, not a wall).
+const NAME_RULES: [RegExp, Category][] = [
+  [/DIM|HATCH|HTCH|PATT|GRID|AXIS|TITLE|BORDER|FRAME|DEFPOINTS|VPORT|VIEWPORT|XREF|NOPLOT|CENTER|CNTR|REVISION|SHEET/i, 'ignore'],
+  [/DOOR|PORTE|T[ÜU]R\b|TUER|IFCDOOR/i, 'doors'],
+  [/WIND|GLAZ|FENSTER|FEN[EÊ]TRE|IFCWINDOW|CURTAIN/i, 'windows'],
+  [/STAIR|STRS|TREPP|ESCALIER|IFCSTAIR/i, 'stairs'],
+  [/ELEV|LIFT|EVTR|ASCENSEUR|AUFZUG|IFCTRANSPORT|ESCALATOR/i, 'elevators'],
+  // "L-" is the landscape discipline prefix (L-PLNT) — only at a word start,
+  // or "A-WALL-EXTR" would match it.
+  [/TREE|PLNT|PLANT|VEG|ARBRE|BAUM|SHRUB|LANDSCAPE|(^|[^A-Z])L-/i, 'trees'],
+  [/FURN|EQPM|EQUIP|CHAIR|TABLE|DESK|BENCH|SEAT|MOBIL|IFCFURN|CASEWORK/i, 'furniture'],
+  [/ROOM|SPACE|AREA|ZONE|RAUM|PI[EÈ]CE|IFCSPACE|POLY.*ROOM/i, 'rooms'],
+  [/TEXT|ANNO|LABEL|NAME|TAG|TXT|IDEN|NOTE/i, 'labels'],
+  [/WALL|\bMUR|MURS|WAND|W[ÄA]NDE|PARTITION|PRTN|IFCWALL|COLUMN|COLS|STRUCT/i, 'walls'],
+];
+
+// Block names decide individual inserts too (a "DOOR-900" block on layer 0 is still a door).
+const BLOCK_RULES: [RegExp, Category][] = [
+  [/DOOR|PORTE|T[ÜU]R|DR\d/i, 'doors'],
+  [/WIND|FENSTER|FEN[EÊ]TRE|WIN\d/i, 'windows'],
+  [/STAIR|TREPP|ESCAL/i, 'stairs'],
+  [/ELEV|LIFT|AUFZUG|ASCENS/i, 'elevators'],
+  [/TREE|PLANT|PALM|ARBRE|BAUM|SHRUB|BUSH/i, 'trees'],
+  [/BENCH|CHAIR|SEAT|TABLE|DESK|SOFA|BED|SHELF|CABINET|FURN|TOILET|WC|SINK/i, 'furniture'],
+];
+
+export function categoryFromName(name: string): Category | null {
+  return NAME_RULES.find(([re]) => re.test(name))?.[1] ?? null;
+}
+
+export function categoryFromBlock(block: string): Category | null {
+  return BLOCK_RULES.find(([re]) => re.test(block))?.[1] ?? null;
+}
+
+export function classifyLayers(d: CadDrawing): LayerInfo[] {
+  const byLayer = new Map<string, LayerInfo>();
+  const blockCounts = new Map<string, Map<string, number>>();
+  const info = (name: string) => {
+    let l = byLayer.get(name);
+    if (!l) {
+      l = { name, counts: { lines: 0, closed: 0, open: 0, texts: 0, inserts: 0, circles: 0, arcs: 0 }, blocks: [], suggested: 'ignore', confidence: 0, reason: '' };
+      byLayer.set(name, l);
+    }
+    return l;
+  };
+  for (const name of d.layers) info(name);
+  for (const e of d.entities) {
+    const c = info(e.layer).counts;
+    if (e.kind === 'LINE') c.lines++;
+    else if (e.kind === 'POLYLINE') { if (e.closed) c.closed++; else c.open++; }
+    else if (e.kind === 'TEXT') c.texts++;
+    else if (e.kind === 'CIRCLE') c.circles++;
+    else if (e.kind === 'ARC') c.arcs++;
+    else if (e.kind === 'INSERT') {
+      c.inserts++;
+      const m = blockCounts.get(e.layer) ?? blockCounts.set(e.layer, new Map()).get(e.layer)!;
+      m.set(e.block, (m.get(e.block) ?? 0) + 1);
+    }
+  }
+
+  const layers = [...byLayer.values()];
+  for (const l of layers) {
+    l.blocks = [...(blockCounts.get(l.name) ?? new Map()).entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([b]) => b);
+    const c = l.counts;
+    const geometry = c.lines + c.closed + c.open + c.arcs;
+    const total = geometry + c.texts + c.inserts + c.circles;
+    const byName = categoryFromName(l.name);
+    const blockCat = l.blocks.map(categoryFromBlock).find(Boolean) ?? null;
+
+    if (total === 0) { l.suggested = byName ?? 'ignore'; l.confidence = byName ? 0.5 : 0.9; l.reason = 'Layer is empty'; continue; }
+
+    const hint = d.layerHints?.[l.name];
+    if (hint) { l.suggested = hint.category; l.confidence = hint.confidence; l.reason = hint.reason; continue; }
+
+    if (byName) {
+      l.suggested = byName;
+      l.confidence = 0.92;
+      l.reason = `Name "${l.name}" matches ${byName}`;
+      // Name and content disagree → less sure.
+      if (byName === 'walls' && geometry === 0) { l.confidence = 0.5; l.reason += ', but it has no lines'; }
+      if (byName === 'rooms' && c.closed === 0) {
+        if (c.texts > 0) { l.suggested = 'labels'; l.confidence = 0.7; l.reason = 'Named like rooms but holds only text — room names'; }
+        else { l.confidence = 0.45; l.reason += ', but it has no closed outlines'; }
+      }
+      if (byName === 'labels' && c.texts === 0) { l.confidence = 0.4; l.reason += ', but it has no text'; }
+      continue;
+    }
+    if (blockCat && c.inserts >= geometry) {
+      l.suggested = blockCat; l.confidence = 0.8; l.reason = `Contains ${blockCat} blocks (${l.blocks[0]})`; continue;
+    }
+    if (c.texts > 0 && c.texts >= total * 0.6) {
+      l.suggested = 'labels'; l.confidence = 0.7; l.reason = 'Mostly text'; continue;
+    }
+    if (c.closed >= 3 && c.closed >= geometry * 0.6) {
+      l.suggested = 'rooms'; l.confidence = 0.5; l.reason = 'Mostly closed outlines'; continue;
+    }
+    if (c.circles > 0 && c.circles >= total * 0.6) {
+      l.suggested = 'trees'; l.confidence = 0.4; l.reason = 'Mostly circles (often trees on site plans)'; continue;
+    }
+    l.suggested = 'ignore'; l.confidence = 0.4; l.reason = 'Nothing identifies this layer';
+  }
+
+  // No wall layer recognised at all: the layer carrying the most line work is
+  // almost always the walls (common when everything is on layer "0").
+  if (!layers.some(l => l.suggested === 'walls')) {
+    const busiest = layers
+      .filter(l => l.suggested === 'ignore' || l.suggested === 'rooms')
+      .sort((a, b) => (b.counts.lines + b.counts.open + b.counts.closed) - (a.counts.lines + a.counts.open + a.counts.closed))[0];
+    if (busiest && busiest.counts.lines + busiest.counts.open + busiest.counts.closed > 0) {
+      busiest.suggested = 'walls'; busiest.confidence = 0.55; busiest.reason = 'Most line work in the drawing';
+    }
+  }
+
+  return layers.sort((a, b) => entityTotal(b) - entityTotal(a));
+}
+
+const entityTotal = (l: LayerInfo) => Object.values(l.counts).reduce((s, n) => s + n, 0);

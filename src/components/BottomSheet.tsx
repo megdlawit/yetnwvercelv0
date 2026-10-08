@@ -2,16 +2,16 @@
  * BottomSheet — Mobile-first redesign.
  *
  * States:
- * 1. Collapsed: "Swipe up to explore" pill + bottom nav
+ * 1. Home: one draggable sheet (HomeSheet) — name, Directions, categories, picks
  * 2. Explore FULL SCREEN: fixed overlay covering entire screen, scrollable cards
- * 3. Nav active: compact live nav strip + bottom nav
+ * 3. Nav active: a "Show steps" pill (the turn card is at the top)
  */
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   MapPin, Navigation, Volume2, VolumeX,
   RotateCcw, Play, X, Footprints, Smartphone,
-  ChevronLeft, History, CornerDownRight, Sparkles, Compass,
+  ChevronLeft, History, CornerDownRight,
   type LucideIcon,
 } from 'lucide-react';
 import { useProfile } from '@/contexts/UserProfileContext';
@@ -31,7 +31,8 @@ import ExplorePanel from './ExplorePanel';
 import SavedPanel from './SavedPanel';
 import VisitedPanel from './VisitedPanel';
 import ProfilePage from './ProfilePage';
-import { BrowseBody, BrowseHeader, type BrowseTab } from './visitor/VenueBrowse';
+import { BrowseBody, BrowseHeader, type BrowseStart, type BrowseTab } from './visitor/VenueBrowse';
+import HomeSheet from './HomeSheet';
 import { useBrowseTab, type VenueBrowseProps } from './visitor/VenueBrowsePanel';
 import EmailGateDialog from './EmailGateDialog';
 import BottomNavPill from './BottomNavPill';
@@ -80,6 +81,14 @@ interface BottomSheetProps {
   hideExploreStrip?: boolean;
   /** Discover / Explore for a venue (its events, tours, guides and stories). */
   browse?: VenueBrowseProps;
+  /** Fold the home sheet to peek (the map is being panned). */
+  collapseSheet?: boolean;
+  /** The home sheet's Directions button (default: the route planner). */
+  onDirections?: () => void;
+  /** Directions to one recommended place (default: show it, as onPOISelect). */
+  onPOINavigate?: (poi: POI) => void;
+  /** The "my location" button on the home sheet's edge. */
+  onMyLocation?: () => void;
 }
 
 const BottomSheet: React.FC<BottomSheetProps> = ({
@@ -94,25 +103,16 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
   building, pois = [], nearbyPOIs = [], onPOISelect,
   parkName = 'Unity Park',
   activeTab = 'explore', onTabChange, browse,
-  hideExploreStrip = false,
+  hideExploreStrip = false, collapseSheet = false,
+  onDirections, onPOINavigate, onMyLocation,
 }) => {
   const [exploreOpen, setExploreOpen] = useState(() => !!browse?.start);
   const [browseTab, setBrowseTab] = useBrowseTab(browse?.start);
-  const openBrowse = (t: BrowseTab) => { setBrowseTab(t); setExploreOpen(true); };
+  // An event picked on the home sheet opens straight to it.
+  const [eventStart, setEventStart] = useState<BrowseStart | null>(null);
+  const openBrowse = (t: BrowseTab) => { setEventStart(null); setBrowseTab(t); setExploreOpen(true); };
   const [routeOpen, setRouteOpen] = useState(false);
   const [placesSubTab, setPlacesSubTab] = useState<'saved' | 'visited'>('saved');
-  // 'cards' = full auto-scrolling explore strip; 'hint' = the small "swipe up
-  // to discover" pill shown after the strip was hidden (e.g. by a search or
-  // modal) and then reappears — it only auto-shows the full strip on first
-  // mount, not every time other UI closes.
-  const [stripState, setStripState] = useState<'cards' | 'hint'>('cards');
-  const wasHiddenRef = React.useRef(false);
-  React.useEffect(() => {
-    if (wasHiddenRef.current && !hideExploreStrip) {
-      setStripState('hint');
-    }
-    wasHiddenRef.current = hideExploreStrip;
-  }, [hideExploreStrip]);
 
   const handleTabChange = (tab: 'explore' | 'saved' | 'profile') => {
     if (tab === 'explore') {
@@ -280,7 +280,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
           {/* ── Scrollable content ── */}
           <div className="flex-1 overflow-y-auto scroll-touch overscroll-contain min-h-0">
             {browse ? (
-              <BrowseBody tab={browseTab} places={browse.places} content={browse.content} start={browse.start}
+              <BrowseBody tab={browseTab} places={browse.places} content={browse.content} start={eventStart ?? browse.start}
                 onPlace={id => { setExploreOpen(false); browse.onPlace(id); }}
                 onNavigate={id => { setExploreOpen(false); browse.onNavigate(id); }} />
             ) : (
@@ -632,50 +632,25 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
             debug drawer out of view during navigation. Removed. */}
 
 
-        {/* Explore card strip (auto-scrolling) — hides while other UI is active,
-            then returns as a "swipe up to discover" pill instead of popping
-            the full strip back open on its own. */}
+        {/* The home sheet: name + Directions, categories, a few recommended
+            places. It steps aside while other UI (search, a place card, a
+            modal) is up, and folds to peek while the map is being panned. */}
         {!isLive && !hideExploreStrip && (
-          stripState === 'cards' ? (
-            <div className="pt-2">
-              {browse && (
-                <div className="mx-4 mb-2 flex items-center gap-2 rounded-2xl bg-card/95 py-1.5 pl-3 pr-1.5 shadow-[0_6px_20px_-6px_hsl(152_40%_10%/0.25)] backdrop-blur">
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-bold leading-tight text-foreground">{browse.name}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">{browse.sub}</span>
-                  </span>
-                  <span className="flex shrink-0 rounded-full bg-muted p-0.5 text-xs font-semibold">
-                    <button onClick={() => openBrowse('discover')} className="flex items-center gap-1 rounded-full px-2.5 py-1.5 text-foreground"><Sparkles className="h-3.5 w-3.5" /> Discover</button>
-                    <button onClick={() => openBrowse('explore')} className="flex items-center gap-1 rounded-full px-2.5 py-1.5 text-muted-foreground"><Compass className="h-3.5 w-3.5" /> Explore</button>
-                  </span>
-                </div>
-              )}
-              <ExplorePanel
-                pois={pois}
-                nearbyPOIs={nearbyPOIs}
-                onPOISelect={(poi) => onPOISelect?.(poi)}
-                isSaved={isSaved}
-                onToggleSave={handleToggleSave}
-                compact
-              />
-            </div>
-          ) : (
-            <div className="flex justify-center pt-1 pb-3">
-              <motion.button
-                onClick={() => setStripState('cards')}
-                drag="y"
-                dragConstraints={{ top: 0, bottom: 0 }}
-                dragElastic={{ top: 0.4, bottom: 0 }}
-                onDragEnd={(_, info) => { if (info.offset.y < -30) setStripState('cards'); }}
-                whileTap={{ scale: 0.97 }}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-white tap-scale"
-                style={{ boxShadow: '0 4px 20px -4px hsl(152 40% 10% / 0.25)' }}
-              >
-                <div className="w-8 h-1 rounded-full bg-muted-foreground/30" />
-                <span className="text-xs font-semibold text-foreground">Swipe up to discover</span>
-              </motion.button>
-            </div>
-          )
+          <HomeSheet
+            name={browse?.name ?? parkName}
+            sub={browse?.sub ?? `${pois.length} places to explore`}
+            pois={pois}
+            nearbyPOIs={nearbyPOIs}
+            content={browse?.content}
+            collapse={collapseSheet}
+            onDirections={onDirections ?? (() => setRouteOpen(true))}
+            onSaved={() => handleTabChange('saved')}
+            onSeeAll={() => openBrowse(browseTab)}
+            onSelect={poi => onPOISelect?.(poi)}
+            onNavigate={poi => (onPOINavigate ?? onPOISelect)?.(poi)}
+            onEvent={id => { setEventStart({ contentId: id, nonce: Date.now() }); setExploreOpen(true); }}
+            onMyLocation={onMyLocation}
+          />
         )}
 
         {/* Reopen affordance — if a person drags the live route sheet away
@@ -683,26 +658,17 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
             the full turn-by-turn Directions/steps list instead of stranding
             them with only FloatingTopCard's current+next turn. */}
         {isLive && !routeOpen && (
-          <div className="flex justify-center pt-1 pb-3">
+          <div className="flex items-center justify-center gap-2 px-4 pt-1" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 16px)' }}>
             <motion.button
               onClick={() => setRouteOpen(true)}
               whileTap={{ scale: 0.97 }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-white tap-scale"
-              style={{ boxShadow: '0 4px 20px -4px hsl(152 40% 10% / 0.25)' }}
+              className="flex h-12 items-center gap-2 rounded-full bg-white px-5 font-inter text-sm font-semibold text-ink shadow-[0_6px_20px_rgba(20,50,30,.18)]"
             >
-              <CornerDownRight className="w-3.5 h-3.5" style={{ color: 'hsl(var(--primary))' }} />
-              <span className="text-xs font-semibold text-foreground">Show steps</span>
+              <CornerDownRight className="h-4 w-4 text-moss" />
+              Show steps
             </motion.button>
           </div>
         )}
-
-        {/* Bottom nav pill */}
-        <div className="bg-card">
-          <BottomNavPill
-            activeTab={activeTab}
-            onTabChange={handleTabChange}
-          />
-        </div>
       </div>
       )}
     </>

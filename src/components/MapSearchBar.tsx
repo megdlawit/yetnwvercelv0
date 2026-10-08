@@ -62,6 +62,8 @@ interface MapSearchBarProps {
   indoorPois?: POI[];
   /** Called when the person picks one of those places. */
   onIndoorPOISelect?: (poi: POI) => void;
+  /** Shown at the pill's right end (the phone home puts the profile avatar here). */
+  trailing?: React.ReactNode;
 }
 
 // Unity Park, Addis Ababa — default center for biasing outdoor (OSM) search.
@@ -85,6 +87,7 @@ const MapSearchBar: React.FC<MapSearchBarProps> = ({
   openSignal,
   indoorPois = [],
   onIndoorPOISelect,
+  trailing,
 }) => {
   const [focused, setFocused] = useState(false);
   const [query,   setQuery]   = useState('');
@@ -236,18 +239,19 @@ const MapSearchBar: React.FC<MapSearchBarProps> = ({
     <div className="relative">
       {/* Top search pill (map overlay) */}
       <div
-        className="flex cursor-text items-center gap-2 rounded-full border border-white/80 bg-[rgba(255,253,248,.92)] py-2 pl-4 pr-2 shadow-[0_10px_26px_rgba(30,20,10,.14)] backdrop-blur-md"
+        className="flex h-[52px] cursor-text items-center gap-1 rounded-full border border-white/80 bg-pcard/95 pl-4 pr-1.5 font-inter shadow-[0_8px_24px_rgba(15,61,38,.14)] backdrop-blur-md"
         onClick={openSearch}
       >
-        <Search style={{ width: 18, height: 18 }} className="text-muted-foreground flex-shrink-0" />
-        <span className="flex-1 text-[14px] font-medium text-sub">Search places</span>
+        <Search style={{ width: 19, height: 19 }} className="mr-1.5 flex-shrink-0 text-ink/70" strokeWidth={2.2} />
+        <span className="min-w-0 flex-1 truncate text-[15px] font-medium text-sub">Search {parkName}</span>
         <button
           onClick={e => { e.stopPropagation(); onQRScan?.(); }}
-          className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-ink text-white"
+          className="grid h-10 w-10 flex-shrink-0 place-items-center rounded-full text-ink/75 transition-colors hover:bg-ink/[.06] active:bg-ink/[.08]"
           aria-label="Scan QR code"
         >
-          <QrCode style={{ width: 17, height: 17 }} />
+          <QrCode style={{ width: 19, height: 19 }} />
         </button>
+        {trailing}
       </div>
 
       {/* Full search panel */}

@@ -17,6 +17,7 @@ import type { TravelMode } from '@/lib/geo/GeoTypes';
 import type { GeoCoord } from '@/lib/geo/GeoTypes';
 import FloorMap from '@/components/FloorMap';
 import BottomSheet from '@/components/BottomSheet';
+import { ProfileAvatar } from '@/components/HomeSheet';
 import DebugDrawer from '@/components/DebugDrawer';
 import QRScannerModal from '@/components/QRScannerModal';
 import ManualLocationModal from '@/components/ManualLocationModal';
@@ -31,7 +32,6 @@ import type { VenueBuildingFootprint } from '@/lib/geo/MapSurfaceLayers';
 import { DEFAULT_CUSTOM_LAYERS, ADMIN_LAYERS_STORAGE_KEY } from '@/lib/customLayers';
 import type { CustomLayer } from '@/lib/customLayers';
 import { DEFAULT_MAP_STYLE_ID, MAP_STYLE_STORAGE_KEY, type MapStyleId } from '@/lib/mapStyles';
-import GPSStatusPill from '@/components/GPSStatusPill';
 import FloatingTopCard from '@/components/FloatingTopCard';
 import IndoorTrackingModal from '@/components/IndoorTrackingModal';
 import EmailGateDialog from '@/components/EmailGateDialog';
@@ -1318,6 +1318,11 @@ export const ExploreMap = ({
     );
   }
 
+  // The phone home sheet steps aside for other UI; while it's up it carries "my location".
+  const homeSheetCovered = searchFocused || qrModalOpen || manualModalOpen || layersPanelOpen || !!visiblePOI;
+  const homeSheetShown = !homeSheetCovered && activeTab === 'explore'
+    && !(pdrState.isNavigating || pdrState.isPaused || pdrState.isComplete);
+
   return (
     <div className="indoor-map h-[100dvh] w-screen bg-background font-inter text-foreground relative overflow-hidden flex flex-col lg:flex-row lg:gap-3 lg:p-3">
 
@@ -1517,7 +1522,7 @@ export const ExploreMap = ({
 
       {/* ── Overlay layer: top controls (mobile only — desktop has these in the sidebar) ── */}
       <div className={cn('absolute left-0 right-0 px-4 lg:hidden', searchFocused ? 'z-[60]' : 'z-10')}
-        style={{ top: offlinePad + 10 }}>
+        style={{ top: `calc(env(safe-area-inset-top, 0px) + ${offlinePad + 10}px)` }}>
 
         {/* Search bar — full width */}
         <MapSearchBar
@@ -1546,20 +1551,14 @@ export const ExploreMap = ({
           openSignal={searchOpenSignal}
           indoorPois={indoorSearchPois}
           onIndoorPOISelect={handlePlacePick}
+          trailing={<ProfileAvatar name={profile?.full_name || profile?.email} onClick={() => setActiveTab('profile')} />}
         />
-
-        {/* GPS status pill — centered below search (venues use the "My location" button) */}
-        <div className={cn('flex justify-center mt-2', venue && 'hidden')}>
-          <GPSStatusPill
-            active={gpsActive}
-            onClick={() => gpsActive ? stopGPS() : startGPS()}
-          />
-        </div>
+        {/* GPS starts from "My location" (on the home sheet's edge). */}
       </div>
 
       {/* ── Right side map controls ── */}
       <div className="absolute z-10 flex flex-col items-end gap-2"
-        style={{ top: offlinePad + 70, right: 12 }}>
+        style={{ top: `calc(env(safe-area-inset-top, 0px) + ${offlinePad + 74}px)`, right: 16 }}>
         <MapControls
           onZoomIn={showOutdoorMap ? handleVenueZoomIn : handleFloorZoomIn}
           onZoomOut={showOutdoorMap ? handleVenueZoomOut : handleFloorZoomOut}
@@ -1576,9 +1575,29 @@ export const ExploreMap = ({
           onResetNorth={showOutdoorMap ? handleVenueResetNorth : undefined}
           showNames={!!indoorLayers.labels}
           onToggleNames={venue && !showOutdoorMap ? () => setIndoorLayers(prev => ({ ...prev, labels: !prev.labels })) : undefined}
+          phone3D={showOutdoorMap || !venue}
+          phoneMyLocation={!homeSheetShown}
         />
-        {/* Debug drawer — on the explore page; on a venue only with ?debug=1 */}
-        <div className={cn('relative', venue && !showDebug && 'hidden')}>
+        {/* Floor picker (indoor, several floors; venues use the view dock) — top floor first */}
+        {!venue && !showOutdoorMap && brainState.environment !== 'outdoor' && building.floors.length > 1 && (
+          <div className="flex flex-col gap-0.5 rounded-full bg-white p-1 font-inter shadow-[0_6px_20px_rgba(20,50,30,.14)]" role="group" aria-label="Floor">
+            {[...building.floors].sort((a, b) => b.level - a.level).map(floor => (
+              <button
+                key={floor.id}
+                onClick={() => handleFloorChange(floor.id)}
+                aria-pressed={floor.id === (currentFloor?.id ?? selectedFloorId)}
+                aria-label={floor.name}
+                title={floor.name}
+                className={cn('grid h-9 w-9 place-items-center rounded-full text-[13px] font-bold transition-colors',
+                  floor.id === (currentFloor?.id ?? selectedFloorId) ? 'bg-ink text-white' : 'text-ink/70 hover:bg-ink/[.06]')}
+              >
+                {floorShort(floor.name, floor.level)}
+              </button>
+            ))}
+          </div>
+        )}
+        {/* Debug drawer — explore page on desktop; phones and venues only with ?debug=1 */}
+        <div className={cn('relative', !showDebug && (venue ? 'hidden' : 'hidden lg:block'))}>
           <DebugDrawer
             headingDeg={pdrState.headingDeg ?? 0}
             headingCardinal={
@@ -1645,7 +1664,7 @@ export const ExploreMap = ({
           outdoors at all. Gate on the brain's actual routing mode instead. */}
       {(brainState.routingMode !== 'none' || venue) && (
         <div className="pointer-events-none absolute z-10 flex max-w-[calc(100%-100px)] flex-col items-start gap-2"
-          style={{ top: offlinePad + 70, left: 12 }}>
+          style={{ top: `calc(env(safe-area-inset-top, 0px) + ${offlinePad + 74}px)`, left: 16 }}>
           {brainState.routingMode !== 'none' && <div className="pointer-events-auto">
           <FloatingTopCard
             startName={startName}
@@ -1692,30 +1711,6 @@ export const ExploreMap = ({
 
       {/* ── A venue's view dock (desktop: bottom left; phones: under the top card) ── */}
       {venueDock('absolute left-3 bottom-6 z-[6] hidden lg:flex')}
-
-      {/* ── Floor tabs (indoor only, multiple floors, never on outdoor map) ── */}
-      {!venue && !showOutdoorMap && brainState.environment !== 'outdoor' && building.floors.length > 1 && (
-        <div className="absolute"
-          style={{ bottom: 182 + offlinePad, left: 12, zIndex: 5 }}>
-          <div className="bg-white rounded-2xl border border-border/30 shadow-lg p-1.5 flex gap-1"
-            style={{ boxShadow: '0 2px 12px -2px hsl(152 40% 10% / 0.1)' }}>
-            {building.floors.map(floor => (
-              <button
-                key={floor.id}
-                onClick={() => handleFloorChange(floor.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all tap-scale ${
-                  floor.id === selectedFloorId
-                    ? 'text-white'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/70'
-                }`}
-                style={floor.id === selectedFloorId ? { background: 'hsl(var(--primary))' } : {}}
-              >
-                {floor.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* ── POI Card ── */}
       <POICard
@@ -1790,7 +1785,11 @@ export const ExploreMap = ({
           activeTab={activeTab}
           onTabChange={setActiveTab}
           autoOpenRoute={!venue}
-          hideExploreStrip={searchFocused || qrModalOpen || manualModalOpen || layersPanelOpen || !!visiblePOI || mapInteracted}
+          hideExploreStrip={homeSheetCovered}
+          collapseSheet={mapInteracted}
+          onDirections={venue ? () => setSearchOpenSignal(n => n + 1) : undefined}
+          onPOINavigate={handlePOINavigate}
+          onMyLocation={handleMyLocation}
         />
       </div>
 
@@ -1832,3 +1831,14 @@ export const ExploreMap = ({
 };
 
 export default Index;
+/** A floor's one- or two-character label for the floor picker: "Ground Floor" → G, "First Floor" → 1, "Level 3" → 3. */
+function floorShort(name: string, level: number): string {
+  const n = name.toLowerCase();
+  if (/ground|lobby/.test(n)) return 'G';
+  if (/basement/.test(n)) return 'B';
+  const digits = n.match(/-?\d+/);
+  if (digits) return digits[0];
+  const words = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+  const i = words.findIndex(w => n.includes(w));
+  return i >= 0 ? String(i + 1) : String(level);
+}

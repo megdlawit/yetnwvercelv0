@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,23 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { POI_CATEGORY_META, POI_SUBCATEGORY_ICON, POICategory } from '@/data/poi';
+import { landmarkFor, LANDMARK_LABELS } from '@/lib/landmarks/landmarks';
+import type { LandmarkItem } from '@/components/landmarks/LandmarkMap';
+import { cn } from '@/lib/utils';
+import { Search, Megaphone as MegaphoneIcon, Layers3 } from 'lucide-react';
+
+/** A category colour ('hsl(35 90% 55%)') as hex, for gradients and the 3D map. */
+function toneHex(tone: string): string {
+  const m = tone.match(/hsl\(\s*([\d.]+)[ ,]+([\d.]+)%[ ,]+([\d.]+)%/);
+  if (!m) return tone;
+  const h = +m[1], s = +m[2] / 100, l = +m[3] / 100;
+  const k = (n: number) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+  const c = (n: number) => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))))).toString(16).padStart(2, '0');
+  return `#${c(0)}${c(8)}${c(4)}`;
+}
+
+// three.js only loads with the map.
+const LandmarkMap = lazy(() => import('@/components/landmarks/LandmarkMap'));
 
 interface SupaBuilding { id: string; name: string; }
 interface SupaFloor { id: string; building_id: string; name: string; level: number; }
@@ -70,6 +87,9 @@ const AdminPOIs: React.FC<AdminPOIsProps> = ({ onNavigateToBuildings, embedded =
   const [nodes, setNodes] = useState<SupaNode[]>([]);
   const [pois, setPois] = useState<SupaPOI[]>([]);
   const [promos, setPromos] = useState<SupaPromotion[]>([]);
+  const [walls, setWalls] = useState<{ floor_id: string; x1: number; y1: number; x2: number; y2: number }[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
 
   const [poiDialog, setPoiDialog] = useState<{ open: boolean; editing: SupaPOI | null }>({ open: false, editing: null });
@@ -95,11 +115,13 @@ const AdminPOIs: React.FC<AdminPOIsProps> = ({ onNavigateToBuildings, embedded =
   const fetchAll = useCallback(async (bid: string) => {
     if (!bid) return;
     setLoading(true);
-    const [floorsRes, nodesRes, poisRes] = await Promise.all([
+    const [floorsRes, nodesRes, poisRes, wallsRes] = await Promise.all([
       supabase.from('floors').select('*').eq('building_id', bid).order('level'),
       supabase.from('nodes').select('*').eq('building_id', bid).order('name'),
       supabase.from('pois').select('*').eq('building_id', bid).order('name'),
+      supabase.from('walls').select('floor_id,x1,y1,x2,y2').eq('building_id', bid),
     ]);
+    setWalls((wallsRes.data ?? []) as { floor_id: string; x1: number; y1: number; x2: number; y2: number }[]);
     if (floorsRes.error || nodesRes.error || poisRes.error) {
       toast.error('Failed to load data');
       setLoading(false);
@@ -309,195 +331,158 @@ const AdminPOIs: React.FC<AdminPOIsProps> = ({ onNavigateToBuildings, embedded =
     fetchAll(selectedBuildingId);
   };
 
+  // ── The map: each place as its landmark, on the floor's plan ──
+  const shownPois = filteredPois.filter(p => !query.trim() || `${p.name} ${p.subcategory ?? ''} ${p.category}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const mapFloor = floorFilter !== 'all' ? floorFilter : floors[0]?.id ?? null;
+  const mapItems = useMemo<LandmarkItem[]>(() => shownPois.flatMap(p => {
+    const n = nodeById.get(p.node_id);
+    if (!n) return [];
+    const meta = POI_CATEGORY_META[(p.category as POICategory) || 'attraction'];
+    return [{ id: p.id, name: p.name, x: n.x, y: n.y, color: toneHex(meta.tone), kind: landmarkFor(p), sub: p.subcategory || meta.label }];
+  }), [shownPois, nodeById]); // eslint-disable-line react-hooks/exhaustive-deps
+  const mapWalls = useMemo(() => walls.filter(w => w.floor_id === mapFloor), [walls, mapFloor]);
+  const selected = selectedId ? pois.find(p => p.id === selectedId) ?? null : null;
+  const stats = [
+    { label: 'Places', value: pois.length, icon: Sparkles },
+    { label: 'Featured', value: pois.filter(p => p.is_featured).length, icon: Star },
+    { label: 'With offers', value: pois.filter(p => (promosByPoi.get(p.id) ?? []).length).length, icon: MegaphoneIcon },
+    { label: 'With photos', value: pois.filter(p => p.image_url).length, icon: ImageIcon },
+  ];
+
   return (
-    <div className="min-h-screen" style={{ background: 'hsl(var(--background))' }}>
+    <div className="min-h-full bg-background">
       {!embedded && (
         <AdminHeader
           icon={Sparkles}
-          title="POIs & Promotions"
+          title="Points of interest"
           subtitle={`${filteredPois.length} ${filteredPois.length === 1 ? 'place' : 'places'}`}
           onBack={onNavigateToBuildings}
-          backTo="/admin/buildings"
-          primaryAction={
-            <AdminPillButton
-              icon={Plus}
-              variant="solid"
-              onClick={openCreatePOI}
-              disabled={!selectedBuildingId || availableNodes.length === 0}
-            >
-              New POI
-            </AdminPillButton>
-          }
+          backTo="/admin"
+          primaryAction={<AdminPillButton icon={Plus} variant="solid" onClick={openCreatePOI} disabled={!selectedBuildingId || availableNodes.length === 0}>New place</AdminPillButton>}
         />
       )}
 
-      {embedded && (
-        <div className="px-4 pt-5 flex items-center justify-between">
-          <p className="text-sm font-bold text-foreground">{filteredPois.length} {filteredPois.length === 1 ? 'place' : 'places'}</p>
-          <button
-            onClick={openCreatePOI}
-            disabled={!selectedBuildingId || availableNodes.length === 0}
-            className="flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold tap-scale text-white disabled:opacity-40"
-            style={{ background: 'hsl(152 70% 22%)' }}
-          >
-            <Plus className="h-3.5 w-3.5" /> New POI
-          </button>
-        </div>
-      )}
-
-      <main className="max-w-5xl mx-auto px-4 py-6 space-y-4">
-        {/* Filters */}
-        <div
-          className="rounded-2xl p-4 grid sm:grid-cols-2 gap-3"
-          style={{ background: 'hsl(var(--card))', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
-        >
-          <AdminField label="Building" icon={MapPin}>
-            <Select value={selectedBuildingId} onValueChange={setSelectedBuildingId}>
-              <SelectTrigger className={ADMIN_INPUT_CLS}><SelectValue placeholder="Select building" /></SelectTrigger>
-              <SelectContent>
-                {buildings.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </AdminField>
-          <AdminField label="Floor filter" icon={Tag}>
-            <Select value={floorFilter} onValueChange={setFloorFilter}>
-              <SelectTrigger className={ADMIN_INPUT_CLS}><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All floors</SelectItem>
-                {floors.map(f => <SelectItem key={f.id} value={f.id}>{f.name} (L{f.level})</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </AdminField>
-        </div>
-
-        {/* POI list */}
-        {loading ? (
-          <div className="text-center py-20 text-muted-foreground">
-            <Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin" style={{ color: 'hsl(152 70% 22%)' }} />
-            <p>Loading POIs...</p>
+      <div className="space-y-4 p-4 sm:p-5">
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={selectedBuildingId} onValueChange={v => { setSelectedBuildingId(v); setFloorFilter('all'); setSelectedId(null); }}>
+            <SelectTrigger className="h-10 w-56 rounded-xl"><MapPin className="mr-1.5 h-4 w-4 text-muted-foreground" /><SelectValue placeholder="Choose a venue" /></SelectTrigger>
+            <SelectContent>{buildings.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent>
+          </Select>
+          <div className="flex flex-wrap gap-1 rounded-xl bg-muted p-1">
+            {[{ id: 'all', name: 'All floors' }, ...floors.map(fl => ({ id: fl.id, name: fl.name }))].map(fl => (
+              <button key={fl.id} onClick={() => setFloorFilter(fl.id)}
+                className={cn('rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors', floorFilter === fl.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                {fl.id === 'all' ? <span className="flex items-center gap-1"><Layers3 className="h-3.5 w-3.5" /> All floors</span> : fl.name}
+              </button>
+            ))}
           </div>
-        ) : filteredPois.length === 0 ? (
-          <div
-            className="text-center py-16 px-6 rounded-2xl"
-            style={{ background: 'hsl(var(--card))', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
-          >
-            <div
-              className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-3"
-              style={{ background: 'hsl(152 70% 22% / 0.08)' }}
-            >
-              <Sparkles className="h-6 w-6" style={{ color: 'hsl(152 70% 22%)' }} />
+          <label className="ml-auto flex h-10 w-60 items-center gap-2 rounded-xl border bg-card px-3 text-sm focus-within:ring-2 focus-within:ring-ring">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search places…" className="min-w-0 flex-1 bg-transparent outline-none" />
+          </label>
+          {embedded && (
+            <Button onClick={openCreatePOI} disabled={!selectedBuildingId || availableNodes.length === 0} className="h-10 rounded-xl">
+              <Plus className="mr-1.5 h-4 w-4" /> New place
+            </Button>
+          )}
+        </div>
+
+        {/* Numbers */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {stats.map(st => (
+            <div key={st.label} className="flex items-center gap-3 rounded-2xl border bg-card p-3">
+              <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary/10 text-primary"><st.icon className="h-4 w-4" /></span>
+              <span><span className="block text-xl font-black leading-none tabular-nums">{st.value}</span><span className="text-[11px] text-muted-foreground">{st.label}</span></span>
             </div>
-            <p className="text-sm font-semibold text-foreground">No POIs yet for this filter</p>
-            {availableNodes.length === 0 && nodes.length > 0 && (
-              <p className="text-xs text-muted-foreground mt-1">All nodes already have POIs attached.</p>
-            )}
-            {nodes.length === 0 && (
-              <p className="text-xs text-muted-foreground mt-1">Add navigation nodes to this building first.</p>
+          ))}
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+          {/* The 3D landmark map */}
+          <div className="relative">
+            <Suspense fallback={<div className="flex h-[560px] items-center justify-center rounded-3xl bg-muted/50 text-sm text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Building the 3D map…</div>}>
+              <LandmarkMap items={mapItems} walls={mapWalls} selectedId={selectedId} onSelect={setSelectedId} className="h-[560px] border"
+                emptyText={loading ? 'Loading…' : 'Add a place and it rises here as its landmark'} />
+            </Suspense>
+            {selected && (
+              <div className="pointer-events-auto absolute bottom-3 left-3 right-3 flex items-center gap-3 rounded-2xl border bg-card/95 p-3 shadow-lg backdrop-blur sm:right-auto sm:w-[380px]">
+                {selected.image_url
+                  ? <img src={selected.image_url} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
+                  : <span className="grid h-14 w-14 shrink-0 place-items-center rounded-xl text-white" style={{ background: toneHex(POI_CATEGORY_META[(selected.category as POICategory) || 'attraction'].tone) }}><Sparkles className="h-6 w-6" /></span>}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-semibold">{selected.name}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{LANDMARK_LABELS[landmarkFor(selected)]} landmark · {nodeById.get(selected.node_id)?.name || 'no point'}</span>
+                </span>
+                <Button size="sm" variant="outline" onClick={() => openEditPOI(selected)}><Edit className="mr-1 h-3.5 w-3.5" /> Edit</Button>
+              </div>
             )}
           </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredPois.map(p => {
+
+          {/* The list */}
+          <div className="h-[560px] space-y-2 overflow-y-auto pr-1">
+            {loading ? (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading places…</div>
+            ) : shownPois.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 rounded-3xl border border-dashed px-6 text-center">
+                <Sparkles className="h-6 w-6 text-primary" />
+                <p className="text-sm font-semibold">No places here yet</p>
+                <p className="text-xs text-muted-foreground">{nodes.length === 0 ? 'Add places in the map editor first.' : availableNodes.length === 0 ? 'Every point already has a place.' : 'Press New place to add one.'}</p>
+              </div>
+            ) : shownPois.map(p => {
               const node = nodeById.get(p.node_id);
               const floor = node ? floorById.get(node.floor_id) : null;
               const meta = POI_CATEGORY_META[(p.category as POICategory) || 'attraction'];
               const Icon = POI_SUBCATEGORY_ICON[p.subcategory?.toLowerCase() ?? ''] || meta.icon;
               const poiPromos = promosByPoi.get(p.id) ?? [];
+              const on = selectedId === p.id;
               return (
-                <Card key={p.id}>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div
-                          className="h-10 w-10 rounded-lg flex items-center justify-center shrink-0"
-                          style={{ backgroundColor: `${meta.tone}22`, color: meta.tone }}
-                        >
-                          <Icon className="h-5 w-5" />
-                        </div>
-                        <div className="min-w-0">
-                          <CardTitle className="text-base flex items-center gap-2 flex-wrap">
-                            {p.name}
-                            {p.is_featured && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-semibold">
-                                <Star className="h-3 w-3" /> Featured
-                              </span>
-                            )}
-                            {p.is_search_popular && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 text-blue-600 px-2 py-0.5 text-[10px] font-semibold">
-                                <TrendingUp className="h-3 w-3" /> Popular
-                              </span>
-                            )}
-                          </CardTitle>
-                          <CardDescription className="truncate">
-                            {meta.label}{p.subcategory ? ` · ${p.subcategory}` : ''} ·{' '}
-                            <MapPin className="inline h-3 w-3 -mt-0.5" /> {node?.name || 'Unknown node'}
-                            {floor ? ` (${floor.name})` : ''}
-                          </CardDescription>
-                          {p.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{p.description}</p>}
-                        </div>
-                      </div>
-                      <div className="flex gap-1 shrink-0">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditPOI(p)}>
-                          <Edit className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => deletePOI(p)}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
+                <div key={p.id} onClick={() => setSelectedId(on ? null : p.id)}
+                  className={cn('cursor-pointer rounded-2xl border bg-card p-3 transition-all hover:shadow-md', on && 'border-primary/60 ring-2 ring-primary/20')}>
+                  <div className="flex items-start gap-3">
+                    {p.image_url
+                      ? <img src={p.image_url} alt="" className="h-12 w-12 shrink-0 rounded-xl object-cover" />
+                      : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-white shadow-sm" style={{ background: `linear-gradient(145deg, ${toneHex(meta.tone)}, ${toneHex(meta.tone)}cc)` }}><Icon className="h-5 w-5" /></span>}
+                    <div className="min-w-0 flex-1">
+                      <p className="flex flex-wrap items-center gap-1.5 text-sm font-semibold">
+                        <span className="truncate">{p.name}</span>
+                        {p.is_featured && <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" aria-label="Featured" />}
+                        {p.is_search_popular && <TrendingUp className="h-3.5 w-3.5 text-sky-600" aria-label="Popular" />}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">{meta.label}{p.subcategory ? ` · ${p.subcategory}` : ''} · {node?.name || 'no point'}{floor ? ` · ${floor.name}` : ''}</p>
+                      <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span className="rounded-full px-2 py-0.5 font-semibold" style={{ background: `${toneHex(meta.tone)}1f`, color: toneHex(meta.tone) }}>{LANDMARK_LABELS[landmarkFor(p)]}</span>
+                        {poiPromos.length > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800">{poiPromos.length} offer{poiPromos.length > 1 ? 's' : ''}</span>}
+                      </p>
                     </div>
-                  </CardHeader>
-                  <CardContent className="pt-0">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                        <Tag className="h-3 w-3" /> Promotions ({poiPromos.length})
-                      </span>
-                      <Button variant="outline" size="sm" onClick={() => openCreatePromo(p.id)}>
-                        <Plus className="h-3 w-3 mr-1" /> Add
-                      </Button>
+                    <div className="flex shrink-0 gap-0.5" onClick={e => e.stopPropagation()}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditPOI(p)} aria-label={`Edit ${p.name}`}><Edit className="h-3.5 w-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => deletePOI(p)} aria-label={`Delete ${p.name}`}><Trash2 className="h-3.5 w-3.5" /></Button>
                     </div>
-                    {poiPromos.length === 0 ? (
-                      <p className="text-xs text-muted-foreground italic">No promotions yet.</p>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {poiPromos.map(pr => (
-                          <div key={pr.id} className="flex items-center justify-between rounded-lg bg-muted px-3 py-2 text-sm">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-medium truncate">{pr.title}</span>
-                                {pr.discount_text && (
-                                  <span className="text-[10px] font-bold rounded px-1.5 py-0.5 bg-primary text-primary-foreground">
-                                    {pr.discount_text}
-                                  </span>
-                                )}
-                                {!pr.is_active && (
-                                  <span className="text-[10px] font-medium rounded px-1.5 py-0.5 bg-muted-foreground/20 text-muted-foreground">
-                                    Inactive
-                                  </span>
-                                )}
-                              </div>
-                              {pr.description && (
-                                <p className="text-xs text-muted-foreground truncate">{pr.description}</p>
-                              )}
-                            </div>
-                            <div className="flex gap-1 shrink-0">
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditPromo(pr)}>
-                                <Edit className="h-3 w-3" />
-                              </Button>
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deletePromo(pr)}>
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
+                  </div>
+                  {on && (
+                    <div className="mt-3 space-y-1.5 border-t pt-3" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-1 text-xs font-semibold text-muted-foreground"><Tag className="h-3 w-3" /> Offers</span>
+                        <Button variant="outline" size="sm" className="h-7 rounded-lg" onClick={() => openCreatePromo(p.id)}><Plus className="mr-1 h-3 w-3" /> Add offer</Button>
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
+                      {poiPromos.length === 0 ? <p className="text-xs italic text-muted-foreground">No offers yet.</p> : poiPromos.map(pr => (
+                        <div key={pr.id} className="flex items-center gap-2 rounded-xl bg-muted px-3 py-2 text-sm">
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5 font-medium"><span className="truncate">{pr.title}</span>{pr.discount_text && <span className="rounded bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">{pr.discount_text}</span>}{!pr.is_active && <span className="text-[10px] text-muted-foreground">Inactive</span>}</span>
+                          </span>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditPromo(pr)}><Edit className="h-3 w-3" /></Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deletePromo(pr)}><Trash2 className="h-3 w-3" /></Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
-        )}
-      </main>
+        </div>
+      </div>
 
       {/* POI Dialog */}
       <AdminDialogShell

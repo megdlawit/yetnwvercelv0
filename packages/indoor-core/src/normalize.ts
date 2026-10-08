@@ -124,7 +124,7 @@ export function fromPlan(rows: PlanRows, opts: PlanOptions = {}): IndoorVenue {
   }
 
   // Scenery and markers.
-  const PROP_KINDS: PropKind[] = ['tree', 'bench', 'furniture', 'landmark', 'entrance', 'label'];
+  const PROP_KINDS = Object.keys(PROP_SIZES) as PropKind[];
   const props: IndoorProp[] = rows.map_features.filter(f => floorById.has(f.floor_id) && PROP_KINDS.includes(f.kind as PropKind)).map(f => {
     const kind = f.kind as PropKind;
     return { id: f.id, floorId: f.floor_id, kind, at: P(f.x, f.y), width: f.width != null ? f.width / ppm : PROP_SIZES[kind].width, depth: f.depth != null ? f.depth / ppm : PROP_SIZES[kind].depth,

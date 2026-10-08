@@ -8,8 +8,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Sparkles, Columns2, MousePointer2, PenLine, Pentagon, MapPin, Route, Shapes, Layers3, HeartPulse, SlidersHorizontal,
-  Undo2, UploadCloud, Globe, ArrowRight, ArrowLeft, X, Check, PartyPopper, Keyboard, Hand,
+  Sparkles, MousePointer2, MapPin, HeartPulse, SquarePlus,
+  Globe, ArrowRight, ArrowLeft, X, Check, PartyPopper, Keyboard, Hand,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -32,49 +32,27 @@ interface Step {
   task?: { label: string; done: (s: EditorState, base: EditorState) => boolean };
 }
 
+const changed = (s: EditorState, b: EditorState) =>
+  s.counts.nodes + s.counts.edges + s.counts.features + s.counts.rooms + s.counts.walls !== b.counts.nodes + b.counts.edges + b.counts.features + b.counts.rooms + b.counts.walls;
+
+// Short, and in the order people actually work: say it, click it, (draw it), check it, publish it.
 const STEPS: Step[] = [
-  { target: 'editor-views', icon: Columns2, title: '2D, 3D — or both at once',
-    body: 'The 2D plan is where you draw; the 3D world is what visitors walk through. Split shows both, and every change appears in 3D instantly.',
-    task: { label: 'Switch to Split view (or press 3)', done: s => s.view === 'split' } },
-  { target: 'tool-select', icon: MousePointer2, title: 'Select and move',
-    body: 'Click anything to select it, Shift+click to add more, drag empty space to box-select, and drag a selection to move it. Hold Space (or use Pan) to move around.' },
-  { target: s => (s.tool === 'wall' ? 'editor-canvas' : 'tool-wall'), icon: PenLine, title: 'Draw walls',
-    body: s => (s.tool === 'wall'
-      ? 'Click on the plan to start a wall, click again to end it — it keeps going from there. Corners snap to each other. Esc stops.'
-      : 'Pick the Wall tool (or press W) to draw walls straight onto the plan.'),
-    task: { label: 'Draw one wall', done: (s, b) => s.counts.walls > b.counts.walls } },
-  { target: 'tool-room', icon: Pentagon, title: 'Shape rooms',
-    body: 'With Room (R), click the corners of a room and click the first corner again to close it. Rooms get a colour, a name and a type (shop, restroom, stairs…).',
-    task: { label: 'Pick the Room tool', done: s => s.tool === 'room' } },
-  { target: s => (s.tool === 'add-node' ? 'editor-canvas' : 'tool-add-node'), icon: MapPin, title: 'Add places visitors can find',
-    body: s => (s.tool === 'add-node'
-      ? 'Click anywhere on the plan to drop a place. Give it a name in the inspector — that\'s what visitors search for and navigate to.'
-      : 'Places (POIs) are what visitors search and navigate to — the café, an exhibit, the restrooms. Pick POI (N).'),
-    task: { label: 'Add a place', done: (s, b) => s.counts.nodes > b.counts.nodes } },
-  { target: 'tool-add-edge', icon: Route, title: 'Connect them with paths',
-    body: 'Paths (E) are how navigation finds its way: click one place, then another, to connect them. Imported maps get their paths automatically.',
-    task: { label: 'Pick the Path tool', done: s => s.tool === 'add-edge' } },
-  { target: 'tool-object', icon: Shapes, title: 'Doors, stairs, trees and furniture',
-    body: 'Objects (B) bring the 3D world to life — doors, stairs, lifts, benches, trees. Choose one from the list that appears, then click to place it.',
-    task: { label: 'Pick the Object tool', done: s => s.tool === 'object' } },
-  { target: 'editor-layers', icon: Layers3, title: 'Layers',
-    body: 'Show or hide walls, rooms, objects, paths, labels and distances while you work. It only changes your view, not the venue.' },
-  { target: 'editor-health', icon: HeartPulse, title: 'Map health',
-    body: 'We keep checking your map: places without a path, paths that don\'t connect, rooms without a place. Click a warning to jump straight to it.' },
-  { target: 'editor-inspector', icon: SlidersHorizontal, title: 'The inspector',
-    body: 'Select anything to edit it here — its name, type, size and details, or show it in 3D.',
-    task: { label: 'Select something on the plan', done: s => s.hasSelection } },
-  { target: 'editor-history', icon: Undo2, title: 'Nothing is ever lost',
-    body: 'Every change can be undone (Ctrl Z) and redone (Ctrl Shift Z), and everything saves as you go.' },
-  { target: 'editor-import', icon: UploadCloud, title: 'Bring your own map',
-    body: 'Import a DWG, DXF, IFC, SVG, PDF or 3D model any time — walls, rooms, doors and paths are built for you, and problems are fixed automatically.' },
+  { target: 'map-assistant', icon: Sparkles, title: 'Just tell the map',
+    body: 'Type what you want, like "Add a restroom here" or "Connect Room 1 and Room 2". Click the map first and "here" means that spot.',
+    task: { label: 'Ask the map for a change', done: changed } },
+  { target: 'editor-inspector', icon: MousePointer2, title: 'Click anything to edit it',
+    body: 'Rename it, add photos, or connect it so visitors can walk there.',
+    task: { label: 'Click something on the map', done: (s, b) => s.hasSelection && !b.hasSelection } },
+  { target: 'tool-add', icon: SquarePlus, title: 'Prefer to draw?',
+    body: '+ Add has rooms, walls, doors, paths, objects and scenery. More tools has everything else.' },
+  { target: 'editor-health', icon: HeartPulse, title: 'Ready for visitors?',
+    body: 'This tells you if anything needs fixing. "Fix everything" does the safe fixes for you. Every change can be undone.' },
   { target: 'editor-publish', icon: Globe, title: 'Preview, then publish',
-    body: 'Preview shows exactly what visitors will see. Your edits stay private until you press Publish.' },
+    body: 'Preview shows what visitors will see. Nothing goes live until you press Publish.' },
 ];
 
 const SHORTCUTS: [string, string][] = [
-  ['V', 'Select'], ['H / Space', 'Pan'], ['W', 'Wall'], ['O', 'Door'], ['R', 'Room'], ['E', 'Path'],
-  ['N', 'Place'], ['B', 'Object'], ['T', 'Text'], ['M', 'Measure'], ['1 · 2 · 3', '2D · 3D · Split'], ['Ctrl Z', 'Undo'],
+  ['/', 'Ask the map'], ['Ctrl Z', 'Undo'], ['Del', 'Delete'], ['1 · 2 · 3', '2D · 3D · Split'],
 ];
 
 type Rect = { top: number; left: number; width: number; height: number };
@@ -247,20 +225,20 @@ export default function EditorTour({ open, state, justBuilt = false, onClose }: 
               {phase === 'welcome' ? (
                 <div className="text-center">
                   <p className="text-xs font-bold uppercase tracking-wider text-primary">{justBuilt ? 'Your venue is built' : 'The map editor'}</p>
-                  <h2 className="mt-1 text-2xl font-bold">{justBuilt ? 'Now let\'s make it yours' : 'Draw your venue, see it in 3D'}</h2>
+                  <h2 className="mt-1 text-2xl font-bold">{justBuilt ? 'Now let\'s make it yours' : 'Tell us how your building works'}</h2>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    A hands-on tour — about 2 minutes. You'll try each tool as we go: draw a wall, add a place, see it in 3D. Everything you do is real and can be undone.
+                    5 quick steps, under a minute. We'll turn what you tell us into a map — and everything can be undone.
                   </p>
                   <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-center">
-                    <Button size="lg" onClick={() => { setIndex(0); setPhase('steps'); }}><Sparkles className="mr-2 h-4 w-4" /> Start the hands-on tour</Button>
+                    <Button size="lg" onClick={() => { setIndex(0); setPhase('steps'); }}><Sparkles className="mr-2 h-4 w-4" /> Show me (5 steps)</Button>
                     <Button size="lg" variant="ghost" onClick={onClose}>I'll explore myself</Button>
                   </div>
                 </div>
               ) : (
                 <>
-                  <h2 className="text-center text-2xl font-bold">You know the editor!</h2>
-                  <p className="mt-1 text-center text-sm text-muted-foreground">Handy shortcuts — reopen this guide any time with <b>Guide</b> in the top bar.</p>
-                  <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-2xl bg-muted/50 p-3 sm:grid-cols-3">
+                  <h2 className="text-center text-2xl font-bold">You're all set!</h2>
+                  <p className="mt-1 text-center text-sm text-muted-foreground">Reopen this guide any time with <b>Guide</b> in the top bar.</p>
+                  <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-2xl bg-muted/50 p-3 ">
                     {SHORTCUTS.map(([k, label]) => (
                       <div key={k} className="flex items-center gap-2 text-xs">
                         <kbd className="min-w-[2rem] rounded-md border bg-card px-1.5 py-0.5 text-center font-mono text-[10px] font-semibold shadow-sm">{k}</kbd>
@@ -302,7 +280,7 @@ function PlanToWorld() {
         ))}
       </svg>
       <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/25 px-3 py-1 text-[11px] font-semibold text-white backdrop-blur">
-        <PenLine className="h-3 w-3" /> draw <ArrowRight className="h-3 w-3 opacity-60" /> <MapPin className="h-3 w-3" /> place <ArrowRight className="h-3 w-3 opacity-60" /> <Hand className="h-3 w-3" /> walk it in 3D
+        <Sparkles className="h-3 w-3" /> say it <ArrowRight className="h-3 w-3 opacity-60" /> <MapPin className="h-3 w-3" /> see it <ArrowRight className="h-3 w-3 opacity-60" /> <Hand className="h-3 w-3" /> walk it in 3D
       </div>
     </div>
   );

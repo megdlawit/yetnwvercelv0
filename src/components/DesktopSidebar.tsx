@@ -31,6 +31,8 @@ import VisitedPanel from './VisitedPanel';
 import DirectionsPanel from './DirectionsPanel';
 import EmailGateDialog from './EmailGateDialog';
 import ProfilePage from './ProfilePage';
+import { BrowseBody, BrowseHeader } from './visitor/VenueBrowse';
+import { useBrowseTab, type VenueBrowseProps } from './visitor/VenueBrowsePanel';
 
 export type DesktopTab = 'explore' | 'saved' | 'profile';
 
@@ -85,13 +87,17 @@ interface DesktopSidebarProps {
   onEditStart?: () => void;
 }
 
+/** Discover / Explore for a venue (its events, tours, guides and stories). */
+type BrowseProp = { browse?: VenueBrowseProps };
+
 const TAB_META: { id: DesktopTab; label: string; Icon: typeof Compass }[] = [
   { id: 'explore', label: 'Explore', Icon: Compass },
   { id: 'saved', label: 'Saved', Icon: BookmarkPlus },
   { id: 'profile', label: 'Profile', Icon: CircleUserRound },
 ];
 
-const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
+const DesktopSidebar: React.FC<DesktopSidebarProps & BrowseProp> = ({
+  browse,
   parkName,
   buildings, buildingsLoading, onBuildingSelect, onOutdoorPlaceSelect,
   onCategorySelect, onQRScan, outdoorPois, allPois, onOutdoorPOISelect, parkCenter,
@@ -103,20 +109,16 @@ const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
   startName, endName, showRoute, onEditStart,
 }) => {
   const [placesSubTab, setPlacesSubTab] = useState<'saved' | 'visited'>('saved');
+  const [browseTab, setBrowseTab] = useBrowseTab(browse?.start);
   const { profile, hasEmail, updateEmail, signOut, updateProfile, loading: profileLoading, error: profileError, stepsHistory } = useProfile();
-  const { savedPlaces, savedPOIs, loading: savedLoading, isSaved, toggleSave, unsavePlace, error: savedError } = useSavedPlaces(profile?.id);
-  const { visitedPlaces, visitedPOIs, loading: visitedLoading, removeVisit } = useVisitedPlaces(profile?.id);
+  const { savedPlaces, savedPOIs, loading: savedLoading, isSaved, toggleSave, unsavePlace, error: savedError } = useSavedPlaces(profile?.id, pois);
+  const { visitedPlaces, visitedPOIs, loading: visitedLoading, removeVisit } = useVisitedPlaces(profile?.id, pois);
   const { toast } = useToast();
 
   const [emailGateOpen, setEmailGateOpen] = useState(false);
   const [pendingSavePoiId, setPendingSavePoiId] = useState<string | null>(null);
 
   const handleTabClick = (tab: DesktopTab) => {
-    if (tab === 'profile' && !hasEmail) {
-      setPendingSavePoiId(null);
-      setEmailGateOpen(true);
-      return;
-    }
     onTabChange(tab);
   };
 
@@ -130,17 +132,13 @@ const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
       }
       return;
     }
-    if (!hasEmail) {
-      setPendingSavePoiId(poiId);
-      setEmailGateOpen(true);
-      return;
-    }
+    // Saved at once, guest or not; an email (Profile) keeps it on every device.
     const ok = await toggleSave(poiId);
     if (!ok) {
       toast({ title: 'Could not save place', description: savedError || 'Something went wrong. Check your connection and try again.', variant: 'destructive' });
       return;
     }
-    toast({ title: 'Saved!', description: 'View it anytime in the Saved tab.' });
+    toast({ title: 'Saved!', description: hasEmail ? 'View it anytime in the Saved tab.' : 'Find it in Saved. Add your email in Profile to keep it on every device.' });
   };
 
   const handleEmailGateSubmit = async (email: string): Promise<boolean> => {
@@ -166,6 +164,11 @@ const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
     >
       {/* ── Header: brand + search ── */}
       <div className="flex-shrink-0 px-4 pt-4 pb-3 border-b border-border/15 space-y-3">
+        {browse ? (
+          <BrowseHeader name={browse.name} accent={browse.accent} tab={browseTab}
+            onTab={t => { setBrowseTab(t); onTabChange('explore'); }}
+            sub={<>{browse.sub} · <button onClick={onToggleGPS} className={gpsActive ? 'font-semibold text-primary' : 'underline-offset-2 hover:underline'}>{gpsActive ? 'GPS on' : 'GPS off'}</button></>} />
+        ) : (
         <div className="flex items-center justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[9.5px] font-bold uppercase tracking-[.14em] text-moss"><span className="h-[7px] w-[7px] flex-none animate-[pinglime_1.6s_infinite] rounded-full bg-lime" />Venue map</div>
@@ -183,6 +186,7 @@ const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
             {gpsActive ? 'GPS ACTIVE' : 'GPS INACTIVE'}
           </button>
         </div>
+        )}
 
         <MapSearchBar
           onQRScan={onQRScan}
@@ -319,6 +323,9 @@ const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
               />
             )}
           </>
+        ) : browse ? (
+          <BrowseBody tab={browseTab} places={browse.places} content={browse.content} start={browse.start}
+            onPlace={browse.onPlace} onNavigate={browse.onNavigate} />
         ) : (
           <ExplorePanel
             pois={pois}

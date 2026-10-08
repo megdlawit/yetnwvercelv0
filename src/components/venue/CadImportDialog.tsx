@@ -21,7 +21,8 @@ import { readCadFile, extOf } from '@/lib/cad/readFile';
 import { classifyLayers, type LayerInfo } from '@/lib/cad/classify';
 import { buildVenue, type BuiltVenue } from '@/lib/cad/buildVenue';
 import { inferUnits, findDrawings, withinArea, quarterArcs, type DrawingArea } from '@/lib/cad/analyze';
-import { commitVenue, type CommitResult } from '@/lib/cad/commitVenue';
+import { commitVenue, walkableGraph, type CommitResult } from '@/lib/cad/commitVenue';
+import type { PathGraphResult } from '@/lib/dxf/generatePathGraph';
 import { CATEGORY_LABELS, type CadDrawing, type Category, type LayerMapping } from '@/lib/cad/types';
 
 export interface ImportSummary extends CommitResult { format: string; health: BuiltVenue['health'] }
@@ -107,9 +108,11 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
   const [justFixed, setJustFixed] = useState(false);
   // Create venue: build steps shown while it saves (see BUILD_STEPS).
   const [buildStep, setBuildStep] = useState(0);
+  // The walkable paths being built (drawn by the build animation, then saved).
+  const [paths, setPaths] = useState<PathGraphResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const reset = () => { setStage('pick'); setDone(0); setError(null); setSheet(null); setAreas([]); setAreaIdx(0); setSummary(null); setJustFixed(false); setBuildStep(0); };
+  const reset = () => { setStage('pick'); setDone(0); setError(null); setSheet(null); setAreas([]); setAreaIdx(0); setSummary(null); setJustFixed(false); setBuildStep(0); setPaths(null); };
   const drawing = useMemo(() => (sheet ? withinArea(sheet, areas.length > 1 ? areas[areaIdx] ?? null : null) : null), [sheet, areas, areaIdx]);
   const close = (v: boolean) => { onOpenChange(v); if (!v) { reset(); setFile(null); } };
 
@@ -177,16 +180,21 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
 
   const save = async () => {
     if (!drawing || !built) return;
-    setStage('saving'); setError(null); setBuildStep(0);
+    setStage('saving'); setError(null); setBuildStep(0); setPaths(null);
+    await tick();
+    // The walkable paths, worked out once: drawn by the animation, then saved.
+    const graph = walkableGraph(built, pxPerMeter);
+    setPaths(graph);
     // Walk through the build steps while the venue is written; the last one
     // completes only when the save really has.
-    const timers = BUILD_STEPS.slice(0, -1).map((_, i) => setTimeout(() => setBuildStep(i + 1), 650 * (i + 1)));
+    const at = STEP_MS.map((_, i) => STEP_MS.slice(0, i + 1).reduce((x, y) => x + y, 0));
+    const timers = at.slice(0, -1).map((t, i) => setTimeout(() => setBuildStep(i + 1), t));
     try {
       const { data } = await supabase.auth.getSession();
       if (!data.session) throw new Error('Sign in as this venue\'s owner first.');
       const [result] = await Promise.all([
-        commitVenue(supabase, buildingId, floorId, built, `${drawing.format}-import`, pxPerMeter),
-        new Promise(r => setTimeout(r, 650 * BUILD_STEPS.length)),
+        commitVenue(supabase, buildingId, floorId, built, `${drawing.format}-import`, pxPerMeter, graph),
+        new Promise(r => setTimeout(r, at[at.length - 1])),
       ]);
       setBuildStep(BUILD_STEPS.length);
       await new Promise(r => setTimeout(r, 450));
@@ -232,7 +240,7 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
       <DialogContent className={cn(stage === 'review' ? 'max-w-4xl' : stage === 'saving' || stage === 'done' ? 'max-w-2xl' : 'max-w-xl', 'max-h-[92vh] overflow-y-auto')}>
         <DialogHeader>
           <DialogTitle>
-            {stage === 'done' ? 'Your digital venue is ready 🎉' : stage === 'saving' ? 'Building your digital venue…' : stage === 'review' ? 'Review your map' : stage === 'analyzing' ? 'Analyzing your map…' : 'Import your existing map'}
+            {stage === 'done' ? 'Your digital venue is ready' : stage === 'saving' ? 'Building your digital venue…' : stage === 'review' ? 'Review your map' : stage === 'analyzing' ? 'Analyzing your map…' : 'Import your existing map'}
           </DialogTitle>
           <DialogDescription>
             {stage === 'saving' ? 'Hang tight — your plan is turning into a walkable, 3D venue.'
@@ -301,7 +309,7 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
           </ul>
         )}
 
-        {stage === 'saving' && built && <BuildAnimation venue={built} step={buildStep} />}
+        {stage === 'saving' && built && <BuildAnimation venue={built} step={buildStep} paths={paths} />}
 
         {stage === 'review' && drawing && built && raw && (
           <div className="grid md:grid-cols-[1fr_300px] gap-4">
@@ -494,7 +502,7 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
 
         {stage === 'done' && summary && built && (
           <div className="grid gap-4 sm:grid-cols-[220px_1fr]">
-            <BuildAnimation venue={built} step={BUILD_STEPS.length} compact />
+            <BuildAnimation venue={built} step={BUILD_STEPS.length} paths={paths} compact />
           <ul className="rounded-xl border divide-y text-sm">
             {[
               ['Imported from', summary.format],
@@ -542,51 +550,144 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
 }
 
 const BUILD_STEPS = ['Laying the walls', 'Shaping the rooms', 'Placing doors, stairs and objects', 'Building walkable paths', 'Raising it into 3D'] as const;
+/** How long each build step plays (ms); the paths get the most time. */
+const STEP_MS = [1100, 650, 650, 1700, 1300] as const;
+const PATH_COLOR = 'hsl(199 89% 48%)';
+
+/** Draw order for the paths: outward from the entrance (or a door), like they're being walked. */
+function pathWave(venue: BuiltVenue, g: PathGraphResult) {
+  const n = g.nodes.length;
+  const adj: number[][] = g.nodes.map(() => []);
+  for (const e of g.edges) { adj[e.from].push(e.to); adj[e.to].push(e.from); }
+  const start = venue.features.find(f => f.kind === 'entrance') ?? venue.features.find(f => f.kind === 'door');
+  const order = g.nodes.map((_, i) => i);
+  if (start) order.sort((a, b) => Math.hypot(g.nodes[a].x - start.x, g.nodes[a].y - start.y) - Math.hypot(g.nodes[b].x - start.x, g.nodes[b].y - start.y));
+  const depth = new Array<number>(n).fill(-1);
+  let max = 1;
+  for (const s of order) {
+    if (depth[s] >= 0 || !adj[s].length) continue;
+    depth[s] = 0;
+    const q = [s];
+    for (let h = 0; h < q.length; h++) {
+      for (const m of adj[q[h]]) if (depth[m] < 0) { depth[m] = depth[q[h]] + 1; max = Math.max(max, depth[m]); q.push(m); }
+    }
+  }
+  return { depth: depth.map(d => Math.max(0, d)), max };
+}
 
 /**
- * The plan building itself: walls draw in, rooms fill, objects pop in, paths
- * run — paced by `step` (which part of BUILD_STEPS is under way).
+ * The plan building itself, on a blueprint: walls sweep in, rooms fill,
+ * objects pop in, then the real walkable paths grow out from the entrance
+ * and start to flow — and finally the plan tilts up and its walls rise into
+ * 3D. Paced by `step` (which part of BUILD_STEPS is under way).
  */
-function BuildAnimation({ venue, step, compact = false }: { venue: BuiltVenue; step: number; compact?: boolean }) {
+function BuildAnimation({ venue, step, paths, compact = false }: { venue: BuiltVenue; step: number; paths: PathGraphResult | null; compact?: boolean }) {
   const pts = [...venue.walls.flatMap(w => [{ x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }]), ...venue.rooms.flatMap(r => r.polygon)];
   const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
   const minX = Math.min(...xs, 0), minY = Math.min(...ys, 0), w = (Math.max(...xs, 1) - minX) || 1, h = (Math.max(...ys, 1) - minY) || 1;
   const pad = Math.max(w, h) * 0.06, sw = Math.max(w, h) / 260;
+  const viewBox = `${minX - pad} ${minY - pad} ${w + pad * 2} ${h + pad * 2}`;
   const objects = venue.features.filter(f => f.kind !== 'label');
-  const counts = [venue.walls.length, venue.rooms.length, objects.length];
+  const counts = [venue.walls.length, venue.rooms.length, objects.length, paths?.edges.length ?? 0];
   const shown = (i: number) => step > i || (step === i && !compact);
+  const raised = !compact && step >= 4;
+  const anim = (a: string) => (compact ? undefined : a);
+
+  // Walls sweep in diagonally across the plan.
+  const wallOrder = useMemo(() => {
+    const rank = venue.walls.map((s, i) => ({ i, k: (s.x1 + s.x2) / 2 - minX + ((s.y1 + s.y2) / 2 - minY) }));
+    rank.sort((a, b) => a.k - b.k);
+    const at = new Array<number>(venue.walls.length);
+    rank.forEach((r, n) => { at[r.i] = n / Math.max(1, rank.length - 1); });
+    return at;
+  }, [venue.walls, minX, minY]);
+  const wave = useMemo(() => (paths ? pathWave(venue, paths) : null), [venue, paths]);
+  const PATH_S = 1.15; // seconds for the paths to reach the far end
+  const edgeDelay = (a: number, b: number) => (wave ? (Math.min(wave.depth[a], wave.depth[b]) / wave.max) * PATH_S : 0);
+  const layers = venue.walls.length > 1500 ? 4 : 10;
+
+  const walls = (color: string, width: number, animate: boolean) => venue.walls.map((s, i) => (
+    <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} pathLength={1} strokeDasharray={animate ? 1 : undefined} stroke={color} strokeWidth={width} strokeLinecap="round"
+      style={animate ? { animation: anim(`build-draw .5s ease-out ${(wallOrder[i] * 0.9).toFixed(3)}s both`) } : undefined} />
+  ));
+
   return (
     <div className={cn('space-y-4', compact && 'space-y-0')}>
       <style>{`
         @keyframes build-draw { from { stroke-dashoffset: 1 } to { stroke-dashoffset: 0 } }
         @keyframes build-fill { from { opacity: 0 } to { opacity: 1 } }
         @keyframes build-pop { 0% { transform: scale(0); opacity: 0 } 70% { transform: scale(1.35) } 100% { transform: scale(1); opacity: 1 } }
-        @keyframes build-path { from { stroke-dashoffset: 24 } to { stroke-dashoffset: 0 } }
-        @keyframes build-rise { from { transform: perspective(900px) rotateX(0deg) } to { transform: perspective(900px) rotateX(38deg) scale(.92) } }
-        @keyframes build-shine { from { transform: translateX(-120%) } to { transform: translateX(220%) } }
+        @keyframes build-ring { 0% { transform: scale(.6); opacity: .9 } 100% { transform: scale(2.6); opacity: 0 } }
+        @keyframes build-flow { from { stroke-dashoffset: 0 } to { stroke-dashoffset: ${-sw * 6} } }
+        @keyframes build-up { from { transform: translateZ(0); opacity: 0 } }
+        @keyframes build-scan { from { transform: translateX(-30%) } to { transform: translateX(330%) } }
       `}</style>
-      <div className={cn('relative overflow-hidden rounded-2xl border bg-gradient-to-br from-emerald-50 via-sky-50 to-white dark:from-emerald-950/30 dark:via-slate-900 dark:to-slate-950', compact ? 'aspect-square' : 'aspect-[16/9]')}>
-        <svg viewBox={`${minX - pad} ${minY - pad} ${w + pad * 2} ${h + pad * 2}`} className="h-full w-full"
-          style={step >= 4 ? { animation: 'build-rise 1.1s cubic-bezier(.3,.7,.3,1) forwards', transformOrigin: '50% 60%' } : undefined}>
-          {shown(1) && venue.rooms.map((r, i) => (
-            <polygon key={i} points={r.polygon.map(p => `${p.x},${p.y}`).join(' ')} fill="hsl(var(--primary) / 0.14)" stroke="hsl(var(--primary) / 0.45)" strokeWidth={sw}
-              style={{ animation: `build-fill .5s ease-out ${compact ? 0 : Math.min(i * 0.05, 0.5)}s both` }} />
-          ))}
-          {shown(0) && venue.walls.map((s, i) => (
-            <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} pathLength={1} strokeDasharray={1} stroke="hsl(var(--foreground))" strokeWidth={sw * 1.8} strokeLinecap="round"
-              style={{ animation: compact ? undefined : `build-draw .45s ease-out ${Math.min(i * (0.55 / Math.max(venue.walls.length, 1)), 0.55)}s both` }} />
-          ))}
-          {shown(3) && venue.rooms.length > 1 && venue.rooms.slice(1).map((r, i) => {
-            const a = r.polygon[0], c0 = venue.rooms[0].polygon[0];
-            return a && c0 ? <line key={i} x1={c0.x} y1={c0.y} x2={a.x} y2={a.y} stroke="hsl(199 89% 48%)" strokeWidth={sw * 1.4} strokeDasharray={`${sw * 4} ${sw * 3}`}
-              style={{ animation: compact ? undefined : 'build-path .8s linear infinite' }} opacity={0.75} /> : null;
-          })}
-          {shown(2) && objects.map((o, i) => (
-            <circle key={i} cx={o.x} cy={o.y} r={sw * 3.2} fill={FEATURE_COLORS[o.kind] ?? '#64748b'}
-              style={{ transformBox: 'fill-box', transformOrigin: 'center', animation: compact ? undefined : `build-pop .45s ease-out ${Math.min(i * 0.04, 0.6)}s both` }} />
-          ))}
-        </svg>
-        {!compact && step < BUILD_STEPS.length && <div className="pointer-events-none absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-white/50 to-transparent" style={{ animation: 'build-shine 1.6s ease-in-out infinite' }} />}
+      <div className={cn('relative overflow-hidden rounded-2xl border bg-[#0b2540] dark:bg-[#071a2e]', compact ? 'aspect-square' : 'aspect-[16/9]')}>
+        <div className="absolute inset-0" style={{ perspective: '1100px' }}>
+          <div className="absolute inset-0" style={{
+            transformStyle: 'preserve-3d', transformOrigin: '50% 55%',
+            transform: raised ? 'rotateX(50deg) rotateZ(-16deg) scale(.86)' : 'none',
+            transition: 'transform 1.1s cubic-bezier(.3,.7,.3,1)',
+          }}>
+            <svg viewBox={viewBox} className="absolute inset-0 h-full w-full">
+              <defs>
+                <pattern id="build-grid" width={Math.max(w, h) / 24} height={Math.max(w, h) / 24} patternUnits="userSpaceOnUse">
+                  <path d={`M ${Math.max(w, h) / 24} 0 L 0 0 0 ${Math.max(w, h) / 24}`} fill="none" stroke="rgb(125 211 252 / .14)" strokeWidth={sw * 0.5} />
+                </pattern>
+              </defs>
+              <rect x={minX - pad * 4} y={minY - pad * 4} width={w + pad * 8} height={h + pad * 8} fill="url(#build-grid)" />
+              {shown(1) && venue.rooms.map((r, i) => (
+                <polygon key={i} points={r.polygon.map(p => `${p.x},${p.y}`).join(' ')} fill="rgb(52 211 153 / .16)" stroke="rgb(52 211 153 / .45)" strokeWidth={sw}
+                  style={{ animation: anim(`build-fill .5s ease-out ${Math.min(i * 0.05, 0.5)}s both`) }} />
+              ))}
+              {shown(0) && walls('#e0f2fe', sw * 1.8, true)}
+
+              {/* The walkable paths, grown from the entrance outward, then flowing. */}
+              {shown(3) && paths && paths.edges.map((e, i) => {
+                const a = paths.nodes[e.from], b = paths.nodes[e.to];
+                if (!a || !b) return null;
+                const d = edgeDelay(e.from, e.to).toFixed(3);
+                return (
+                  <g key={i}>
+                    <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} pathLength={1} strokeDasharray={1} stroke={PATH_COLOR} strokeOpacity={0.3} strokeWidth={sw * 4.5} strokeLinecap="round"
+                      style={{ animation: anim(`build-draw .35s ease-out ${d}s both`) }} />
+                    <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} pathLength={1} strokeDasharray={1} stroke="#7dd3fc" strokeWidth={sw * 1.6} strokeLinecap="round"
+                      style={{ animation: anim(`build-draw .35s ease-out ${d}s both`) }} />
+                    {!compact && (
+                      <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} strokeDasharray={`${sw * 1.5} ${sw * 4.5}`} stroke="#ffffff" strokeWidth={sw * 1.1} strokeLinecap="round"
+                        style={{ animation: `build-fill .2s ease-out ${(+d + 0.35).toFixed(3)}s both, build-flow 1.1s linear ${(+d + 0.35).toFixed(3)}s infinite` }} />
+                    )}
+                  </g>
+                );
+              })}
+              {shown(3) && paths && paths.nodes.map((p, i) => (p.isHallway ? null : (
+                <g key={i}>
+                  {!compact && (
+                    <circle cx={p.x} cy={p.y} r={sw * 3} fill="none" stroke="#7dd3fc" strokeWidth={sw * 0.8}
+                      style={{ transformBox: 'fill-box', transformOrigin: 'center', animation: `build-ring 1.2s ease-out ${((wave?.depth[i] ?? 0) / (wave?.max ?? 1) * PATH_S + 0.3).toFixed(3)}s both` }} />
+                  )}
+                  <circle cx={p.x} cy={p.y} r={sw * 2.4} fill="#38bdf8" stroke="#e0f2fe" strokeWidth={sw * 0.6}
+                    style={{ transformBox: 'fill-box', transformOrigin: 'center', animation: anim(`build-pop .4s ease-out ${((wave?.depth[i] ?? 0) / (wave?.max ?? 1) * PATH_S + 0.25).toFixed(3)}s both`) }} />
+                </g>
+              )))}
+
+              {shown(2) && objects.map((o, i) => (
+                <circle key={i} cx={o.x} cy={o.y} r={sw * 3.2} fill={FEATURE_COLORS[o.kind] ?? '#64748b'}
+                  style={{ transformBox: 'fill-box', transformOrigin: 'center', animation: anim(`build-pop .45s ease-out ${Math.min(i * 0.04, 0.6)}s both`) }} />
+              ))}
+            </svg>
+            {/* Raising it into 3D: the walls stack up, layer by layer. */}
+            {raised && Array.from({ length: layers }, (_, k) => (
+              <svg key={k} viewBox={viewBox} className="absolute inset-0 h-full w-full pointer-events-none"
+                style={{ transform: `translateZ(${((k + 1) * 34) / layers}px)`, animation: `build-up .8s cubic-bezier(.3,.7,.3,1) ${(0.3 + k * 0.05).toFixed(2)}s both` }}>
+                {walls(k === layers - 1 ? '#ffffff' : 'rgb(125 211 252 / .55)', sw * (k === layers - 1 ? 2.2 : 2), false)}
+              </svg>
+            ))}
+          </div>
+        </div>
+        {!compact && step < 3 && (
+          <div className="pointer-events-none absolute inset-y-0 w-1/4 bg-gradient-to-r from-transparent via-sky-300/25 to-transparent" style={{ animation: 'build-scan 1.5s ease-in-out infinite' }} />
+        )}
       </div>
       {!compact && (
         <ol className="grid gap-1.5 sm:grid-cols-2">
@@ -595,7 +696,7 @@ function BuildAnimation({ venue, step, compact = false }: { venue: BuiltVenue; s
               i < step ? 'bg-primary/10 text-foreground' : i === step ? 'bg-muted font-medium' : 'text-muted-foreground/60')}>
               {i < step ? <Check className="h-4 w-4 text-primary animate-in zoom-in-50" /> : i === step ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : <span className="h-4 w-4 rounded-full border" />}
               <span className="flex-1">{label}</span>
-              {i < 3 && i < step && <span className="text-xs tabular-nums text-muted-foreground">{counts[i]}</span>}
+              {i < 4 && i < step && <span className="text-xs tabular-nums text-muted-foreground">{counts[i]}</span>}
             </li>
           ))}
         </ol>

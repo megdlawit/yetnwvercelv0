@@ -33,5 +33,12 @@
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "functions": {
+    "api/dwg-convert.ts": {
+      "includeFiles": "node_modules/@mlightcad/libredwg-web/wasm/**",
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  }
 }

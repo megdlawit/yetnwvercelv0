@@ -7,7 +7,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import { toast } from 'sonner';
 import {
   Search, Eye, Bell, HelpCircle, ChevronsLeft, ChevronsRight, Menu, ChevronDown, Check, Plus, LogOut, KeyRound,
-  ShieldCheck, Loader2, Globe, Building2, BookOpen, Upload, AlertTriangle, Trees, Sparkles, Lightbulb,
+  ShieldCheck, Loader2, Globe, Building2, BookOpen, Upload, AlertTriangle, Trees, Sparkles, Lightbulb, PenTool,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -30,7 +30,7 @@ import { Logo } from '@/components/auth/AuthShell';
 import { DashboardContext, type DashboardValue } from './DashboardContext';
 import GlobalSearch from './GlobalSearch';
 import PublishDialog from './PublishDialog';
-import { NAV } from './nav';
+import { SECTIONS, sectionOf } from './nav';
 import GuidedTour from './GuidedTour';
 import PageTip, { resetPageTips } from './PageTips';
 
@@ -115,9 +115,12 @@ export default function DashboardLayout() {
             Accounts, publishing and activity need one database update: run <code className="font-mono">supabase/migrations/20261002090000_institution_accounts.sql</code> in the Supabase SQL editor.
           </p>
         )}
+        <ReviewBanner status={(ws.institution as { status?: string } | null)?.status ?? null}
+          venue={value ? (value.data.building as { review_status?: string | null; review_note?: string | null }) : null} />
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 print:p-0">
           {value ? (
             <DashboardContext.Provider value={value}>
+              <SectionTabs area={value.area.many} />
               <PageTip hidden={tourOpen} />
               <Outlet />
               <GuidedTour open={tourOpen} firstName={ws.account.displayName.split(' ')[0]} hasMap={value.data.counts.walls + value.data.counts.rooms > 0}
@@ -144,8 +147,9 @@ function Sidebar({ collapsed, onToggle, onNavigate, value, mobile }: {
   const ws = useWorkspace();
   const navigate = useNavigate();
   const editor = value?.editorUrl() ?? null;
+  const current = sectionOf(useLocation().pathname);
 
-  const item = (label: string, Icon: typeof Search, el: ReactNode) => collapsed ? (
+  const item =(label: string, Icon: typeof Search, el: ReactNode) => collapsed ? (
     <Tooltip key={label}><TooltipTrigger asChild>{el}</TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>
   ) : el;
   const cls = (active: boolean) => cn('flex h-9 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors',
@@ -158,28 +162,23 @@ function Sidebar({ collapsed, onToggle, onNavigate, value, mobile }: {
         {!mobile && !collapsed && <button onClick={onToggle} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted" aria-label="Collapse sidebar"><ChevronsLeft className="h-4 w-4" /></button>}
       </div>
       <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4" aria-label="Dashboard" data-tour={mobile ? undefined : 'sidebar'}>
-        {NAV.map(group => (
-          <div key={group.title}>
-            {!collapsed && <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">{group.title}</p>}
-            <div className="space-y-0.5">
-              {group.items.map(i => {
-                const label = i.label === 'Floors' ? value?.area.many ?? 'Floors' : i.label;
-                if (i.editor) {
-                  return item(label, i.icon, (
-                    <button key={label} disabled={!editor} onClick={() => { onNavigate(); if (editor) navigate(editor); }} className={cn(cls(false), 'w-full disabled:opacity-40')}>
-                      <i.icon className="h-[18px] w-[18px] shrink-0" /> {!collapsed && label}
-                    </button>
-                  ));
-                }
-                return item(label, i.icon, (
-                  <NavLink key={label} to={i.to!} end={i.to === '/dashboard'} onClick={onNavigate} className={({ isActive }) => cls(isActive)}>
-                    <i.icon className="h-[18px] w-[18px] shrink-0" /> {!collapsed && label}
-                  </NavLink>
-                ));
-              })}
-            </div>
-          </div>
+        {item('Edit map', PenTool, (
+          <button disabled={!editor} onClick={() => { onNavigate(); if (editor) navigate(editor); }}
+            className={cn('flex h-11 w-full items-center gap-3 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground shadow-sm transition-opacity hover:opacity-90 disabled:opacity-40', collapsed && 'justify-center px-0')}>
+            <PenTool className="h-[18px] w-[18px] shrink-0" /> {!collapsed && 'Edit map'}
+          </button>
         ))}
+        <div className="space-y-1">
+          {SECTIONS.map(s => {
+            const active = current?.label === s.label;
+            return item(s.label, s.icon, (
+              <Link key={s.label} to={s.tabs[0].to} onClick={onNavigate} aria-current={active ? 'page' : undefined}
+                className={cn(cls(active), 'h-11 text-[15px]')}>
+                <s.icon className="h-5 w-5 shrink-0" /> {!collapsed && s.label}
+              </Link>
+            ));
+          })}
+        </div>
       </nav>
       <div className="border-t p-3 space-y-1">
         {collapsed && !mobile && <button onClick={onToggle} className={cls(false) + ' w-full'} aria-label="Expand sidebar"><ChevronsRight className="h-4 w-4" /></button>}
@@ -225,10 +224,7 @@ function Header({ value, onMenu, onSearch, onPublish, onTour }: { value: Dashboa
       )}
 
       <div className="ml-auto flex items-center gap-1">
-        <button onClick={onSearch} data-tour="search" className="hidden h-9 w-56 items-center gap-2 rounded-xl border bg-muted/40 px-3 text-sm text-muted-foreground hover:bg-muted md:flex">
-          <Search className="h-4 w-4" /> Search venue… <kbd className="ml-auto rounded border bg-background px-1.5 text-[10px]">Ctrl K</kbd>
-        </button>
-        <IconButton label="Search" onClick={onSearch} className="md:hidden" tour="search"><Search className="h-[18px] w-[18px]" /></IconButton>
+        <IconButton label="Search (Ctrl K)" onClick={onSearch} tour="search"><Search className="h-[18px] w-[18px]" /></IconButton>
         {value && (
           <Button variant="ghost" size="sm" asChild className="hidden h-9 rounded-xl sm:flex" data-tour="preview">
             <a href={value.previewUrl} target="_blank" rel="noreferrer"><Eye className="mr-1.5 h-4 w-4" /> Preview</a>
@@ -517,5 +513,57 @@ function NoVenue() {
       </div>
       <NewVenueDialog open={open} onOpenChange={setOpen} />
     </FullScreen>
+  );
+}
+
+// ── Approval status (from the Yet New control center) ───────────────────────
+
+function ReviewBanner({ status, venue }: { status: string | null; venue: { review_status?: string | null; review_note?: string | null } | null }) {
+  const box = 'mx-4 mt-4 flex items-start gap-2.5 rounded-2xl border px-4 py-3 text-sm print:hidden';
+  if (status === 'suspended' || status === 'rejected') {
+    return (
+      <div className={cn(box, 'border-red-200 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200')}>
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <span><b>{status === 'suspended' ? 'Your institution is suspended.' : 'Your institution wasn’t approved.'}</b> Your venues are offline for visitors. Contact the Yet New team to sort it out.</span>
+      </div>
+    );
+  }
+  if (venue?.review_status === 'rejected') {
+    return (
+      <div className={cn(box, 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100')}>
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <span><b>Publishing wasn’t approved yet.</b> {venue.review_note ? `Yet New says: “${venue.review_note}”` : 'Make your changes and publish again to send it back for review.'}</span>
+      </div>
+    );
+  }
+  if (venue?.review_status === 'pending' || status === 'pending') {
+    return (
+      <div className={cn(box, 'border-sky-200 bg-sky-50 text-sky-950 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-100')}>
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>
+          {venue?.review_status === 'pending'
+            ? <><b>Waiting for review.</b> Your venue goes live as soon as the Yet New team approves it — keep building meanwhile.</>
+            : <><b>Your account is being reviewed.</b> Build your venue as you like; when you publish, the Yet New team approves it before visitors see it.</>}
+        </span>
+      </div>
+    );
+  }
+  return null;
+}
+
+/** The pages inside the current section, as simple tabs. */
+function SectionTabs({ area }: { area: string }) {
+  const s = sectionOf(useLocation().pathname);
+  if (!s || s.tabs.length < 2) return null;
+  return (
+    <nav aria-label={s.label} className="-mt-1 mb-5 flex gap-1 overflow-x-auto border-b print:hidden">
+      {s.tabs.map(t => (
+        <NavLink key={t.to} to={t.to} end
+          className={({ isActive }) => cn('-mb-px shrink-0 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors',
+            isActive ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}>
+          {t.label === 'Floors' ? area : t.label}
+        </NavLink>
+      ))}
+    </nav>
   );
 }

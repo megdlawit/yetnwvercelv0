@@ -60,6 +60,12 @@ export interface Venue3DProps {
   pinColors?: Record<string, string>;
   /** A second line under a pin's name (e.g. "3 min walk"), by node id. */
   pinSubs?: Record<string, string>;
+  /** A photo for each place's badge, by node id. */
+  pinImages?: Record<string, string>;
+  /** An icon (SVG markup) for each place's badge when it has no photo, by node id. */
+  pinIcons?: Record<string, string>;
+  /** The visitor zoomed out past the whole floor (go to the outdoor map). */
+  onZoomOutExit?: () => void;
   /** How tall walls stand, in metres (the venue's Indoor 3D map setting). */
   wallHeight?: number;
   /** Which details to draw (Map Layers). Omitted: everything, with paths per `showPaths`. */
@@ -98,7 +104,7 @@ function Venue3D(props: Venue3DProps) {
   const {
     walls, rooms, nodes, edges, features = [], level = 0, otherFloors = [], selectedNodeId, onSelectNode,
     pxPerMeter, focusNonce = 0, route, showPaths = true, initialMode = 'overview', onModeChange, className, theme, here, destination,
-    cinematic = false, chrome = 'full', pinColors, pinSubs, wallHeight = 2.8, layers, registerControls, cameraRequest,
+    cinematic = false, chrome = 'full', pinColors, pinSubs, pinImages, pinIcons, onZoomOutExit, wallHeight = 2.8, layers, registerControls, cameraRequest,
     model, routeNodeIds, floorId, onFloorChange, introNonce = 0,
   } = props;
   const viewer = useRef<IndoorViewer3D | null>(null);
@@ -135,9 +141,10 @@ function Venue3D(props: Venue3DProps) {
     return nodes.filter(n => !n.isHallway).map(n => {
       const room = roomByNode.get(n.id);
       return { id: n.id, floorId: curId, at: m(n), name: room?.name || n.name || '', sub: pinSubs?.[n.id] ?? null,
-        color: pinColors?.[n.id] ?? (room && PIN_COLORS[room.type]) ?? theme?.primary ?? null, priority: n.id === selectedNodeId ? 9 : 1 };
+        color: pinColors?.[n.id] ?? (room && PIN_COLORS[room.type]) ?? theme?.primary ?? null, priority: n.id === selectedNodeId ? 9 : 1,
+        image: pinImages?.[n.id] ?? null, icon: pinIcons?.[n.id] ?? null };
     }).filter(t => t.name);
-  }, [nodes, rooms, pinColors, pinSubs, theme, curId, pxPerMeter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nodes, rooms, pinColors, pinSubs, pinImages, pinIcons, theme, curId, pxPerMeter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const routeKey = model && routeNodeIds && routeNodeIds.length > 1 ? routeNodeIds.join('>') : (route ?? []).map(p => `${Math.round(p.x)},${Math.round(p.y)}`).join(';');
   // Across floors through the model when we have the path points; else this floor's points.
@@ -185,7 +192,7 @@ function Venue3D(props: Venue3DProps) {
       style={chrome === 'full' ? ({ '--ivw-walkbar-top': '56px' } as React.CSSProperties) : undefined}>
       <IndoorViewer3DView ref={setRef} venue={venue} floorId={curId} mode={toViewMode(initialMode)} theme={vTheme} layers={viewLayers}
         places={places} roomLabels route={path} position={herePose} destination={destPose} selectedId={selectedNodeId}
-        focusNonce={focusNonce} cinematic={cinematic} onSelect={onSelect} onFloorChange={onFloorChange} />
+        focusNonce={focusNonce} cinematic={cinematic} onSelect={onSelect} onFloorChange={onFloorChange} onZoomOutLimit={onZoomOutExit} />
 
       {/* Camera modes */}
       {chrome === 'full' && (

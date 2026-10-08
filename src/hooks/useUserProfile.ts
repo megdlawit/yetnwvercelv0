@@ -90,6 +90,8 @@ export function useUserProfile() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [stepsHistory, setStepsHistory] = useState<DailyStepEntry[]>([]);
+  // The last 12 weeks (oldest first), for the profile's streaks and activity calendar.
+  const [stepsLog, setStepsLog] = useState<DailyStepEntry[]>([]);
   // Tracks *today's* accumulated steps so syncActivityStats can upsert an
   // absolute value into daily_steps without a read-modify-write round trip
   // on every call (it fires on every PDR step tick while navigating — see
@@ -110,7 +112,7 @@ export function useUserProfile() {
   const sessionStepsRef = useRef(0);
 
   const fetchStepsHistory = useCallback(async (profileId: string) => {
-    const keys = lastNDateKeys(7);
+    const keys = lastNDateKeys(84);
     const { data, error: fetchErr } = await supabase
       .from('daily_steps')
       .select('log_date, steps')
@@ -119,7 +121,9 @@ export function useUserProfile() {
     if (fetchErr) return; // non-fatal — chart just shows zeros until the next successful fetch
     const byDate = new Map<string, number>();
     for (const row of data ?? []) byDate.set(row.log_date, row.steps);
-    setStepsHistory(keys.map((date) => ({ date, steps: byDate.get(date) ?? 0 })));
+    const log = keys.map((date) => ({ date, steps: byDate.get(date) ?? 0 }));
+    setStepsLog(log);
+    setStepsHistory(log.slice(-7));
     todayStepsRef.current = byDate.get(keys[keys.length - 1]) ?? 0;
   }, []);
 
@@ -348,10 +352,12 @@ export function useUserProfile() {
           { onConflict: 'profile_id,log_date' },
         );
       if (!dailyErr) {
-        setStepsHistory((prev) => {
+        const bump = (prev: DailyStepEntry[]) => {
           if (prev.length === 0 || prev[prev.length - 1].date !== today) return prev; // day rolled over — next mount refetches cleanly
           return [...prev.slice(0, -1), { date: today, steps: todayStepsRef.current }];
-        });
+        };
+        setStepsHistory(bump);
+        setStepsLog(bump);
       }
     }
   }, [profile]);
@@ -428,5 +434,6 @@ export function useUserProfile() {
     updateEmail,
     syncActivityStats,
     stepsHistory,
+    stepsLog,
   };
 }

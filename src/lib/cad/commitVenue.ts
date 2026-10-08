@@ -8,6 +8,7 @@ import type { Database } from '@/integrations/supabase/types';
 import { generatePathGraph, type PathGraphResult } from '../dxf/generatePathGraph';
 import { buildRouteGraph } from './routeGraph';
 import type { BuiltVenue } from './buildVenue';
+import { repairPathsThroughWalls, type PlanRows } from '@ethi/indoor-core';
 
 const CHUNK = 500;
 
@@ -36,8 +37,9 @@ async function chunked<T>(rows: T[], insert: (part: T[]) => PromiseLike<{ error:
 
 export async function commitVenue(
   supabase: SupabaseClient<Database>, buildingId: string, floorId: string, venue: BuiltVenue, source: string, pxPerMeter = 40,
+  /** The walkable paths, when already worked out (walkableGraph) — e.g. to show them while saving. */
+  graph: PathGraphResult = walkableGraph(venue, pxPerMeter),
 ): Promise<CommitResult> {
-  const graph = walkableGraph(venue, pxPerMeter);
   const warnings = [...graph.warnings];
 
   // ── what this database supports — checked before anything is deleted ──────
@@ -117,12 +119,49 @@ export async function commitVenue(
  */
 export function walkableGraph(venue: BuiltVenue, pxPerMeter: number): PathGraphResult {
   const skeleton = generatePathGraph(venue.walls, venue.rooms.map(r => ({ name: r.name, x: r.x, y: r.y, width: r.width, height: r.height })), {});
-  if (!venue.rooms.length) return skeleton;
+  if (!venue.rooms.length) return throughDoors(venue, skeleton, pxPerMeter);
   const doors = venue.features.filter(f => f.kind === 'door' || f.kind === 'entrance').map(f => ({ x: f.x, y: f.y }));
   const rooms = buildRouteGraph({ walls: venue.walls, rooms: venue.rooms, doors, pxPerMeter });
   // Each method fails on different drawings (sealed door panels, leaky
   // gaps, rooms cut in pieces), so keep whichever connects more of the venue.
-  return connectivity(rooms) >= connectivity(skeleton) ? rooms : skeleton;
+  return throughDoors(venue, connectivity(rooms) >= connectivity(skeleton) ? rooms : skeleton, pxPerMeter);
+}
+
+/**
+ * No path is saved through a wall: each one that crosses a wall is sent round
+ * it and through a doorway instead (new corner points), and one with no
+ * doorway to use is left out — both reported in the import's warnings.
+ */
+export function throughDoors(venue: BuiltVenue, g: PathGraphResult, pxPerMeter: number): PathGraphResult {
+  if (!g.edges.length || !venue.walls.length) return g;
+  const F = 'f';
+  const rows: PlanRows = {
+    building: { id: 'b', name: '' },
+    floors: [{ id: F, name: '', level: 0 }],
+    walls: venue.walls.map((w, i) => ({ id: `w${i}`, floor_id: F, x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2 })),
+    rooms: [],
+    map_features: venue.features
+      .filter(f => f.kind === 'door' || f.kind === 'entrance')
+      .map((f, i) => ({ id: `d${i}`, floor_id: F, kind: f.kind, x: f.x, y: f.y, rotation_deg: f.rotationDeg, width: f.width ?? null })),
+    nodes: g.nodes.map((n, i) => ({ id: `n${i}`, floor_id: F, x: n.x, y: n.y, is_hallway: n.isHallway })),
+    edges: g.edges.map((e, i) => ({ id: `e${i}`, from_node: `n${e.from}`, to_node: `n${e.to}` })),
+  };
+  let k = 0;
+  const fix = repairPathsThroughWalls(rows, { pxPerMeter, newId: () => `x${k++}` });
+  if (!fix.rerouted.length && !fix.dropped.length) return g;
+
+  const nodes = [...g.nodes];
+  const index = new Map(g.nodes.map((_, i) => [`n${i}`, i]));
+  for (const n of fix.nodes) { index.set(n.id, nodes.length); nodes.push({ x: n.x, y: n.y, isHallway: true, roomIndex: null }); }
+  const gone = new Set([...fix.rerouted, ...fix.dropped]);
+  const edges = [
+    ...g.edges.filter((_, i) => !gone.has(`e${i}`)),
+    ...fix.edges.map(e => ({ from: index.get(e.from_node)!, to: index.get(e.to_node)!, weight: e.weight })),
+  ];
+  const warnings = [...g.warnings];
+  if (fix.rerouted.length) warnings.push(`${fix.rerouted.length} path${fix.rerouted.length === 1 ? '' : 's'} went through a wall and now go${fix.rerouted.length === 1 ? 'es' : ''} round it, through a doorway.`);
+  if (fix.dropped.length) warnings.push(`${fix.dropped.length} path${fix.dropped.length === 1 ? '' : 's'} went through a wall with no doorway to use and ${fix.dropped.length === 1 ? 'was' : 'were'} left out — add the missing doors in the editor (Door tool) and connect those places.`);
+  return { nodes, edges, warnings };
 }
 
 /** Rooms reachable from the largest network, minus a little for every extra network. */

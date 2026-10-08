@@ -1,44 +1,67 @@
 // api/dwg-convert.ts
 //
-// POST /api/dwg-convert   body: { dwgBase64: string, fileName?: string }
+// POST /api/dwg-convert
+//   body: the DWG file's bytes (Content-Type: application/octet-stream),
+//         or JSON { dwgBase64, fileName } (older clients)
 // → { dxfText: string }
 //
-// Why this file exists at all: DWG is AutoCAD's native format, and unlike
-// DXF it's binary and was never fully published by Autodesk. There is no
-// safe, legal, pure-JS/Node DWG reader — the only options are the
-// GPL-licensed LibreDWG C library (not an npm package, can't run in a
-// Vercel function), Autodesk's own Platform Services API, or a hosted
-// conversion API. This uses CloudConvert because it needs nothing more
-// than an API key and a fetch call — no binary, no native build step,
-// which matters for staying inside a Vercel serverless function.
+// DWG is AutoCAD's binary format. It's converted to DXF right here on the
+// server with LibreDWG (compiled to WebAssembly: @mlightcad/libredwg-web) —
+// no account, no API key, and the drawing never leaves our server. The DXF
+// then goes through the same importer as any DXF upload.
 //
-// *** THIS FILE IS UNVERIFIED. *** I wrote it against CloudConvert's
-// documented v2 REST API shape, but this sandbox has no network access to
-// cloudconvert.com, so I could not actually run a conversion end to end
-// the way parseDxf.ts / dxfToVenue.ts / generatePathGraph.ts were tested.
-// Before relying on it: get a CloudConvert API key (they have a free tier,
-// https://cloudconvert.com/api/v2), set CLOUDCONVERT_API_KEY in your Vercel
-// env, and test with one real DWG file end to end. If CloudConvert has
-// changed their task/job shape since this was written, the error message
-// from their API will show up directly in the response — check that first.
+// Licence note: LibreDWG is GPL-3.0. It runs only on the server and is never
+// sent to visitors' browsers, so it isn't distributed with the app — keep it
+// that way (don't import it from src/).
 //
-// The free, zero-dependency alternative that needs none of this: in
-// AutoCAD, File → Save As → "AutoCAD DXF (*.dxf)" — one click, no API key,
-// and it's what I'd actually recommend leading with in the product UI.
-// This endpoint exists for the "upload literally any CAD export" case.
+// If CLOUDCONVERT_API_KEY is set, CloudConvert is the fallback for the rare
+// DWG that LibreDWG can't read.
 //
-// Flow: upload the DWG to CloudConvert → convert task (dwg → dxf) →
-// export/url task → download the result → return its text. All four
-// CloudConvert steps happen inside this one request, so it's slow (expect
-// several seconds to tens of seconds depending on file size) — the client
-// should show a spinner, not a tight timeout.
+// Vercel limits a request body to about 4.5 MB; bigger DWGs should be saved
+// as DXF in AutoCAD (File → Save As → AutoCAD DXF) — the client says so.
 
 import type { IncomingMessage } from 'http';
+import { createRequire } from 'module';
+import path from 'path';
+
+// LibreDWG, loaded once per server instance.
+let libredwg: Promise<{ dwg_write_dxf(data: ArrayBuffer): Uint8Array | null }> | null = null;
+function loadLibreDwg() {
+  libredwg ??= (async () => {
+    const { LibreDwg } = await import('@mlightcad/libredwg-web');
+    const entry = createRequire(import.meta.url).resolve('@mlightcad/libredwg-web');
+    const wasmDir = path.join(path.dirname(entry), '..', 'wasm') + '/';
+    return LibreDwg.create(wasmDir);
+  })();
+  return libredwg;
+}
+
+/** DWG bytes → DXF text, on this server. Throws when LibreDWG can't read the file. */
+async function convertLocally(buf: Buffer): Promise<string> {
+  const lib = await loadLibreDwg();
+  const out = lib.dwg_write_dxf(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+  if (!out || !out.length) throw new Error('This DWG could not be read.');
+  return new TextDecoder().decode(out);
+}
+
+/** The request body as bytes (raw upload) — or null if it's JSON. */
+async function readRawBody(req: IncomingMessage & { body?: unknown }): Promise<Buffer | null> {
+  const type = String(req.headers['content-type'] || '');
+  if (!type.startsWith('application/octet-stream')) return null;
+  if (Buffer.isBuffer(req.body)) return req.body;
+  const chunks: Buffer[] = await new Promise((resolve, reject) => {
+    const parts: Buffer[] = [];
+    req.on('data', (c: Buffer) => parts.push(c));
+    req.on('end', () => resolve(parts));
+    req.on('error', reject);
+  });
+  return Buffer.concat(chunks);
+}
 
 function setCors(res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-File-Name');
 }
 
 // Same dual-environment body reader as api/dxf-import.ts / api/overpass.ts —
@@ -49,9 +72,9 @@ async function readJsonBody(req: any): Promise<any> {
   if (req.body && typeof req.body === 'string') { try { return JSON.parse(req.body); } catch { return {}; } }
   const raw: string = await new Promise((resolve, reject) => {
     let data = '';
-    (req as IncomingMessage).on('data', (chunk) => (data += chunk));
-    (req as IncomingMessage).on('end', () => resolve(data));
-    (req as IncomingMessage).on('error', reject);
+    req.on('data', (chunk) => (data += chunk));
+    req.on('end', () => resolve(data));
+    req.on('error', reject);
   });
   if (!raw) return {};
   try { return JSON.parse(raw); } catch { return {}; }
@@ -78,27 +101,42 @@ export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') { res.statusCode = 405; res.end(JSON.stringify({ error: 'POST only' })); return; }
 
   const apiKey = process.env.CLOUDCONVERT_API_KEY;
-  if (!apiKey) {
-    res.statusCode = 501;
-    res.end(JSON.stringify({
-      error: 'DWG conversion is not configured on this server.',
-      hint: 'Set CLOUDCONVERT_API_KEY, or just export the file as DXF from AutoCAD (File → Save As → AutoCAD DXF) and upload that instead — no conversion step needed.',
-    }));
-    return;
-  }
 
   try {
-    const body = await readJsonBody(req);
-    const { dwgBase64, fileName = 'upload.dwg' } = body || {};
-    if (!dwgBase64 || typeof dwgBase64 !== 'string') {
-      res.statusCode = 400; res.end(JSON.stringify({ error: 'dwgBase64 is required (base64-encoded DWG file contents, no data: prefix)' })); return;
+    let buf = await readRawBody(req);
+    let fileName = decodeURIComponent(String(req.headers?.['x-file-name'] || 'upload.dwg'));
+    if (!buf) {
+      const body = await readJsonBody(req);
+      if (!body?.dwgBase64 || typeof body.dwgBase64 !== 'string') {
+        res.statusCode = 400; res.end(JSON.stringify({ error: 'Send the DWG file (application/octet-stream), or JSON { dwgBase64 }.' })); return;
+      }
+      buf = Buffer.from(body.dwgBase64, 'base64');
+      fileName = body.fileName || fileName;
     }
-    const buf = Buffer.from(dwgBase64, 'base64');
     if (buf.byteLength > MAX_DWG_BYTES) {
-      res.statusCode = 413; res.end(JSON.stringify({ error: `DWG too large (max ${MAX_DWG_BYTES} bytes)` })); return;
+      res.statusCode = 413; res.end(JSON.stringify({ error: `This DWG is too large (max ${MAX_DWG_BYTES / 1024 / 1024} MB).`, hint: 'In AutoCAD choose File → Save As → AutoCAD DXF and upload the DXF instead.' })); return;
     }
 
-    // 1. Create a job: import/upload -> convert (dwg->dxf) -> export/url
+    // Here on the server, with LibreDWG.
+    try {
+      const dxfText = await convertLocally(buf);
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ dxfText, converter: 'libredwg' }));
+      return;
+    } catch (local) {
+      console.warn('[api/dwg-convert] LibreDWG could not convert', fileName, local);
+      if (!apiKey) {
+        res.statusCode = 422;
+        res.end(JSON.stringify({
+          error: 'This DWG file could not be read.',
+          hint: 'It may be damaged or from a very new AutoCAD release. In AutoCAD choose File → Save As → AutoCAD DXF and upload the DXF instead.',
+        }));
+        return;
+      }
+    }
+
+    // Fallback: CloudConvert. 1. Create a job: import/upload -> convert (dwg->dxf) -> export/url
     const job = await cc('/jobs', apiKey, {
       method: 'POST',
       body: JSON.stringify({

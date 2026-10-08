@@ -1,7 +1,7 @@
 // The visitor's 2D map of one floor: pan/zoom, tap a place, the route on top,
 // and a live "you are here" dot that the map follows while navigating.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MapFeature } from '@/lib/venue/features';
 import type { NavEdge, NavNode, Room, Wall } from '@/data/types';
 import { DEFAULT_LAYERS, type IndoorLayerId } from '@/lib/venue/mapSettings';
@@ -11,7 +11,7 @@ import FeatureGlyph from '@/components/venue/FeatureGlyph';
 import { cn } from '@/lib/utils';
 import { CATEGORY_COLORS, CATEGORY_ICONS, PX_PER_METER, type Place } from './types';
 
-export default function PlanView({ floorId, data, selected, start, route, onSelect, places, here, follow, focus, heading, inset, layers, registerControls, theme }: {
+export default function PlanView({ floorId, data, selected, start, route, onSelect, places, here, follow, focus, heading, inset, layers, registerControls, theme, onZoomOutExit }: {
   floorId: string | null;
   data: { walls: Wall[]; rooms: Room[]; features: MapFeature[]; nodes: NavNode[]; edges?: NavEdge[] };
   selected: string | null; start: string | null;
@@ -34,6 +34,8 @@ export default function PlanView({ floorId, data, selected, start, route, onSele
   registerControls?: (controls: { zoomIn: () => void; zoomOut: () => void; recenter: () => void }) => void;
   /** The venue's colours (route, rooms). */
   theme?: { primary: string; route: string; slab: string; ground: string };
+  /** Zoomed out until the floor is small in the middle (go to the outdoor map). */
+  onZoomOutExit?: () => void;
 }) {
   const show = { ...DEFAULT_LAYERS, ...layers };
   const viewport = useSvgViewport();
@@ -55,6 +57,17 @@ export default function PlanView({ floorId, data, selected, start, route, onSele
     registerControls?.({ zoomIn: () => zoomBy(1.35), zoomOut: () => zoomBy(1 / 1.35), recenter: () => { if (bounds) fitTo(bounds, 32, inset); } });
   }, [registerControls, zoomBy, fitTo, bounds, inset]);
   useEffect(() => { if (bounds && size.w > 0) fitTo(bounds, 32, inset); }, [floorId, size.w > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Zooming well out past the whole floor heads outside (after a short pause, and again only once zoomed back in).
+  const exitArmed = useRef(true);
+  useEffect(() => {
+    if (!onZoomOutExit || !bounds || size.w <= 0) return;
+    const fit = Math.min(size.w / Math.max(1, bounds.maxX - bounds.minX), size.h / Math.max(1, bounds.maxY - bounds.minY));
+    const ratio = viewport.scale / fit;
+    if (ratio > 0.6) { exitArmed.current = true; return; }
+    if (ratio > 0.4 || !exitArmed.current) return;
+    const t = setTimeout(() => { exitArmed.current = false; onZoomOutExit(); }, 280);
+    return () => clearTimeout(t);
+  }, [viewport.scale, size.w, size.h, bounds, onZoomOutExit]);
   useEffect(() => { if (follow && here && size.w > 0 && !drag) centerOn(here.x, here.y, 0, inset); }, [follow, here?.x, here?.y]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (focus && focus.nonce > 0 && size.w > 0) centerOn(focus.x, focus.y, 1.1, inset); }, [focus?.nonce, size.w > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -2,7 +2,7 @@
 // minus its door and arch gaps (windows stay solid at walking height).
 
 import type { IndoorVenue, Vec2 } from './model';
-import { dist } from './geometry';
+import { dist, segmentsCross } from './geometry';
 
 export function obstacles(venue: IndoorVenue, floorId: string): { a: Vec2; b: Vec2 }[] {
   const out: { a: Vec2; b: Vec2 }[] = [];
@@ -17,4 +17,14 @@ export function obstacles(venue: IndoorVenue, floorId: string): { a: Vec2; b: Ve
     if (s < L) out.push({ a: at(s), b: at(L) });
   }
   return out;
+}
+
+/**
+ * Does the stretch a→b pass through a wall (not through a door or arch)?
+ * Its ends may touch a wall — a place set against one is fine.
+ */
+export function crossesWall(lines: { a: Vec2; b: Vec2 }[], a: Vec2, b: Vec2): boolean {
+  const p = (k: number) => ({ x: a.x + (b.x - a.x) * k, z: a.z + (b.z - a.z) * k });
+  const p0 = p(0.04), p1 = p(0.96);
+  return lines.some(w => segmentsCross(p0, p1, w.a, w.b));
 }

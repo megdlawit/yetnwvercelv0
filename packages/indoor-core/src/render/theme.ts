@@ -181,6 +181,14 @@ export class MaterialLibrary {
   treeB() { return this.get('treeB', () => new THREE.MeshStandardMaterial({ color: this.theme.treeB, roughness: 0.9, flatShading: true })); }
   bark() { return this.get('bark', () => new THREE.MeshStandardMaterial({ color: '#8a6a4c', roughness: 1 })); }
   stone() { return this.get('stone', () => new THREE.MeshStandardMaterial({ color: '#cfc6b3', roughness: 0.9 })); }
+  /** A plain coloured material for scenery (flowers, water, lamps…), shared per colour. */
+  paint(color: string, o: { opacity?: number; roughness?: number; emissive?: number; flat?: boolean } = {}) {
+    return this.get(`paint:${color}:${o.opacity ?? 1}:${o.emissive ?? 0}`, () => new THREE.MeshStandardMaterial({
+      color, roughness: o.roughness ?? 0.8, flatShading: !!o.flat,
+      transparent: (o.opacity ?? 1) < 1, opacity: o.opacity ?? 1, depthWrite: (o.opacity ?? 1) >= 1,
+      emissive: o.emissive ? color : '#000000', emissiveIntensity: o.emissive ?? 0,
+    }));
+  }
 
   /** Every material, for per-floor ghosting and clean-up. */
   all(): THREE.Material[] { return [...this.cache.values()]; }

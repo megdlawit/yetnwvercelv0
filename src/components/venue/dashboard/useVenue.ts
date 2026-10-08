@@ -106,13 +106,14 @@ export function unreachablePlaces(d: Pick<VenueData, 'nodes' | 'edges'>): string
 }
 
 /** Publishing copies the venue into what visitors see (falls back to the plain flag on older databases). */
-export async function publishVenue(buildingId: string) {
-  const { error } = await supabase.rpc('publish_venue', { b: buildingId });
-  if (!error) return;
+/** Publishes the venue. 'review' when it went to the Yet New team for approval instead (an institution not approved yet). */
+export async function publishVenue(buildingId: string): Promise<'published' | 'review'> {
+  const { data, error } = await supabase.rpc('publish_venue', { b: buildingId });
+  if (!error) return data == null ? 'review' : 'published';
   if (/function .*publish_venue|schema cache/i.test(error.message)) {
     const { error: e2 } = await supabase.from('buildings').update({ is_published: true }).eq('id', buildingId);
     if (e2) throw new Error(e2.message);
-    return;
+    return 'published';
   }
   throw new Error(error.message);
 }

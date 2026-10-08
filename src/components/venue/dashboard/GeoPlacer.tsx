@@ -4,14 +4,13 @@
 // rotation_deg / meters_per_pixel) puts the venue in the outdoor view and
 // lets GPS work with it.
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl, { type Map as MLMap, type StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { toast } from 'sonner';
-import { Search, LocateFixed, RotateCw, RotateCcw, Loader2, Satellite, Map as MapIcon, Trash2, Crosshair } from 'lucide-react';
+import { LocateFixed, RotateCw, RotateCcw, Loader2, Satellite, Map as MapIcon, Trash2, Crosshair } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { cn } from '@/lib/utils';
 import { indoorToGeo } from '@/lib/geo/GeoMath';
@@ -19,6 +18,8 @@ import { anchorForCenter, anchorOf, DEFAULT_MPP, planBounds } from '@/lib/venue/
 import { roomOutline } from '@/lib/venue/features';
 import { useFloorGeometry } from './VenueViewer';
 import type { VenueData } from './useVenue';
+import PlaceSearch from './PlaceSearch';
+import type { PlaceSuggestion } from '@/hooks/usePlaceSuggestions';
 
 const SATELLITE: StyleSpecification = {
   version: 8,
@@ -37,8 +38,9 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
   const [scale, setScale] = useState(saved ? saved.metersPerPixel / DEFAULT_MPP : 1);
   const [opacity, setOpacity] = useState(0.85);
   const [base, setBase] = useState<'satellite' | 'streets'>('satellite');
-  const [query, setQuery] = useState('');
-  const [busy, setBusy] = useState<'search' | 'save' | null>(null);
+  const [busy, setBusy] = useState<'save' | null>(null);
+  // Where the map is looking, so suggestions favour places nearby.
+  const [near, setNear] = useState<{ lat: number; lng: number } | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
   const live = useRef({ rotation, scale, opacity });
@@ -84,6 +86,9 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
     });
     let raf = 0;
     map.on('move', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(draw); });
+    const look = () => { const c = map.getCenter(); setNear({ lat: c.lat, lng: c.lng }); };
+    map.on('moveend', look);
+    look();
     return () => { cancelAnimationFrame(raf); map.remove(); mapRef.current = null; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -102,17 +107,14 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
     if (metres > 0) map.setZoom(Math.min(19, Math.max(14, Math.log2(40075000 * Math.cos(map.getCenter().lat * Math.PI / 180) / (metres * 3)) - 0.5)));
   }, [bounds]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const search = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) return;
-    setBusy('search');
-    try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query.trim())}`, { headers: { Accept: 'application/json' } });
-      const [hit] = await res.json();
-      if (!hit) { toast.error('No place found with that name.'); return; }
-      mapRef.current?.flyTo({ center: [Number(hit.lon), Number(hit.lat)], zoom: 17 });
-    } catch { toast.error('Search is unavailable right now.'); }
-    finally { setBusy(null); }
+  // Fly to a picked place: fit a park or campus whole, zoom in close on a point.
+  const goTo = (p: PlaceSuggestion) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const e = p.extent;
+    if (e && Math.abs(e[2] - e[0]) > 0.0004 && Math.abs(e[3] - e[1]) > 0.0004) {
+      map.fitBounds([[e[0], e[1]], [e[2], e[3]]], { padding: 40, maxZoom: 18.5, duration: 1400 });
+    } else map.flyTo({ center: [p.lng, p.lat], zoom: 17.5, duration: 1400 });
   };
 
   const locate = () => navigator.geolocation?.getCurrentPosition(
@@ -138,14 +140,11 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
 
   return (
     <div className="space-y-3">
-      <form onSubmit={search} className="flex gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search a place or address, e.g. Unity Park, Addis Ababa" className="pl-9" />
-        </div>
-        <Button type="submit" variant="outline" disabled={busy === 'search'}>{busy === 'search' ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Find'}</Button>
+      <div className="flex gap-2">
+        <PlaceSearch near={near} onPick={goTo} onLocate={locate} className="flex-1"
+          placeholder="Search a place, address or coordinates — e.g. Unity Park, Addis Ababa" />
         <Button type="button" variant="outline" size="icon" onClick={locate} aria-label="Use my location" title="Use my location"><LocateFixed className="h-4 w-4" /></Button>
-      </form>
+      </div>
 
       <div className="relative h-[460px] overflow-hidden rounded-2xl border">
         <div ref={box} className="absolute inset-0" />

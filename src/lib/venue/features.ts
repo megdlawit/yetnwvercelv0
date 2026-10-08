@@ -5,7 +5,9 @@
 import type { Room } from '@/data/types';
 
 export type FeatureKind =
-  | 'door' | 'arch' | 'window' | 'stairs' | 'elevator' | 'entrance' | 'tree' | 'bench' | 'furniture' | 'landmark' | 'label';
+  | 'door' | 'arch' | 'window' | 'stairs' | 'elevator' | 'entrance' | 'tree' | 'bench' | 'furniture' | 'landmark' | 'label'
+  // Scenery (also 'tree' and 'bench'):
+  | 'palm' | 'shrub' | 'flowers' | 'grass' | 'water' | 'rock' | 'lamp' | 'fountain' | 'planter';
 
 export interface MapFeature {
   id: string;
@@ -30,12 +32,26 @@ export const FEATURE_KINDS: Record<FeatureKind, { label: string; w: number; d: n
   furniture: { label: 'Furniture', w: 1,   d: 1,    color: '#a1887f', placeable: true },
   landmark:  { label: 'Landmark',  w: 1.5, d: 1.5,  color: '#9333ea', placeable: true },
   label:     { label: 'Text',      w: 0,   d: 0,    color: '#64748b', placeable: false },
+  palm:      { label: 'Palm tree', w: 2.5, d: 2.5,  color: '#15803d', placeable: true },
+  shrub:     { label: 'Shrub',     w: 1.2, d: 1.2,  color: '#4d7c0f', placeable: true },
+  flowers:   { label: 'Flower bed', w: 2,  d: 1,    color: '#db2777', placeable: true },
+  grass:     { label: 'Lawn',      w: 6,   d: 4,    color: '#65a30d', placeable: true },
+  water:     { label: 'Pond / pool', w: 5, d: 3,    color: '#0ea5e9', placeable: true },
+  rock:      { label: 'Rock',      w: 1,   d: 0.8,  color: '#78716c', placeable: true },
+  lamp:      { label: 'Lamp post', w: 0.4, d: 0.4,  color: '#f59e0b', placeable: true },
+  fountain:  { label: 'Fountain',  w: 3,   d: 3,    color: '#0284c7', placeable: true },
+  planter:   { label: 'Planter',   w: 1,   d: 1,    color: '#b45309', placeable: true },
 };
+
+/** The scenery a venue can place outside (and inside): the Scenery tool's palette, in order. */
+export const SCENERY_KINDS: FeatureKind[] = ['tree', 'palm', 'shrub', 'flowers', 'grass', 'water', 'fountain', 'rock', 'planter', 'lamp', 'bench'];
+/** Scenery that replaces the automatic ring of trees once a venue places any. */
+export const GREENERY_KINDS: FeatureKind[] = ['tree', 'palm', 'shrub', 'flowers', 'grass', 'water', 'fountain', 'rock', 'planter', 'lamp'];
 
 /** Size in px, falling back to the kind's default (metres × pxPerMeter). */
 export const featureSize = (f: Pick<MapFeature, 'kind' | 'width' | 'depth'>, pxPerMeter: number) => ({
-  w: f.width ?? FEATURE_KINDS[f.kind].w * pxPerMeter,
-  d: f.depth ?? FEATURE_KINDS[f.kind].d * pxPerMeter,
+  w: f.width ?? (FEATURE_KINDS[f.kind]?.w ?? 1) * pxPerMeter,
+  d: f.depth ?? (FEATURE_KINDS[f.kind]?.d ?? 1) * pxPerMeter,
 });
 
 /** A room's outline: its polygon, or the rectangle. */

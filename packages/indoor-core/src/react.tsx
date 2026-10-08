@@ -32,6 +32,8 @@ export interface IndoorViewer3DProps {
   onSelect?: (sel: Selection | null) => void;
   onFloorChange?: (floorId: string) => void;
   onModeChange?: (mode: ViewMode) => void;
+  /** Zoomed out past the farthest view. */
+  onZoomOutLimit?: () => void;
   className?: string;
   style?: CSSProperties;
 }
@@ -60,7 +62,7 @@ export const IndoorViewer3DView = forwardRef<IndoorViewer3D | null, IndoorViewer
     const v = new IndoorViewer3D(host.current!, {
       venue: props.venue, floorId: props.floorId, mode: props.mode, theme: props.theme, lang: props.lang, layers: props.layers,
       places: props.places, roomLabels: props.roomLabels, cinematic: props.cinematic, reducedMotion: props.reducedMotion, shadows: props.shadows,
-      onSelect: props.onSelect, onFloorChange: props.onFloorChange, onModeChange: props.onModeChange,
+      onSelect: props.onSelect, onFloorChange: props.onFloorChange, onModeChange: props.onModeChange, onZoomOutLimit: props.onZoomOutLimit,
     });
     viewer.current = v;
     assign(ref, v);
@@ -72,7 +74,7 @@ export const IndoorViewer3DView = forwardRef<IndoorViewer3D | null, IndoorViewer
     return () => { assign(ref, null); v.dispose(); viewer.current = null; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { viewer.current?.setCallbacks({ onSelect: props.onSelect, onFloorChange: props.onFloorChange, onModeChange: props.onModeChange }); });
+  useEffect(() => { viewer.current?.setCallbacks({ onSelect: props.onSelect, onFloorChange: props.onFloorChange, onModeChange: props.onModeChange, onZoomOutLimit: props.onZoomOutLimit }); });
   useOnChange(props.venue, v => viewer.current!.setVenue(v), viewer);
   useOnChange(props.theme, v => viewer.current!.setTheme(v ?? {}), viewer);
   useOnChange(props.layers, v => viewer.current!.setLayers(v ?? {}), viewer);

@@ -144,7 +144,10 @@ export interface IndoorEdge {
 }
 
 /** Scenery and markers: trees, benches, furniture, landmarks, entrances and text labels. */
-export type PropKind = 'tree' | 'bench' | 'furniture' | 'landmark' | 'entrance' | 'label';
+export type PropKind = 'tree' | 'bench' | 'furniture' | 'landmark' | 'entrance' | 'label'
+  | 'palm' | 'shrub' | 'flowers' | 'grass' | 'water' | 'rock' | 'lamp' | 'fountain' | 'planter';
+/** Scenery a venue placed itself: once there is any on the ground floor, the automatic ring of trees steps aside. */
+export const GREENERY: PropKind[] = ['tree', 'palm', 'shrub', 'flowers', 'grass', 'water', 'rock', 'lamp', 'fountain', 'planter'];
 export interface IndoorProp {
   id: string;
   floorId: string;
@@ -194,6 +197,8 @@ export const DEFAULT_WALL_THICKNESS = 0.18;
 export const PROP_SIZES: Record<PropKind, { width: number; depth: number }> = {
   tree: { width: 3, depth: 3 }, bench: { width: 1.6, depth: 0.5 }, furniture: { width: 1, depth: 1 },
   landmark: { width: 1.5, depth: 1.5 }, entrance: { width: 1.5, depth: 1.5 }, label: { width: 0, depth: 0 },
+  palm: { width: 2.5, depth: 2.5 }, shrub: { width: 1.2, depth: 1.2 }, flowers: { width: 2, depth: 1 }, grass: { width: 6, depth: 4 },
+  water: { width: 5, depth: 3 }, rock: { width: 1, depth: 0.8 }, lamp: { width: 0.4, depth: 0.4 }, fountain: { width: 3, depth: 3 }, planter: { width: 1, depth: 1 },
 };
 export const OPENING_DEFAULTS: Record<OpeningKind, { width: number; height: number; sill: number }> = {
   door: { width: 0.9, height: 2.1, sill: 0 },

@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Sparkles, LayoutDashboard, Building2, ListChecks, Box, PenTool, Zap, Search, Eye, Globe, HelpCircle,
+  Sparkles, LayoutDashboard, ListChecks, Box, Globe, HelpCircle,
   ArrowRight, ArrowLeft, X, Map as MapIcon, MapPin, Newspaper, Users, Upload, PartyPopper,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -16,16 +16,11 @@ import { celebrateBuild } from '@/lib/celebrate';
 interface Step { target: string; icon: typeof Sparkles; title: string; body: string }
 
 const STEPS: Step[] = [
-  { target: 'sidebar', icon: LayoutDashboard, title: 'Your command center', body: 'Everything about your venue lives here — the map, places, events, stories, QR codes and your team. Grouped by what you want to do.' },
-  { target: 'venue', icon: Building2, title: 'Your venue', body: 'This is the venue you\'re managing. Run more than one site? Switch between them, or add a new one, from here.' },
-  { target: 'setup', icon: ListChecks, title: 'Your setup checklist', body: 'Six steps from an empty venue to a published one. Tick them off in any order — we\'ll always show you what\'s next.' },
-  { target: 'hero', icon: Box, title: 'One model, 2D and 3D', body: 'Upload the map you already have and it becomes a 3D world. The 2D plan, the 3D world and the visitor app are all the same model — edit once, it updates everywhere.' },
-  { target: 'edit-map', icon: PenTool, title: 'The map editor', body: 'Import a CAD file, PDF or image, then draw walls, rooms, doors and paths, name places and walk through it in 3D.' },
-  { target: 'quick-actions', icon: Zap, title: 'One-click actions', body: 'Add a place, an attraction or an event, or make a QR code for a gate — no hunting through menus.' },
-  { target: 'search', icon: Search, title: 'Find anything', body: 'Search places, areas, events and pages. Tip: press Ctrl K from anywhere.' },
-  { target: 'preview', icon: Eye, title: 'See what visitors see', body: 'Open your venue exactly as a visitor would — including the changes you haven\'t published yet.' },
-  { target: 'publish', icon: Globe, title: 'You decide when it goes live', body: 'Edits stay private to your team. When you\'re happy, press Publish — the orange number tells you how many changes are waiting.' },
-  { target: 'help', icon: HelpCircle, title: 'Help is always here', body: 'Quick answers, the guide, and this tour again whenever you want it.' },
+  { target: 'sidebar', icon: LayoutDashboard, title: 'Six places, that\'s all', body: 'Home, Map, Places, What\'s on, Share and Settings. The big Edit map button opens your map — just tell it what to change.' },
+  { target: 'setup', icon: ListChecks, title: 'Always one next step', body: 'We show you the one thing to do next, from uploading your map to publishing it.' },
+  { target: 'hero', icon: Box, title: 'Your venue, as visitors see it', body: 'Drag to look around in 2D or 3D. It updates as you edit.' },
+  { target: 'publish', icon: Globe, title: 'You decide when it goes live', body: 'Your changes stay private until you press Publish.' },
+  { target: 'help', icon: HelpCircle, title: 'Help is always here', body: 'Answers, guides and this tour again, whenever you want.' },
 ];
 
 type Rect = { top: number; left: number; width: number; height: number };
@@ -177,9 +172,9 @@ export default function GuidedTour({ open, firstName, hasMap, onClose, onUploadM
                 <>
                   <p className="text-xs font-bold uppercase tracking-wider text-primary">Welcome to Yet New</p>
                   <h2 className="mt-1 text-2xl font-bold">Hi {firstName}, let's build your digital venue</h2>
-                  <p className="mt-2 text-sm text-muted-foreground">Your map becomes a 3D world, you add places and stories, and visitors explore it on their phones. A 1-minute tour shows you where everything is.</p>
+                  <p className="mt-2 text-sm text-muted-foreground">Your map becomes a 3D world, you add places and stories, and visitors explore it on their phones. A 30-second tour shows you around.</p>
                   <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-center">
-                    <Button size="lg" onClick={() => { setIndex(0); setPhase('steps'); }}><Sparkles className="mr-2 h-4 w-4" /> Take the 1-minute tour</Button>
+                    <Button size="lg" onClick={() => { setIndex(0); setPhase('steps'); }}><Sparkles className="mr-2 h-4 w-4" /> Show me around (5 steps)</Button>
                     <Button size="lg" variant="ghost" onClick={onClose}>I'll explore on my own</Button>
                   </div>
                 </>

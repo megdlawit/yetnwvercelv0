@@ -5,9 +5,10 @@
 // the visitor is and which way they face, and a glass dock to switch
 // Outdoor / 2D / 3D, floors and the 3D camera.
 
-import { lazy, Suspense, useMemo } from 'react';
+import { createElement, lazy, Suspense, useMemo } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server.browser';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Box, Globe2, Loader2, Square, Orbit, ScanEye, PersonStanding, Navigation2 } from 'lucide-react';
+import { Box, Globe2, Loader2, Square, Orbit, ScanEye, PersonStanding, Navigation2, MapPin } from 'lucide-react';
 import type { NavEdge, NavNode, Room, Wall } from '@/data/types';
 import type { MapFeature } from '@/lib/venue/features';
 import type { VenueTheme } from '@/lib/venue/themes';
@@ -16,9 +17,21 @@ import type { CameraMode, FloorLayer } from '@/components/venue/Venue3D';
 import type { IndoorVenue } from '@ethi/indoor-core';
 import { cn } from '@/lib/utils';
 import PlanView from './PlanView';
-import { CATEGORY_COLORS, type Place } from './types';
+import { CATEGORY_COLORS, CATEGORY_ICONS, type Place } from './types';
 
 const Venue3D = lazy(() => import('@/components/venue/Venue3D'));
+
+/** A category's icon as SVG markup, for the 3D place badges (white on the place's colour). */
+const iconSvgs = new Map<string, string>();
+function categoryIconSvg(category: Place['category']): string {
+  let svg = iconSvgs.get(category);
+  if (!svg) {
+    const Icon = CATEGORY_ICONS[category] ?? MapPin;
+    svg = renderToStaticMarkup(createElement(Icon, { color: '#ffffff', strokeWidth: 2.3, size: 22, 'aria-hidden': true }));
+    iconSvgs.set(category, svg);
+  }
+  return svg;
+}
 
 export type Controls = { zoomIn: () => void; zoomOut: () => void; recenter: () => void };
 
@@ -27,7 +40,7 @@ export interface IndoorFloor { id: string; level: number; walls: Wall[]; rooms: 
 export default function IndoorVenueView({
   view, floor, otherFloors, places, selectedNodeId, onSelect, route, here, headingPlanDeg, follow,
   layers, wallHeight, theme, pxPerMeter, registerControls, cameraRequest, focusNonce, onCameraModeChange, pinSubs,
-  model, routeNodeIds, onFloorChange, introNonce,
+  model, routeNodeIds, onFloorChange, introNonce, onZoomOutExit,
 }: {
   view: IndoorView;
   floor: IndoorFloor;
@@ -61,6 +74,8 @@ export default function IndoorVenueView({
   onFloorChange?: (floorId: string) => void;
   /** Bump to play the glide-in (entering from the map). */
   introNonce?: number;
+  /** The visitor zoomed out past the venue: show the outdoor map. */
+  onZoomOutExit?: () => void;
 }) {
   const placesHere = useMemo(() => places.filter(p => p.floorId === floor.id), [places, floor.id]);
   // Only places a visitor can open get a pin (no hallway junctions).
@@ -69,6 +84,9 @@ export default function IndoorVenueView({
     return floor.nodes.filter(n => ids.has(n.id));
   }, [floor.nodes, placesHere]);
   const pinColors = useMemo(() => Object.fromEntries(placesHere.map(p => [p.id, CATEGORY_COLORS[p.category]])), [placesHere]);
+  // Each place's badge: its photo, or its category's icon.
+  const pinImages = useMemo(() => Object.fromEntries(placesHere.filter(p => p.images[0]).map(p => [p.id, p.images[0]])), [placesHere]);
+  const pinIcons = useMemo(() => Object.fromEntries(placesHere.map(p => [p.id, categoryIconSvg(p.category)])), [placesHere]);
   const selected = selectedNodeId ? placesHere.find(p => p.id === selectedNodeId) : null;
   const destination = route && route.length > 1 ? route[route.length - 1] : null;
 
@@ -83,7 +101,7 @@ export default function IndoorVenueView({
               <Venue3D walls={floor.walls} rooms={floor.rooms} nodes={pinNodes} edges={floor.edges} features={floor.features}
                 level={floor.level} otherFloors={otherFloors} selectedNodeId={selectedNodeId} onSelectNode={onSelect}
                 pxPerMeter={pxPerMeter} focusNonce={focusNonce} route={route && route.length > 1 ? route : null} showPaths={false}
-                theme={theme} here={here} destination={destination} chrome="minimal" pinColors={pinColors} pinSubs={pinSubs}
+                theme={theme} here={here} destination={destination} chrome="minimal" pinColors={pinColors} pinSubs={pinSubs} pinImages={pinImages} pinIcons={pinIcons} onZoomOutExit={onZoomOutExit}
                 model={model} routeNodeIds={routeNodeIds} floorId={floor.id} onFloorChange={onFloorChange} introNonce={introNonce}
                 wallHeight={wallHeight} layers={layers} registerControls={registerControls} cameraRequest={cameraRequest} onModeChange={onCameraModeChange} />
             </Suspense>
@@ -94,7 +112,7 @@ export default function IndoorVenueView({
             <PlanView floorId={floor.id} data={floor} selected={selectedNodeId} start={null} route={route}
               onSelect={id => onSelect(id)} places={places} here={here} follow={follow} heading={headingPlanDeg}
               focus={selected ? { x: selected.x, y: selected.y, nonce: focusNonce } : null}
-              layers={layers} registerControls={registerControls} theme={theme} />
+              layers={layers} registerControls={registerControls} theme={theme} onZoomOutExit={onZoomOutExit} />
           </motion.div>
         )}
       </AnimatePresence>

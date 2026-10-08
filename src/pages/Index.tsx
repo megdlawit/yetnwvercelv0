@@ -37,6 +37,8 @@ import IndoorTrackingModal from '@/components/IndoorTrackingModal';
 import EmailGateDialog from '@/components/EmailGateDialog';
 import { useProfile } from '@/contexts/UserProfileContext';
 import { useVisitedPlaces } from '@/hooks/useVisitedPlaces';
+import { addSteps, logActivity, rememberPlaces, rememberVenueName, snapshotOfPoi } from '@/lib/visitor/visitorStore';
+import { STRIDE_M } from '@/lib/visitor/progress';
 import { usePDRNavigation } from '@/hooks/usePDRNavigation';
 import { useLocationAnchor } from '@/hooks/useLocationAnchor';
 import { useBuildingLoader } from '@/hooks/useBuildingLoader';
@@ -44,6 +46,9 @@ import { usePOILoader } from '@/hooks/usePOILoader';
 import { useNavigationBrain } from '@/hooks/useNavigationBrain';
 import { useGuidanceLang } from '@/lib/guidanceLang';
 import { venueModel } from '@/components/visitor/venueModel';
+import type { BrowseStart } from '@/components/visitor/VenueBrowse';
+import type { VenueBrowseProps } from '@/components/visitor/VenueBrowsePanel';
+import type { Tables } from '@/integrations/supabase/types';
 import HandoffCard, { type Handoff } from '@/components/visitor/HandoffCard';
 import { floorName as coreFloorName } from '@ethi/indoor-core';
 import VenueMapRenderer from '@/components/VenueMapRenderer';
@@ -61,11 +66,20 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 // ── Shell component: shows pre-onboarding, then splash, then enters the map ──
 const Index = () => {
+  // An address picked in the home page search (?lat=&lng=&name=) opens straight on the outdoor map.
+  const linkedPlace = useMemo(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const lat = Number(p.get('lat')), lng = Number(p.get('lng'));
+      return p.has('lat') && Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng, name: p.get('name') || 'Selected place' } : null;
+    } catch { return null; }
+  }, []);
   // Show sensor-access pre-onboarding on very first visit (before anything else)
   const [showPreOnboarding, setShowPreOnboarding] = useState(() => {
+    if (linkedPlace) return false;
     try { return !localStorage.getItem('ethi_sensor_seen'); } catch { return true; }
   });
-  const [mapMode, setMapMode] = useState<MapMode | null>(null);
+  const [mapMode, setMapMode] = useState<MapMode | null>(linkedPlace ? 'outdoor' : null);
   const [initialTravelMode, setInitialTravelMode] = useState<TravelMode>('walk');
 
   if (showPreOnboarding) {
@@ -129,6 +143,10 @@ export interface ExploreVenue {
   initialView?: IndoorView | null;
   /** Places' Amharic names by path point (spoken and shown in Amharic guidance). */
   amNames?: Record<string, string>;
+  /** Events, tours, guides and stories (Discover / Explore). */
+  content?: Tables<'venue_content'>[];
+  /** What Discover / Explore opens first (from a link). */
+  browseStart?: BrowseStart | null;
 }
 
 // ── The map + navigation (the /explore page, and every venue map) ─────────────
@@ -257,7 +275,11 @@ export const ExploreMap = ({
 
   // ── A venue's own indoor map (2D plan / 3D world, as the institution set it up) ──
   const [indoorView, setIndoorView] = useState<IndoorView>(venue?.initialView ?? venue?.settings.defaultView ?? '3d');
-  const [indoorLayers, setIndoorLayers] = useState<Record<IndoorLayerId, boolean>>(() => ({ ...(venue?.settings.layers ?? {}) } as Record<IndoorLayerId, boolean>));
+  // Names start hidden on phones: the place badges carry the map, names are one tap away (Aa).
+  const [indoorLayers, setIndoorLayers] = useState<Record<IndoorLayerId, boolean>>(() => ({
+    ...(venue?.settings.layers ?? {}),
+    ...(typeof window !== 'undefined' && window.innerWidth < 640 ? { labels: false } : {}),
+  } as Record<IndoorLayerId, boolean>));
   const [cameraRequest, setCameraRequest] = useState<{ mode: CameraMode; nonce: number } | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraMode | null>(null);
   const [placeFocus, setPlaceFocus] = useState(0);
@@ -307,6 +329,7 @@ export const ExploreMap = ({
   const { profile, loading: profileLoading, syncActivityStats, hasEmail, updateEmail } = useProfile();
   const { isVisited, recordVisit } = useVisitedPlaces(profile?.id);
   const arrivalCountedRef = useRef(false);
+  const walkStartRef = useRef<number | null>(null);
   // Email gate — "Mark as visited" requires an email on file (same gate the
   // Save flow uses in BottomSheet), so history is tied to an identifiable
   // profile rather than an anonymous, easily-lost guest row.
@@ -357,6 +380,7 @@ export const ExploreMap = ({
   const { pois: loadedPois } = usePOILoader(venue ? null : building?.id);
   const pois = venue ? venue.pois : loadedPois;
   const outdoorPois = useMemo(() => pois.filter(p => p.isOutdoor && p.lat != null && p.lng != null), [pois]);
+  useEffect(() => { for (const b of allBuildings) rememberVenueName(b.id, b.name); rememberPlaces(pois); }, [allBuildings, pois]);
   // Curated venue graph (venue_nodes/venue_paths): fast, no-network-dependency
   // outdoor routing. Falls back to live OSM/Overpass automatically wherever
   // it doesn't (yet) have coverage — see HybridNavigationBrain.findVenueRoute.
@@ -475,6 +499,10 @@ export const ExploreMap = ({
   }, [pdrState.stepCount, navIsActive, pdrState.isNavigating, recordStep]);
 
   useEffect(() => {
+    if (pdrState.isNavigating && walkStartRef.current === null) walkStartRef.current = Date.now();
+  }, [pdrState.isNavigating]);
+
+  useEffect(() => {
     if (brainState.status === 'arrived' && (pdrState.isNavigating || pdrState.isComplete)) stopPDR();
   }, [brainState.status, pdrState.isNavigating, pdrState.isComplete, stopPDR]);
 
@@ -485,17 +513,61 @@ export const ExploreMap = ({
       try { navigator.vibrate?.([80, 60, 160]); } catch { /* not supported */ }
       void syncActivityStats(pdrState.stepCount, { visit: true });
       const arrivedPoi = brainState.destination?.poi;
-      if (arrivedPoi) void recordVisit(arrivedPoi.id, 'auto');
+      const started = walkStartRef.current;
+      walkStartRef.current = null;
+      if (arrivedPoi) {
+        const place = snapshotOfPoi(arrivedPoi);
+        logActivity({
+          kind: 'walk', title: `Walked to ${place.name}`, placeId: place.id, buildingId: place.buildingId, venueName: place.venueName,
+          steps: pdrState.stepCount || undefined, meters: pdrState.stepCount ? Math.round(pdrState.stepCount * STRIDE_M) : undefined,
+          seconds: started ? Math.round((Date.now() - started) / 1000) : undefined,
+        });
+        void recordVisit(arrivedPoi.id, 'auto', { log: false });
+      }
     }
     if (brainState.status !== 'arrived') {
       arrivalCountedRef.current = false;
     }
   }, [brainState.status, brainState.destination, pdrState.stepCount, syncActivityStats, recordVisit]);
 
+  // Every step counts — walking around a venue, not only on a guided walk.
+  // Saved in batches (every 10 steps, or 3 s after the last one, or when the
+  // page is hidden): on this device at once, and to the profile.
+  const stepsSavedRef = useRef(0);
+  const flushSteps = useCallback(() => {
+    const n = pdrState.stepCount;
+    if (n < stepsSavedRef.current) stepsSavedRef.current = 0; // the counter restarted (a new walk)
+    const delta = n - stepsSavedRef.current;
+    if (delta <= 0) return;
+    stepsSavedRef.current = n;
+    addSteps(delta);
+    void syncActivityStats(n);
+  }, [pdrState.stepCount, syncActivityStats]);
+  const flushRef = useRef(flushSteps);
+  flushRef.current = flushSteps;
   useEffect(() => {
-    if (!pdrState.isNavigating || pdrState.stepCount <= 0) return;
-    void syncActivityStats(pdrState.stepCount);
-  }, [pdrState.stepCount, pdrState.isNavigating, syncActivityStats]);
+    if (pdrState.stepCount <= 0) return;
+    if (pdrState.stepCount - stepsSavedRef.current >= 10 || pdrState.stepCount < stepsSavedRef.current) { flushSteps(); return; }
+    const t = setTimeout(() => flushRef.current(), 3000);
+    return () => clearTimeout(t);
+  }, [pdrState.stepCount, flushSteps]);
+  useEffect(() => {
+    const hide = () => { if (document.visibilityState === 'hidden') flushRef.current(); };
+    document.addEventListener('visibilitychange', hide);
+    window.addEventListener('pagehide', hide);
+    return () => { document.removeEventListener('visibilitychange', hide); window.removeEventListener('pagehide', hide); hide(); };
+  }, []);
+
+  // iPhones only send motion (steps, compass) after the visitor allows it,
+  // and Safari only asks from a tap. So the first tap on the map asks, if
+  // nothing else has yet.
+  useEffect(() => {
+    const needsPrompt = typeof DeviceMotionEvent !== 'undefined' && typeof (DeviceMotionEvent as unknown as { requestPermission?: unknown }).requestPermission === 'function';
+    if (!needsPrompt || pdrState.sensorPermission === 'granted' || pdrState.sensorPermission === 'denied') return;
+    const ask = () => { void requestSensors(); };
+    document.addEventListener('click', ask, { once: true, capture: true });
+    return () => document.removeEventListener('click', ask, { capture: true });
+  }, [pdrState.sensorPermission, requestSensors]);
 
   const clearAll = useCallback(() => {
     brainStopNav(); stopPDR();
@@ -730,6 +802,9 @@ export const ExploreMap = ({
     setSelectedPOI(null);
     if (autoTriggeredPoi) dismissPOI(autoTriggeredPoi.id);
     if (poi.isOutdoor && poi.lat != null && poi.lng != null) {
+      // An outdoor place: the route is on the outdoor map, wherever the visitor was looking.
+      setForceOutdoorView(true);
+      onChangeMode('outdoor');
       preloadOutdoorGraph({ lat: poi.lat, lng: poi.lng });
       const ok = brainStartNav({ destination: { geo: { lat: poi.lat, lng: poi.lng }, poi, name: poi.name } });
       if (!ok) toast.info('Getting your location — the route to this spot will appear in a moment.');
@@ -748,7 +823,7 @@ export const ExploreMap = ({
       const ok = brainStartNav({ startNodeId, destination: { nodeId: poi.nodeId, poi, name: poi.name } });
       if (!ok) toast.error('No route found to this POI');
     }, 0);
-  }, [startNodeId, autoTriggeredPoi, dismissPOI, brainStartNav, preloadOutdoorGraph]);
+  }, [startNodeId, autoTriggeredPoi, dismissPOI, brainStartNav, preloadOutdoorGraph, onChangeMode]);
 
   /** Outdoor search result (from OpenStreetMap) was picked in MapSearchBar.
    *
@@ -898,48 +973,11 @@ export const ExploreMap = ({
     brainSpeak({ text, priority: 'poi' });
   }, [brainSpeak]);
 
-  // FIX — "Mark as visited" always failed for an outdoor place picked from
-  // search (handleOutdoorPlaceSelect) or tapped on the map
-  // (handleOutdoorMapClick), because those wrap the spot as a client-only
-  // POI with a made-up id ("osm-<nominatim id>" / "pin-<lat>-<lng>") that
-  // was never written to the `pois` table. visited_places.poi_id has a
-  // foreign key into `pois(id)`, so recordVisit()'s insert silently
-  // violated that constraint every time — real building/room/POI picks
-  // (real uuid ids already in `pois`) worked fine, which is why this only
-  // showed up for outdoor selected places. Ad hoc pins now get persisted
-  // as a real `pois` row on first visit, and that row's real id is what
-  // gets recorded — same pattern the rest of the app already uses for
-  // "this needs a real row before we can reference it".
-  const ensureVisitablePoiId = useCallback(async (poi: POI): Promise<string | null> => {
-    const isRealPoiId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(poi.id);
-    if (isRealPoiId) return poi.id;
-
-    const { data, error } = await supabase
-      .from('pois')
-      .insert({
-        building_id: poi.buildingId,
-        name: poi.name,
-        description: poi.description || null,
-        category: poi.category,
-        subcategory: poi.subcategory || null,
-        is_outdoor: true,
-        is_featured: false,
-        trigger_radius: poi.triggerRadius ?? 20,
-        lat: poi.lat,
-        lng: poi.lng,
-      })
-      .select('id')
-      .maybeSingle();
-
-    if (error || !data) {
-      console.error('[ensureVisitablePoiId] failed to persist ad hoc outdoor POI:', error);
-      return null;
-    }
-    return data.id;
-  }, []);
-
+  // Any place can be marked visited — ad hoc outdoor pins too: visits are kept
+  // on the device first and synced to the profile when the database can hold them.
   const recordVisitWithFeedback = useCallback((poi: POI) => {
-    void ensureVisitablePoiId(poi).then((realId) => {
+    rememberPlaces([poi]);
+    void Promise.resolve(poi.id).then((realId) => {
       if (!realId) {
         toast.error("Couldn't save — check your connection and try again", { duration: 3500 });
         return;
@@ -961,18 +999,11 @@ export const ExploreMap = ({
         }
       });
     });
-  }, [recordVisit, ensureVisitablePoiId]);
+  }, [recordVisit]);
 
   const handleMarkVisited = useCallback((poi: POI) => {
-    // Not signed in yet — capture an email first (same gate the Save
-    // flow uses) so the visit is tied to a real, findable profile.
-    if (!hasEmail) {
-      setPendingVisitPoi(poi);
-      setVisitedEmailGateOpen(true);
-      return;
-    }
     recordVisitWithFeedback(poi);
-  }, [hasEmail, recordVisitWithFeedback]);
+  }, [recordVisitWithFeedback]);
 
   const handleVisitedEmailGateSubmit = useCallback(async (email: string): Promise<boolean> => {
     if (!updateEmail) return false;
@@ -1193,6 +1224,20 @@ export const ExploreMap = ({
     const poi = pois.find(p => p.nodeId === nodeId);
     if (poi) setSelectedPOI(poi);
   }, [pois]);
+  // Discover / Explore for this venue (its events, tours, guides and stories), in the panels.
+  const venueBrowse = useMemo<VenueBrowseProps | undefined>(() => {
+    if (!venue) return undefined;
+    const content = venue.content ?? [];
+    const now = Date.now();
+    const on = content.filter(c => (c.kind === 'event' || c.kind === 'announcement') && (!c.ends_at || new Date(c.ends_at).getTime() >= now)).length;
+    return {
+      name: building.name, sub: `${venue.places.length} places${on ? ` · ${on} on now` : ''}`,
+      accent: { primary: venue.theme.primary, route: venue.theme.route },
+      places: venue.places, content, start: venue.browseStart ?? null,
+      onPlace: (nodeId: string) => { setForceOutdoorView(false); handleIndoorSelect(nodeId); },
+      onNavigate: (nodeId: string) => { const poi = pois.find(p => p.nodeId === nodeId); if (poi) handlePOINavigate(poi); },
+    };
+  }, [venue, building.name, pois, handleIndoorSelect, handlePOINavigate]);
   // However a place gets picked (map, sidebar, search, a link), frame it on the map.
   const focusedNodeId = venue ? visiblePOI?.nodeId ?? null : null;
   useEffect(() => { if (focusedNodeId) setPlaceFocus(n => n + 1); }, [focusedNodeId]);
@@ -1227,6 +1272,18 @@ export const ExploreMap = ({
     if (turnId && lastTurnRef.current && turnId !== lastTurnRef.current) { try { navigator.vibrate?.(40); } catch { /* not supported */ } }
     lastTurnRef.current = turnId;
   }, [turnId]);
+
+  // An address from the home page search (?lat=&lng=&name=): show it, ready to navigate to.
+  const linkedOnce = useRef(false);
+  useEffect(() => {
+    if (linkedOnce.current || venue) return;
+    linkedOnce.current = true;
+    const p = new URLSearchParams(window.location.search);
+    const lat = Number(p.get('lat')), lng = Number(p.get('lng'));
+    if (!p.has('lat') || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const name = p.get('name') || 'Selected place';
+    handleOutdoorPlaceSelect({ id: `link-${lat},${lng}`, name, displayName: name, type: 'place', lat, lng });
+  }, [venue, handleOutdoorPlaceSelect]);
 
   const indoorSearchPois = useMemo(() => pois.filter(p => !p.isOutdoor && p.nodeId), [pois]);
   const handlePlacePick = useCallback((poi: POI) => {
@@ -1266,6 +1323,7 @@ export const ExploreMap = ({
 
       {/* ── Desktop-only sidebar (hidden below lg, untouched mobile UI lives inside the map container below) ── */}
       <DesktopSidebar
+        browse={venueBrowse}
         parkName={building.name || 'Unity Park'}
         buildings={allBuildings}
         buildingsLoading={loading}
@@ -1428,6 +1486,7 @@ export const ExploreMap = ({
                   routeNodeIds={indoorRouteNodes}
                   onFloorChange={id => { if (id !== selectedFloorId) setSelectedFloorId(id); }}
                   introNonce={introNonce}
+                  onZoomOutExit={building.originLat != null ? handleExitBuilding : undefined}
                 />
               ) : currentFloor ? (
                 <div className="relative w-full h-full">
@@ -1515,6 +1574,8 @@ export const ExploreMap = ({
           onToggle3D={() => (showOutdoorMap || !venue ? setIs3D(v => !v) : setIndoorView(v => (v === '3d' ? '2d' : '3d')))}
           bearing={showOutdoorMap ? mapBearing : 0}
           onResetNorth={showOutdoorMap ? handleVenueResetNorth : undefined}
+          showNames={!!indoorLayers.labels}
+          onToggleNames={venue && !showOutdoorMap ? () => setIndoorLayers(prev => ({ ...prev, labels: !prev.labels })) : undefined}
         />
         {/* Debug drawer — on the explore page; on a venue only with ?debug=1 */}
         <div className={cn('relative', venue && !showDebug && 'hidden')}>
@@ -1693,6 +1754,7 @@ export const ExploreMap = ({
       {/* ── Bottom Sheet (fixed to bottom of viewport, mobile only) ── */}
       <div className="absolute bottom-0 left-0 right-0 z-20 lg:hidden">
         <BottomSheet
+          browse={venueBrowse}
           buildings={allBuildings}
           selectedBuildingId={selectedBuildingId}
           selectedFloorId={selectedFloorId}

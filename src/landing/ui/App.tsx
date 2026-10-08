@@ -8,6 +8,7 @@ import { PICO } from './pico';
 import { GoMark } from './GoMark';
 import { Intro } from './Intro';
 import { SlideGo } from './SlideGo';
+import { HomeSearch } from './HomeSearch';
 import {
   I_ARR, I_CLK, I_DOWN, I_EXP, I_HAND, I_INFO, I_MUSIC, I_MUTE, I_NAV, I_PAUSE, I_PLAY, I_SPK, I_UP, I_WALK, I_WALKER, I_X, Icon,
 } from './icons';
@@ -389,6 +390,7 @@ export default function App() {
                   Explore the map
                 </button>
               </div>
+              <HomeSearch className="mt-[clamp(14px,2.4vh,22px)] animate-[hin_.8s_.32s_both] por:mx-auto ph640:mt-2.5" />
             </div>
           )}
         </div>

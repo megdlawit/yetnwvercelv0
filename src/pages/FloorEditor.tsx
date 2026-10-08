@@ -20,7 +20,7 @@ import {
   SquarePlus, Ruler, PenLine, Square, Box, Columns2, Grid3x3, Magnet, AlertTriangle,
   CheckCircle2, Layers3, Crosshair, Hand, DoorOpen, Pentagon, Shapes, Type, LandPlot,
   Scissors, ArrowRightToLine, Split, Merge, CopyPlus, RotateCw, Scaling, Move, Globe, ExternalLink,
-  BetweenHorizontalStart, GraduationCap,
+  BetweenHorizontalStart, GraduationCap, Trees, Sprout, Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -28,7 +28,7 @@ import { cn } from '@/lib/utils';
 import { useEditorHistory } from '@/hooks/useEditorHistory';
 import { useSvgViewport, type Bounds } from '@/hooks/useSvgViewport';
 import { snapPoint, type SnapKind } from '@/lib/venue/snap';
-import { fromPlan, validate, issueText, type Issue, type PlanRows } from '@ethi/indoor-core';
+import { fromPlan, validate, issueText, pathsThroughWalls, repairPathsThroughWalls, autoScenery, groundBounds, sceneryRing, type Issue, type PlanRows, type PathRepair } from '@ethi/indoor-core';
 import { useUnderlay, UnderlayImage, UnderlayOverlay, UnderlayPanel } from '@/components/venue/editor/PlanUnderlay';
 import { WallFields, OpeningFields, ConnectorFields, RoomFields, FloorFields, type Extra } from '@/components/venue/editor/Inspector3D';
 import { closedLoop } from '@/components/venue/editor/loops';
@@ -36,7 +36,7 @@ import {
   type Pt, type Seg, projectOnSegment, splitAt, trimAt, extendTo, joinSegs, offsetSeg, sideOf,
   polygonArea, polygonCentroid, pointInPolygon, bbox, rotatePt, scalePt, segLen,
 } from '@/lib/cad/geometry';
-import { FEATURE_KINDS, roomOutline, parsePolygon, type FeatureKind, type MapFeature } from '@/lib/venue/features';
+import { FEATURE_KINDS, SCENERY_KINDS, roomOutline, parsePolygon, type FeatureKind, type MapFeature } from '@/lib/venue/features';
 import { roomTypeFromName } from '@/lib/cad/commitVenue';
 import CadImportDialog from '@/components/venue/CadImportDialog';
 import EditorTour, { type EditorState } from '@/components/venue/EditorTour';
@@ -45,12 +45,15 @@ import PlaceDetailsEditor from '@/components/venue/PlaceDetailsEditor';
 import FeatureGlyph from '@/components/venue/FeatureGlyph';
 import type { FloorLayer } from '@/components/venue/Venue3D';
 import { themeOf } from '@/lib/venue/themes';
+import MapAssistant from '@/components/venue/editor/MapAssistant';
+import { healthOf, importSummary, type Change, type Chip, type Highlight, type Plan, type Thing } from '@/lib/assistant/engine';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 // three.js is large; only load it when someone opens the 3D view.
 const Venue3D = lazy(() => import('@/components/venue/Venue3D'));
 
 type Tool =
-  | 'select' | 'hand' | 'wall' | 'door' | 'room' | 'add-edge' | 'add-node' | 'object' | 'text'
+  | 'select' | 'hand' | 'wall' | 'door' | 'room' | 'add-edge' | 'add-node' | 'object' | 'scenery' | 'text'
   | 'measure' | 'area' | 'trim' | 'extend' | 'split' | 'join' | 'offset' | 'delete';
 type ViewMode = '2d' | '3d' | 'split';
 
@@ -119,6 +122,7 @@ const TOOL_GROUPS: ToolDef[][] = [
     { id: 'add-edge', icon: Route, label: 'Path', key: 'E', hint: 'Click two places to connect them with a walkable path' },
     { id: 'add-node', icon: MapPin, label: 'POI', key: 'N', hint: 'Click to add a place visitors can navigate to' },
     { id: 'object', icon: Shapes, label: 'Object', key: 'B', hint: 'Choose an object, then click to place it' },
+    { id: 'scenery', icon: Trees, label: 'Scenery', key: 'G', hint: 'Pick a tree, lawn, pond, fountain, lamp… then click to place it · select it and press Del (or use Delete) to remove it' },
     { id: 'text', icon: Type, label: 'Text', key: 'T', hint: 'Click to add a text label' },
   ],
   [
@@ -135,7 +139,7 @@ const TOOL_GROUPS: ToolDef[][] = [
   [{ id: 'delete', icon: Eraser, label: 'Delete', key: 'D', hint: 'Click anything to delete it' }],
 ];
 const ALL_TOOLS = TOOL_GROUPS.flat();
-const DRAW_TOOLS: Tool[] = ['wall', 'door', 'room', 'add-node', 'object', 'text', 'measure', 'area'];
+const DRAW_TOOLS: Tool[] = ['wall', 'door', 'room', 'add-node', 'object', 'scenery', 'text', 'measure', 'area'];
 const WALL_PICK_TOOLS: Tool[] = ['trim', 'extend', 'split', 'join', 'offset', 'delete'];
 
 const SHORTCUTS: [string, string][] = [
@@ -225,6 +229,7 @@ const FloorEditor = () => {
   const [hoverWall, setHoverWall] = useState<string | null>(null);
   const [marquee, setMarquee] = useState<{ a: Pt; b: Pt } | null>(null);
   const [objectKind, setObjectKind] = useState<FeatureKind>('stairs');
+  const [sceneryKind, setSceneryKind] = useState<FeatureKind>('tree');
   const [offsetM, setOffsetM] = useState(0.2);
   const [dragging, setDragging] = useState<null | 'pan' | 'move'>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -252,6 +257,17 @@ const FloorEditor = () => {
   const [allRows, setAllRows] = useState<PlanRows | null>(null);
 
   const history = useEditorHistory();
+  // The map assistant: where they last clicked ("here"), what it's showing, and its greeting.
+  const lastClick = useRef<Pt | null>(null);
+  const [aiMark, setAiMark] = useState<(Highlight & { mode: 'preview' | 'flash' }) | null>(null);
+  const [greeting, setGreeting] = useState<{ key: number; reply: string; chips: Chip[] } | null>(null);
+  const greetAfterLoad = useRef(false);
+  // The full toolbar is there for people who want it; the simple one is the default.
+  const [allTools, setAllTools] = useState(() => { try { return localStorage.getItem('yetnew-editor-all-tools') === '1'; } catch { return false; } });
+  // Side-panel buttons speak through the map assistant ("Fix everything", "Make Gallery walkable").
+  const [assistantAsk, setAssistantAsk] = useState<{ key: number; text: string } | null>(null);
+  const askMap = (text: string) => setAssistantAsk({ key: Date.now() + Math.random(), text });
+  const toggleAllTools = () =>setAllTools(v => { try { localStorage.setItem('yetnew-editor-all-tools', v ? '0' : '1'); } catch { /* private mode */ } return !v; });
   const viewport = useSvgViewport();
   const k = 1 / viewport.scale; // world units per screen pixel
 
@@ -515,7 +531,9 @@ const FloorEditor = () => {
       return true;
     } catch (err) {
       console.error(`${label} failed:`, err);
-      toast.error(`Couldn't ${label.toLowerCase()}`);
+      if (/map_features_kind_check/.test(String((err as Error)?.message ?? err))) {
+        toast.error('This scenery needs a database update', { description: 'Run migration 20261008090000_scenery_kinds.sql in the Supabase SQL editor, then try again.', duration: 9000 });
+      } else toast.error(`Couldn't ${label.toLowerCase()}`);
       return false;
     }
   };
@@ -579,7 +597,51 @@ const FloorEditor = () => {
       return;
     }
     const row = { id: crypto.randomUUID(), building_id: buildingId, from_node: fromId, to_node: toId, weight: dist(a, b), source: 'manual', ...stamp() } as EdgeRow;
+    // A path can't go through a wall: send it round, through a doorway — or refuse.
+    const model = modelRef.current;
+    if (model) {
+      const rows: PlanRows = { ...model.rows, edges: [...model.rows.edges, { id: row.id, from_node: fromId, to_node: toId }] };
+      const fix = repairPathsThroughWalls(rows, { pxPerMeter: PX_PER_METER, newId: () => crypto.randomUUID(), edgeIds: [row.id] });
+      if (fix.dropped.length) {
+        toast.error("Paths can't go through walls", { description: 'There is no doorway between these places. Add a door in the wall (Door tool), then connect them again.', duration: 7000 });
+        return;
+      }
+      if (fix.rerouted.length) {
+        if (await createRows(repairRows(fix), 'Add path')) {
+          toast('That path went through a wall', { description: 'It now goes round the wall and through the doorway.', duration: 5000 });
+        }
+        return;
+      }
+    }
     await createRows({ edges: [row] }, 'Add path');
+  };
+
+  /** Rows for a repair: the new corner points (hallway) and the paths through them. */
+  const repairRows = (fix: PathRepair): Partial<Rows> => ({
+    nodes: fix.nodes.map(n => ({ id: n.id, ...newRowBase(), floor_id: n.floor_id, ...stamp(), name: '', x: n.x, y: n.y, is_hallway: true, type: 'hallway' } as NodeRow)),
+    edges: fix.edges.map(e => ({ id: e.id, building_id: buildingId!, from_node: e.from_node, to_node: e.to_node, weight: e.weight, source: 'manual', ...stamp() } as EdgeRow)),
+  });
+
+  /** Map health: send every path on this floor that crosses a wall round it, through a doorway (one undo). */
+  const fixPathsThroughWalls = async () => {
+    const model = modelRef.current;
+    if (!model || !blockedRef.current.size) return;
+    const fix = repairPathsThroughWalls(model.rows, { pxPerMeter: PX_PER_METER, newId: () => crypto.randomUUID(), edgeIds: [...blockedRef.current] });
+    const noDoor = fix.dropped.length
+      ? `${fix.dropped.length} path${fix.dropped.length > 1 ? 's have' : ' has'} no doorway to use — add a door in the wall (Door tool), or delete ${fix.dropped.length > 1 ? 'them' : 'it'}.`
+      : undefined;
+    if (!fix.rerouted.length) { toast.error('No doorway to go through', { description: noDoor, duration: 7000 }); return; }
+    try {
+      const old = await run(supabase.from('edges').select('*').in('id', fix.rerouted)) as EdgeRow[];
+      const add = repairRows(fix);
+      const apply = async () => { await deleteRows({ edges: old }); await insertRows(add); };
+      await apply();
+      history.push({ label: 'Fix paths through walls', undo: async () => { await deleteRows(add); await insertRows({ edges: old }); }, redo: apply });
+      toast.success(`${fix.rerouted.length} path${fix.rerouted.length > 1 ? 's' : ''} now go${fix.rerouted.length > 1 ? '' : 'es'} through the doorways`, { description: noDoor, duration: 6000 });
+    } catch (err) {
+      console.error('Fix paths through walls failed:', err);
+      toast.error("Couldn't fix the paths");
+    }
   };
 
   // A stair / lift / ramp connection: a path between places on two floors.
@@ -625,6 +687,21 @@ const FloorEditor = () => {
     if (!buildingId || !floorId) return;
     const row = { id: crypto.randomUUID(), ...newRowBase(), ...stamp(), kind, x: p.x, y: p.y, rotation_deg: rotationDeg, width: null, depth: null, label } as FeatureRow;
     createRows({ features: [row] }, `Add ${FEATURE_KINDS[kind].label.toLowerCase()}`).then(ok => { if (ok) selectOnly('features', row.id); });
+  };
+
+  /** The automatic trees round the building, made into real ones the venue can move and delete (one undo). */
+  const sceneryFromRing = async () => {
+    const model = modelRef.current;
+    if (!model || !floorId || !buildingId) return;
+    const b = groundBounds(model.venue, floorId);
+    if (!b) { toast.info('Draw the building first — the trees go round it.'); return; }
+    const rows = sceneryRing(b).map(t => ({
+      id: crypto.randomUUID(), ...newRowBase(), ...stamp(), kind: 'tree', x: Math.round(t.at.x * PX_PER_METER), y: Math.round(t.at.z * PX_PER_METER),
+      rotation_deg: 0, width: Math.round(t.size * PX_PER_METER), depth: Math.round(t.size * PX_PER_METER), label: null,
+    } as FeatureRow));
+    if (await createRows({ features: rows }, 'Make the trees editable')) {
+      toast.success(`${rows.length} trees are now yours to edit`, { description: 'Select any of them to move or delete it, or add more scenery.' });
+    }
   };
 
   const addRoomFromPolygon = (pts: Pt[]) => {
@@ -746,6 +823,104 @@ const FloorEditor = () => {
     } catch (err) { console.error(err); toast.error('Failed to add a place'); }
   };
 
+  // ── The map assistant's changes ────────────────────────────────────────────
+  /** Writes one assistant change (new places, paths, objects; removed paths) as one undo step. */
+  const applyChange = async (c: Change, label: string): Promise<boolean> => {
+    if (!buildingId || !floorId) return false;
+    const nodeRow = (n: Change['nodes'][number]) => ({ id: n.id, ...newRowBase(), floor_id: n.floor_id, ...stamp(), name: n.name, x: n.x, y: n.y, is_hallway: n.hallway, type: n.hallway ? 'hallway' : 'normal' } as NodeRow);
+    const add: Rows = {
+      nodes: c.nodes.filter(n => n.floor_id === floorId).map(nodeRow),
+      edges: c.edges.map(e => ({ id: e.id, building_id: buildingId, from_node: e.from_node, to_node: e.to_node, weight: e.weight, source: 'manual', ...stamp(), ...(e.connection ? { connection: e.connection, accessible: !!e.accessible } : {}) } as EdgeRow)),
+      features: c.features.map(f => ({ id: f.id, ...newRowBase(), floor_id: f.floor_id, ...stamp(), kind: f.kind, x: f.x, y: f.y, rotation_deg: 0, width: null, depth: null, label: f.label } as FeatureRow)),
+      rooms: [], walls: [],
+    };
+    // Places on other floors (the far end of a floor link) aren't drawn here.
+    const elsewhere = c.nodes.filter(n => n.floor_id !== floorId).map(nodeRow);
+    const roomBefore = new Map(c.roomPlaces.map(l => [l.roomId, roomsRef.current.find(r => r.id === l.roomId)?.nodeId || null] as const));
+    const link = (to: 'after' | 'before') => async () => {
+      for (const l of c.roomPlaces) {
+        const nodeId = to === 'after' ? l.nodeId : roomBefore.get(l.roomId) ?? null;
+        await run(supabase.from('rooms').update({ node_id: nodeId }).eq('id', l.roomId));
+        setRooms(p => p.map(r => (r.id === l.roomId ? { ...r, nodeId: nodeId ?? '' } : r)));
+      }
+    };
+    const shared = (more: Partial<PlanRows>, less: { nodes: string[]; edges: string[] }) => setAllRows(p => p && ({
+      ...p,
+      nodes: [...p.nodes.filter(n => !less.nodes.includes(n.id)), ...(more.nodes ?? [])],
+      edges: [...p.edges.filter(e => !less.edges.includes(e.id)), ...(more.edges ?? [])],
+    }));
+    try {
+      const gone: Rows = {
+        edges: c.removeEdges.length ? await run(supabase.from('edges').select('*').in('id', c.removeEdges)) : [],
+        nodes: c.removeNodes.length ? await run(supabase.from('nodes').select('*').in('id', c.removeNodes)) : [],
+        rooms: [], walls: [], features: [],
+      };
+      const forward = async () => {
+        await deleteRows(gone);
+        if (elsewhere.length) await run(supabase.from('nodes').insert(elsewhere));
+        await insertRows(add);
+        await link('after')();
+        shared({ nodes: elsewhere.map(n => ({ id: n.id, floor_id: n.floor_id, name: n.name, x: n.x, y: n.y, is_hallway: n.is_hallway })), edges: add.edges.filter(e => (e as { connection?: string }).connection).map(e => ({ id: e.id, from_node: e.from_node, to_node: e.to_node, connection: (e as { connection?: string }).connection ?? null })) }, { nodes: [], edges: c.removeEdges });
+      };
+      const back = async () => {
+        await link('before')();
+        await deleteRows(add);
+        if (elsewhere.length) await run(supabase.from('nodes').delete().in('id', elsewhere.map(n => n.id)));
+        await insertRows(gone);
+        shared({}, { nodes: elsewhere.map(n => n.id), edges: add.edges.map(e => e.id) });
+      };
+      await forward();
+      history.push({ label, undo: back, redo: forward });
+      return true;
+    } catch (err) {
+      console.error(`${label} failed:`, err);
+      return false;
+    }
+  };
+
+  const selOf = (t: Thing): Sel => ({ ...NO_SEL, [t.kind === 'room' ? 'rooms' : t.kind === 'place' ? 'nodes' : 'features']: [t.id] });
+
+  /** Carries out what the map assistant decided. */
+  const applyAssistant = async (p: Plan): Promise<boolean> => {
+    if (p.change) {
+      const ok = await applyChange(p.change, p.label ?? 'Map change');
+      if (ok && p.select) selectOnly(p.select.kind, p.select.id);
+      return ok;
+    }
+    const e = p.edit;
+    if (!e) return true;
+    try {
+      switch (e.op) {
+        case 'undo': await history.undo(); return true;
+        case 'show':
+          setSel(selOf(e.thing));
+          viewport.centerOn(e.thing.at.x, e.thing.at.y, 1);
+          return true;
+        case 'move': {
+          const before = takeSnap(selOf(e.thing));
+          await commitTransform(before, transformSnap(before, { kind: 'move', dx: e.dx, dy: e.dy }), `Move ${e.thing.name}`);
+          setSel(selOf(e.thing));
+          return true;
+        }
+        case 'rename':
+          if (e.thing.kind === 'room') await editRoom(e.thing.id, { name: e.name }, `Rename to ${e.name}`);
+          else if (e.thing.kind === 'object') await editFeature(e.thing.id, { label: e.name }, `Rename to ${e.name}`);
+          else {
+            const n = nodesRef.current.find(x => x.id === e.thing.id);
+            if (!n) return false;
+            const before = { name: n.name, isHallway: n.isHallway }, after = { name: e.name, isHallway: n.isHallway };
+            await updateNodeFields(n.id, after);
+            history.push({ label: `Rename to ${e.name}`, undo: () => updateNodeFields(n.id, before), redo: () => updateNodeFields(n.id, after) });
+          }
+          return true;
+        case 'remove': await deleteSelection(selOf(e.thing)); return true;
+      }
+    } catch (err) {
+      console.error('Assistant edit failed:', err);
+      return false;
+    }
+  };
+
   const saveRoom = async () => {
     if (!roomDialog.nodeId || !floorId || !buildingId) return;
     const node = nodesRef.current.find(n => n.id === roomDialog.nodeId);
@@ -818,6 +993,7 @@ const FloorEditor = () => {
 
   const onCanvasPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     const p = svgPoint(e.clientX, e.clientY);
+    lastClick.current = roundPt(p); // "here", for the map assistant
     const wantsPan = e.button === 1 || (e.button === 0 && (spaceHeld || tool === 'hand'));
     if (wantsPan) {
       interaction.current = { kind: 'pan', lastX: e.clientX, lastY: e.clientY, startX: e.clientX, startY: e.clientY };
@@ -979,6 +1155,8 @@ const FloorEditor = () => {
         addFeature('door', roundPt(pr.pt), (Math.atan2(w.y2 - w.y1, w.x2 - w.x1) * 180) / Math.PI);
       } else if (tool === 'object') {
         addFeature(objectKind, pt);
+      } else if (tool === 'scenery') {
+        addFeature(sceneryKind, pt);
       } else if (tool === 'text') {
         setTextDialog({ open: true, at: pt, text: '' });
       }
@@ -1136,6 +1314,14 @@ const FloorEditor = () => {
     };
     return { rows, venue: fromPlan(rows, { pxPerMeter: PX_PER_METER }) };
   }, [allRows, floorId, extras, walls, rooms, features, nodes, edges]);
+  const modelRef = useRef(editorModel);
+  modelRef.current = editorModel;
+  const blockedEdges = useMemo(
+    () => new Set(editorModel ? pathsThroughWalls(editorModel.rows, PX_PER_METER, edges.map(e => e.id), editorModel.venue) : []),
+    [editorModel, edges],
+  );
+  const blockedRef = useRef(blockedEdges);
+  blockedRef.current = blockedEdges;
   // The plan checks for this floor (rooms, doors, paths, stairs).
   const floorIssues = useMemo<Issue[]>(() => (editorModel ? validate(editorModel.venue, editorModel.rows, PX_PER_METER).filter(i => i.floorId === floorId) : []), [editorModel, floorId]);
   const showIssue = (i: Issue) => {
@@ -1176,6 +1362,30 @@ const FloorEditor = () => {
     const roomsWithoutPlace = rooms.filter(r => !r.nodeId || !adj.has(r.nodeId));
     return { unconnected, networks, roomsWithoutPlace };
   }, [nodes, edges, rooms]);
+
+  // What the map assistant sees: the whole plan, the selection, the last click, the view.
+  const viewRef = useRef(viewport.viewBox); viewRef.current = viewport.viewBox;
+  const assistantState = useCallback(() => {
+    const m = modelRef.current;
+    if (!m || !floorId) return null;
+    const v = viewRef.current;
+    return { floorId, rows: m.rows, selection: { nodes: selRef.current.nodes, rooms: selRef.current.rooms, features: selRef.current.features }, click: lastClick.current, view: { x: v.x + v.w / 2, y: v.y + v.h / 2 } };
+  }, [floorId]);
+  const mapHealth = useMemo(() => {
+    if (!editorModel || !floorId) return [];
+    try { return healthOf({ floorId, rows: editorModel.rows, selection: { nodes: [], rooms: [], features: [] }, click: null, view: { x: 0, y: 0 }, last: null, lastChange: null }); }
+    catch (err) { console.error('map health failed', err); return []; }
+  }, [editorModel, floorId]);
+  // After an import, the map says what it found and what to fix first.
+  useEffect(() => {
+    if (!greetAfterLoad.current || loading || !editorModel || !floorId) return;
+    greetAfterLoad.current = false;
+    const s = { floorId, rows: editorModel.rows, selection: { nodes: [], rooms: [], features: [] }, click: null, view: { x: 0, y: 0 }, last: null, lastChange: null };
+    setGreeting({ key: Date.now(), ...importSummary(s) });
+  }, [loading, editorModel, floorId]);
+  const selectedName = sel.rooms.length === 1 ? rooms.find(r => r.id === sel.rooms[0])?.name || null
+    : sel.nodes.length === 1 ? nodes.find(n => n.id === sel.nodes[0])?.name || null
+    : sel.features.length === 1 ? (() => { const f = features.find(x => x.id === sel.features[0]); return f ? f.label || FEATURE_KINDS[f.kind]?.label || null : null; })() : null;
 
   const nodeColor = (node: NavNode) => {
     const type = roomByNode.get(node.id)?.type;
@@ -1227,7 +1437,7 @@ const FloorEditor = () => {
   const show2D = view !== '3d';
   const show3D = view !== '2d';
   const issues = health.unconnected.length + Math.max(0, health.networks.length - 1) + health.roomsWithoutPlace.length
-    + floorIssues.filter(i => i.kind !== 'graph-disconnected' && i.kind !== 'place-unroutable').length;
+    + floorIssues.filter(i => i.kind !== 'graph-disconnected' && i.kind !== 'place-unroutable' && i.kind !== 'path-through-wall').length + (blockedEdges.size ? 1 : 0);
   const nSel = selCount(sel);
   const singleWall = sel.walls.length === 1 && nSel === 1 ? walls.find(w => w.id === sel.walls[0]) : undefined;
   const singleFeature = sel.features.length === 1 && nSel === 1 ? features.find(f => f.id === sel.features[0]) : undefined;
@@ -1314,7 +1524,50 @@ const FloorEditor = () => {
 
       {/* ── Tool bar ── */}
       <div className={cn('h-11 border-b bg-card/60 px-2 flex items-center gap-1 shrink-0 overflow-x-auto', !show2D && 'opacity-50 pointer-events-none')}>
-        {TOOL_GROUPS.map((group, gi) => (
+        {!allTools && (() => {
+          const pick = (id: Tool) => ALL_TOOLS.find(t => t.id === id)!;
+          const addTools = (['add-node', 'room', 'wall', 'door', 'add-edge', 'object', 'scenery', 'text'] as Tool[]).map(pick);
+          const adding = addTools.find(t => t.id === tool);
+          const btn = (active: boolean) => cn('flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap',
+            active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground');
+          return (
+            <div className="flex items-center gap-1">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className={btn(!!adding)} aria-label="Add" data-tour="tool-add">
+                    {adding ? <adding.icon className="h-4 w-4" /> : <SquarePlus className="h-4 w-4" />} {adding ? `Adding: ${adding.label === 'POI' ? 'Place' : adding.label}` : 'Add'}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-56">
+                  {addTools.map(t => (
+                    <DropdownMenuItem key={t.id} onSelect={() => chooseTool(t.id)} className="gap-2">
+                      <t.icon className="h-4 w-4 text-muted-foreground" />
+                      <span className="flex-1">{t.id === 'add-node' ? 'Place' : t.id === 'add-edge' ? 'Walking path' : t.label}</span>
+                      {t.key && <kbd className="font-mono text-[10px] text-muted-foreground">{t.key}</kbd>}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {(['select', 'hand'] as Tool[]).map(pick).map(t => (
+                <button key={t.id} onClick={() => chooseTool(t.id)} aria-pressed={tool === t.id} aria-label={t.label} data-tour={`tool-${t.id}`} className={btn(tool === t.id)}>
+                  <t.icon className="h-4 w-4" /> <span className="hidden sm:inline">{t.label}</span>
+                </button>
+              ))}
+              <button onClick={() => void history.undo()} disabled={!history.canUndo} className={cn(btn(false), 'disabled:opacity-40')} aria-label="Undo last change">
+                <Undo2 className="h-4 w-4" /> <span className="hidden sm:inline">Undo</span>
+              </button>
+              <span className="mx-1 h-5 w-px bg-border" />
+              <button onClick={toggleAllTools} className={btn(false)} title="Walls, measuring, trim, split, join, offset…">
+                <Shapes className="h-4 w-4" /> More tools
+              </button>
+              <span className="ml-2 hidden items-center gap-1 text-xs text-muted-foreground lg:flex"><Sparkles className="h-3.5 w-3.5 text-primary" /> Or just tell the map what to change, below — press <kbd className="font-mono">/</kbd></span>
+            </div>
+          );
+        })()}
+        {allTools && (
+          <button onClick={toggleAllTools} className="mr-1 shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted" title="Back to the simple toolbar">Simple</button>
+        )}
+        {allTools && TOOL_GROUPS.map((group, gi) => (
           <div key={gi} className="flex items-center gap-0.5 pr-1 mr-0.5 border-r last:border-r-0">
             {group.map(t => (
               <Tooltip key={t.id}>
@@ -1333,7 +1586,7 @@ const FloorEditor = () => {
         {tool === 'object' && (
           <select value={objectKind} onChange={e => setObjectKind(e.target.value as FeatureKind)} aria-label="Object to place"
             className="ml-1 rounded-md border bg-background px-2 py-1 text-xs">
-            {(Object.keys(FEATURE_KINDS) as FeatureKind[]).filter(kd => FEATURE_KINDS[kd].placeable && kd !== 'door').map(kd => <option key={kd} value={kd}>{FEATURE_KINDS[kd].label}</option>)}
+            {(Object.keys(FEATURE_KINDS) as FeatureKind[]).filter(kd => FEATURE_KINDS[kd].placeable && kd !== 'door' && (!SCENERY_KINDS.includes(kd) || kd === 'tree' || kd === 'bench')).map(kd => <option key={kd} value={kd}>{FEATURE_KINDS[kd].label}</option>)}
           </select>
         )}
         {tool === 'offset' && (
@@ -1341,12 +1594,62 @@ const FloorEditor = () => {
             <Input type="number" step="0.05" min="0.01" value={offsetM} onChange={e => setOffsetM(Math.max(0.01, Number(e.target.value)))} className="h-7 w-20 text-xs" /> m
           </label>
         )}
-        <div className="ml-2 hidden lg:block text-xs text-muted-foreground truncate">{hint}</div>
+        {(allTools || tool !== 'select') && <div className="ml-2 hidden lg:block text-xs text-muted-foreground truncate">{hint}</div>}
       </div>
 
       <div className="flex flex-1 min-h-0">
         {/* ── Left: project, layers, health ── */}
-        <aside className="w-56 border-r bg-card overflow-y-auto shrink-0 hidden md:block">
+        <aside className={cn('border-r bg-card overflow-y-auto shrink-0 hidden md:block', allTools ? 'w-56' : 'w-52')}>
+          {!allTools ? (
+            // The simple side: floors, what to show, and whether the map is ready.
+            <div className="flex h-full flex-col gap-5 p-3">
+              <section>
+                <p className="mb-2 truncate text-sm font-semibold">{building?.name || 'Venue'}</p>
+                <ul className="space-y-1">
+                  {floors.map(f => (
+                    <li key={f.id}>
+                      <Link to={`/admin/floors/${buildingId}/${f.id}/editor`}
+                        className={cn('block truncate rounded-lg px-3 py-2 text-sm',
+                          f.id === floorId ? 'bg-primary text-primary-foreground font-medium shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}>
+                        {f.name}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+                <button onClick={() => setAddFloors({ open: true, file: null })}
+                  className="mt-1 flex w-full items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-primary hover:bg-primary/10">
+                  <SquarePlus className="h-4 w-4" /> Add a floor
+                </button>
+              </section>
+
+              <section className="space-y-2.5" data-tour="editor-layers">
+                <p className={sectionTitle}>Show</p>
+                {([['labels', 'Names'], ['edges', 'Walking paths']] as const).map(([key, label]) => (
+                  <label key={key} className="flex cursor-pointer items-center justify-between text-sm">
+                    {label}
+                    <Switch checked={layers[key]} onCheckedChange={v => setLayers(p => ({ ...p, [key]: v }))} aria-label={`Show ${label.toLowerCase()}`} />
+                  </label>
+                ))}
+              </section>
+
+              {!isEmpty && (
+                <section data-tour="editor-health">
+                  {mapHealth.length === 0 ? (
+                    <div className="rounded-xl bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-400">
+                      <p className="flex items-center gap-1.5 font-semibold"><CheckCircle2 className="h-4 w-4" /> Ready for visitors</p>
+                      <p className="mt-0.5 text-xs opacity-80">Every place can be reached.</p>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl bg-amber-500/10 p-3 text-sm">
+                      <p className="flex items-center gap-1.5 font-semibold text-amber-700 dark:text-amber-400"><AlertTriangle className="h-4 w-4" /> {mapHealth.length} thing{mapHealth.length === 1 ? ' needs' : 's need'} a look</p>
+                      <Button size="sm" className="mt-2 h-8 w-full rounded-full" onClick={() => askMap('Fix everything')}>Fix everything</Button>
+                      <button className="mt-1 w-full text-center text-xs text-muted-foreground hover:text-foreground" onClick={() => askMap("What's wrong?")}>What's wrong?</button>
+                    </div>
+                  )}
+                </section>
+              )}
+            </div>
+          ) : (<>
           <section className="p-3 border-b">
             <h4 className={cn(sectionTitle, 'mb-2')}>Project</h4>
             <p className="text-sm font-medium truncate mb-1.5">{building?.name || 'Venue'}</p>
@@ -1418,7 +1721,16 @@ const FloorEditor = () => {
                     </button>
                   </li>
                 )}
-                {floorIssues.filter(i => i.kind !== 'graph-disconnected' && i.kind !== 'place-unroutable').slice(0, 8).map((i, n) => (
+                {blockedEdges.size > 0 && (
+                  <li className="flex gap-1.5 rounded-md p-1.5 bg-destructive/5">
+                    <AlertTriangle className="h-3.5 w-3.5 text-destructive shrink-0 mt-px" />
+                    <span>
+                      <b>{blockedEdges.size}</b> path{blockedEdges.size > 1 ? 's go' : ' goes'} through a wall (shown in red). Nobody can walk {blockedEdges.size > 1 ? 'them' : 'it'}.{' '}
+                      <button className="text-primary font-medium hover:underline" onClick={fixPathsThroughWalls}>Fix — go through doors</button>
+                    </span>
+                  </li>
+                )}
+                {floorIssues.filter(i => i.kind !== 'graph-disconnected' && i.kind !== 'place-unroutable' && i.kind !== 'path-through-wall').slice(0, 8).map((i, n) => (
                   <li key={`${i.kind}-${i.ids[0]}-${n}`}>
                     <button className="w-full text-left flex gap-1.5 rounded-md p-1.5 hover:bg-muted" onClick={() => showIssue(i)}>
                       <AlertTriangle className={cn('h-3.5 w-3.5 shrink-0 mt-px', i.severity === 'error' ? 'text-destructive' : 'text-amber-600')} />
@@ -1429,12 +1741,44 @@ const FloorEditor = () => {
               </ul>
             )}
           </section>
+          </>)}
         </aside>
 
         {/* ── Views ── */}
         <main className="flex-1 min-w-0 flex">
           <div ref={viewport.ref} data-tour="editor-canvas" className={cn('relative overflow-hidden bg-muted/40 select-none', show2D ? 'flex-1' : 'hidden', view === 'split' && 'border-r')}>
             <UnderlayOverlay s={underlay} toEditor={svgPoint} />
+            {/* The Scenery tool's tray: pick, then click the plan. */}
+            {tool === 'scenery' && (
+              <div className="absolute left-3 top-3 z-10 w-[244px] rounded-2xl border bg-card/95 p-2 shadow-lg backdrop-blur"
+                onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} onWheel={e => e.stopPropagation()}>
+                <p className="flex items-center gap-1.5 px-1 pb-1.5 text-xs font-semibold"><Trees className="h-3.5 w-3.5 text-primary" /> Scenery <span className="font-normal text-muted-foreground">· pick, then click the plan</span></p>
+                <div role="radiogroup" aria-label="Scenery to place" className="grid grid-cols-4 gap-1">
+                  {SCENERY_KINDS.map(kd => {
+                    const def = FEATURE_KINDS[kd];
+                    const d = Math.max(12, Math.min(34, (def.d / Math.max(def.w, 0.01)) * 34));
+                    return (
+                      <button key={kd} role="radio" aria-checked={sceneryKind === kd} aria-label={def.label} title={def.label} onClick={() => setSceneryKind(kd)}
+                        className={cn('flex flex-col items-center gap-0.5 rounded-lg px-0.5 py-1.5 text-[10px] leading-tight transition-colors',
+                          sceneryKind === kd ? 'bg-primary/15 font-semibold text-foreground ring-1 ring-primary/50' : 'text-muted-foreground hover:bg-muted')}>
+                        <svg viewBox="-22 -22 44 44" className="h-7 w-7" aria-hidden>
+                          <FeatureGlyph f={{ id: kd, kind: kd, x: 0, y: 0, rotationDeg: 0, width: 34, depth: kd === 'lamp' ? 4 : d, label: null }} pxPerMeter={PX_PER_METER} k={1} selected={false} />
+                        </svg>
+                        <span className="w-full truncate text-center">{def.label.replace(' / pool', '')}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {editorModel && floorId && autoScenery(editorModel.venue, floorId) ? (
+                  <button onClick={() => void sceneryFromRing()} className="mt-1.5 flex w-full items-center gap-1.5 rounded-lg border border-dashed px-2 py-1.5 text-left text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground">
+                    <Sprout className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    <span>Visitors see automatic trees round the building. <b className="font-semibold text-foreground">Make them editable</b></span>
+                  </button>
+                ) : (
+                  <p className="mt-1.5 px-1 text-[10px] text-muted-foreground">To remove scenery: select it and press Del, or use the Delete tool.</p>
+                )}
+              </div>
+            )}
             <svg
               ref={svgRef}
               viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
@@ -1500,14 +1844,18 @@ const FloorEditor = () => {
               {layers.edges && edges.map(edge => {
                 const from = nodeById.get(edge.fromNodeId), to = nodeById.get(edge.toNodeId);
                 if (!from || !to) return null;
+                const blocked = blockedEdges.has(edge.id);
                 return (
                   <g key={edge.id} className={tool === 'delete' ? 'group cursor-pointer' : 'pointer-events-none'}
                     onPointerDown={tool === 'delete' ? e => e.stopPropagation() : undefined}
                     onClick={e => onEdgeClick(e, edge.id)}>
                     {tool === 'delete' && <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="transparent" strokeWidth={12} vectorEffect="non-scaling-stroke" />}
                     <line x1={from.x} y1={from.y} x2={to.x} y2={to.y}
-                      stroke="hsl(var(--primary) / 0.5)" strokeWidth={2.5} strokeLinecap="round" vectorEffect="non-scaling-stroke"
-                      className={tool === 'delete' ? 'group-hover:stroke-destructive' : undefined} />
+                      stroke={blocked ? 'hsl(var(--destructive))' : 'hsl(var(--primary) / 0.5)'} strokeWidth={2.5} strokeLinecap="round" vectorEffect="non-scaling-stroke"
+                      strokeDasharray={blocked ? '5 5' : undefined}
+                      className={tool === 'delete' ? 'group-hover:stroke-destructive' : undefined}>
+                      {blocked && <title>This path goes through a wall — fix it in Map health</title>}
+                    </line>
                     {layers.distances && (
                       <text x={(from.x + to.x) / 2} y={(from.y + to.y) / 2 - 5 * k} textAnchor="middle" fontSize={9 * k}
                         className="fill-muted-foreground pointer-events-none">
@@ -1607,6 +1955,31 @@ const FloorEditor = () => {
                 );
               })}
 
+              {/* The map assistant showing a route (preview), or what it just changed (flash) */}
+              {aiMark && (
+                <g className="pointer-events-none" key={JSON.stringify(aiMark.route[0] ?? aiMark.spots[0] ?? aiMark.removed[0] ?? null) + aiMark.mode}>
+                  {aiMark.route.length > 0 && (() => {
+                    const d = aiMark.route.map(sg => `M${sg.a.x} ${sg.a.y}L${sg.b.x} ${sg.b.y}`).join('');
+                    return (
+                      <>
+                        <path d={d} stroke="hsl(var(--primary) / 0.28)" strokeWidth={14} strokeLinecap="round" strokeLinejoin="round" fill="none" vectorEffect="non-scaling-stroke" className="ma-glow" />
+                        <path d={d} stroke="hsl(var(--primary))" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" fill="none" vectorEffect="non-scaling-stroke" pathLength={1} className="ma-draw" />
+                        {aiMark.mode === 'preview' && <path d={d} stroke="hsl(var(--background))" strokeWidth={1.5} strokeDasharray="2 10" strokeLinecap="round" fill="none" vectorEffect="non-scaling-stroke" className="ma-march" />}
+                      </>
+                    );
+                  })()}
+                  {aiMark.removed.map((sg, i) => (
+                    <line key={i} x1={sg.a.x} y1={sg.a.y} x2={sg.b.x} y2={sg.b.y} stroke="hsl(var(--destructive))" strokeWidth={5} strokeDasharray="7 6" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="ma-blink" />
+                  ))}
+                  {aiMark.spots.map((p, i) => (
+                    <g key={i} transform={`translate(${p.x} ${p.y})`}>
+                      <circle r={20 * k} fill="hsl(var(--primary) / 0.25)" className="ma-ping" />
+                      <circle r={9 * k} fill="none" stroke="hsl(var(--primary))" strokeWidth={2.5} vectorEffect="non-scaling-stroke" className="ma-pop" />
+                    </g>
+                  ))}
+                </g>
+              )}
+
               {marquee && (
                 <rect x={Math.min(marquee.a.x, marquee.b.x)} y={Math.min(marquee.a.y, marquee.b.y)}
                   width={Math.abs(marquee.b.x - marquee.a.x)} height={Math.abs(marquee.b.y - marquee.a.y)}
@@ -1619,6 +1992,21 @@ const FloorEditor = () => {
                 <circle r={2} fill="hsl(32 95% 50%)" />
               </g>
             </svg>
+
+            {!isEmpty && (
+              <MapAssistant getState={assistantState} apply={applyAssistant} undo={() => void history.undo()}
+                onHighlight={h => {
+                  setAiMark(h);
+                  // Bring what it's showing into view, above the conversation.
+                  const pts = h ? [...h.route.flatMap(s => [s.a, s.b]), ...h.removed.flatMap(s => [s.a, s.b]), ...h.spots] : [];
+                  if (h?.mode === 'preview' && pts.length) {
+                    const b = bbox(pts);
+                    viewport.centerOn((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, 0, { bottom: 300 });
+                  }
+                }}
+                health={mapHealth} selectedName={selectedName} greeting={greeting} ask={assistantAsk}
+                floorName={floorMeta?.name ?? ''} floors={floors.map(f => f.name)} />
+            )}
 
             {isEmpty && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -1648,6 +2036,121 @@ const FloorEditor = () => {
         </main>
 
         {/* ── Inspector ── */}
+        {!allTools ? (
+          <aside className="w-64 border-l bg-card overflow-y-auto shrink-0 hidden lg:block" data-tour="editor-inspector">
+            {(() => {
+              const main = new Set(health.networks[0] ?? []);
+              const walk = (nodeId: string | null | undefined, name: string) => nodeId && main.has(nodeId) ? (
+                <p className="flex items-center gap-1.5 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-4 w-4 shrink-0" /> Visitors can walk here</p>
+              ) : (
+                <div className="rounded-xl bg-amber-500/10 px-3 py-2.5 text-sm">
+                  <p className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400"><AlertTriangle className="h-4 w-4 shrink-0" /> Visitors can't reach it yet</p>
+                  <Button size="sm" className="mt-2 h-8 w-full rounded-full" onClick={() => askMap(`Make ${name} walkable`)}><Route className="mr-1.5 h-3.5 w-3.5" /> Connect it</Button>
+                </div>
+              );
+              const nameField = (value: string, onSave: (v: string) => void, key: string) => (
+                <Input defaultValue={value} key={key} aria-label="Name" placeholder="Give it a name" className="h-10 text-base font-semibold"
+                  onBlur={e => e.target.value.trim() && e.target.value !== value && onSave(e.target.value.trim())}
+                  onKeyDown={e => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} />
+              );
+              const remove = (label = 'Delete') => (
+                <Button variant="ghost" className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => deleteSelection(sel)}><Trash2 className="mr-1.5 h-4 w-4" /> {label}</Button>
+              );
+              const renamePlace = async (n: NavNode, name: string) => {
+                const before = { name: n.name, isHallway: n.isHallway }, after = { name, isHallway: n.isHallway };
+                try { await updateNodeFields(n.id, after); history.push({ label: `Rename to ${name}`, undo: () => updateNodeFields(n.id, before), redo: () => updateNodeFields(n.id, after) }); }
+                catch { toast.error("Couldn't rename"); }
+              };
+
+              if (singleRoom) {
+                const place = singleRoom.nodeId ? nodeById.get(singleRoom.nodeId) : undefined;
+                return (
+                  <div className="space-y-4 p-4">
+                    {nameField(singleRoom.name, v => editRoom(singleRoom.id, { name: v }, 'Rename room'), `rn-${singleRoom.id}-${singleRoom.name}`)}
+                    {!place && <label className="block text-xs text-muted-foreground">What is it?
+                      <select className="mt-1 w-full rounded-lg border bg-background px-3 py-2 text-sm capitalize text-foreground" value={singleRoom.type}
+                        onChange={e => editRoom(singleRoom.id, { type: e.target.value as Room['type'] }, 'Change room type')}>
+                        {ROOM_TYPES.map(t => <option key={t} value={t}>{t === 'office' ? 'Room' : t}</option>)}
+                      </select>
+                    </label>}
+                    {walk(singleRoom.nodeId, singleRoom.name)}
+                    {place && buildingId && (
+                      <PlaceDetailsEditor buildingId={buildingId} institutionId={building?.institutionId ?? null}
+                        node={{ id: place.id, floorId: place.floorId, name: place.name || singleRoom.name }} roomType={singleRoom.type} />
+                    )}
+                    {remove('Delete room')}
+                  </div>
+                );
+              }
+              if (selectedNode) {
+                if (selectedNode.isHallway) return (
+                  <div className="space-y-4 p-4">
+                    <p className="font-semibold">Walking path point</p>
+                    <p className="text-sm text-muted-foreground">A corner of a walking path. Drag it to reshape the path.</p>
+                    {remove()}
+                  </div>
+                );
+                return (
+                  <div className="space-y-4 p-4">
+                    {nameField(selectedNode.name, v => void renamePlace(selectedNode, v), `pn-${selectedNode.id}-${selectedNode.name}`)}
+                    {walk(selectedNode.id, selectedNode.name || 'this place')}
+                    {buildingId && (
+                      <PlaceDetailsEditor buildingId={buildingId} institutionId={building?.institutionId ?? null}
+                        node={{ id: selectedNode.id, floorId: selectedNode.floorId, name: selectedNode.name }} roomType={selectedRoom?.type} />
+                    )}
+                    <Button variant="outline" className="w-full" onClick={() => handleQRPreview(selectedNode.id)}><QrCode className="mr-1.5 h-4 w-4" /> QR code</Button>
+                    {remove()}
+                  </div>
+                );
+              }
+              if (singleFeature) {
+                const def = FEATURE_KINDS[singleFeature.kind];
+                const connector = singleFeature.kind === 'stairs' || singleFeature.kind === 'elevator';
+                return (
+                  <div className="space-y-4 p-4">
+                    <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><span className="h-2.5 w-2.5 rounded-full" style={{ background: def.color }} /> {def.label}</p>
+                    {nameField(singleFeature.label ?? '', v => editFeature(singleFeature.id, { label: v }, 'Rename'), `fn-${singleFeature.id}-${singleFeature.label}`)}
+                    {connector && floors.length > 1 && (
+                      <Button variant="outline" className="w-full" onClick={() => askMap(`Connect the floors via the ${singleFeature.kind}`)}><Layers3 className="mr-1.5 h-4 w-4" /> Connect floors through it</Button>
+                    )}
+                    <p className="text-xs text-muted-foreground">Drag it on the map to move it.</p>
+                    {remove()}
+                  </div>
+                );
+              }
+              if (singleWall) return (
+                <div className="space-y-4 p-4">
+                  <p className="font-semibold">Wall <span className="font-normal text-muted-foreground">· {meters(segLen(singleWall))} m</span></p>
+                  {remove('Delete wall')}
+                </div>
+              );
+              if (nSel > 1) return (
+                <div className="space-y-4 p-4">
+                  <p className="font-semibold">{nSel} things selected</p>
+                  <p className="text-sm text-muted-foreground">Drag them to move them together.</p>
+                  {remove(`Delete all ${nSel}`)}
+                </div>
+              );
+              return (
+                <div className="space-y-5 p-4">
+                  <div className="rounded-2xl bg-muted/60 p-4 text-center">
+                    <MousePointer2 className="mx-auto mb-2 h-7 w-7 text-primary/70" />
+                    <p className="text-sm font-medium">Click anything on the map to edit it</p>
+                  </div>
+                  <div>
+                    <p className="mb-2 flex items-center gap-1.5 text-sm font-medium"><Sparkles className="h-4 w-4 text-primary" /> Or just tell the map</p>
+                    <div className="flex flex-col gap-1.5">
+                      {['Add a restroom here', 'Add an entrance here', 'Make the route wheelchair accessible', "What's wrong?"].map(t => (
+                        <button key={t} onClick={() => askMap(t)} className="rounded-xl border px-3 py-2 text-left text-sm hover:border-primary/40 hover:bg-primary/5">"{t}"</button>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Need sizes, 3D settings or shortcuts? <button className="text-primary hover:underline" onClick={toggleAllTools}>More tools</button></p>
+                </div>
+              );
+            })()}
+          </aside>
+        ) : (
         <aside className="w-72 border-l bg-card overflow-y-auto shrink-0 hidden lg:block" data-tour="editor-inspector">
           {selectedNode && !singleRoom ? (
             <div className="p-4 space-y-5">
@@ -1877,6 +2380,7 @@ const FloorEditor = () => {
             </div>
           )}
         </aside>
+        )}
       </div>
 
       {/* ── Status bar ── */}
@@ -2010,6 +2514,7 @@ const FloorEditor = () => {
             // An import replaces earlier imported rows wholesale; undoing edits
             // made before it would target rows that no longer exist.
             history.clear();
+            greetAfterLoad.current = true;
             await loadData();
           }}
           onViewIn3D={() => setView('split')}

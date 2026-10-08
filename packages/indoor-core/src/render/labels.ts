@@ -20,6 +20,12 @@ export interface LabelSpec {
   at: THREE.Vector3;
   /** Higher shows first when tags collide. */
   priority: number;
+  /** Places: a photo for the badge… */
+  image?: string | null;
+  /** …or an icon (SVG markup) on the place's colour. */
+  icon?: string | null;
+  /** Places: show the name under the badge (always shown when selected). */
+  showName?: boolean;
 }
 
 export const LABEL_CSS = `
@@ -40,6 +46,22 @@ export const LABEL_CSS = `
 .ivw-tag.ivw-note{background:transparent;box-shadow:none;padding:0;pointer-events:none}
 .ivw-tag.ivw-note b{font-size:11px;font-weight:600;color:#6b7168}
 .ivw-tag:focus-visible{outline:3px solid #3ea44a;outline-offset:2px}
+.ivw-tag.ivw-pin{background:none;box-shadow:none;padding:0;border-radius:0;align-items:center;gap:4px;text-align:center}
+.ivw-pin:hover{background:none}
+.ivw-badge{position:relative;display:grid;place-items:center;width:46px;height:46px;border-radius:50%;box-sizing:border-box;border:3px solid #fff;color:#fff;
+  background:var(--c,#0f3d26) center/cover no-repeat;box-shadow:0 0 0 2px var(--c,#0f3d26),0 10px 22px rgba(15,40,25,.3);animation:ivw-bob 2.8s ease-in-out infinite;animation-delay:var(--d,0s)}
+.ivw-badge svg{width:22px;height:22px}
+.ivw-badge::before{content:'';position:absolute;inset:-7px;border-radius:50%;border:2px solid var(--c,#0f3d26);opacity:0;animation:ivw-pulse 2.4s ease-out infinite;animation-delay:var(--d,0s)}
+.ivw-badge::after{content:'';position:absolute;left:50%;bottom:-9px;width:0;height:0;transform:translateX(-50%);border:6px solid transparent;border-top:7px solid #fff;border-bottom:0}
+.ivw-pin b{margin-top:5px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.96);color:#0f3d26;font-size:11.5px;font-weight:700;line-height:1.25;box-shadow:0 6px 14px rgba(15,40,25,.16);max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.ivw-pin small{display:none}
+.ivw-pin.ivw-on .ivw-badge{width:56px;height:56px;box-shadow:0 0 0 3px var(--c,#0f3d26),0 14px 30px rgba(15,40,25,.38)}
+.ivw-pin.ivw-on b{background:#0f3d26;color:#fff}
+.ivw-pin.ivw-on small{display:block;font-size:10.5px;font-weight:600;color:#6b7168;background:rgba(255,255,255,.92);border-radius:999px;padding:1px 7px}
+@keyframes ivw-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+@keyframes ivw-pulse{0%{opacity:.75;transform:scale(.85)}100%{opacity:0;transform:scale(1.55)}}
+@media (max-width:640px){.ivw-badge{width:40px;height:40px}.ivw-badge svg{width:19px;height:19px}.ivw-pin.ivw-on .ivw-badge{width:50px;height:50px}}
+@media (prefers-reduced-motion:reduce){.ivw-badge,.ivw-badge::before{animation:none}}
 @media (max-width:640px){.ivw-tag small{display:none}.ivw-tag.ivw-on small{display:block}}
 .ivw-walkbar{position:absolute;left:50%;top:var(--ivw-walkbar-top,14px);z-index:22;transform:translateX(-50%);width:min(620px,calc(100% - 28px));box-sizing:border-box;
   border-radius:22px;border:1px solid rgba(255,255,255,.8);background:rgba(255,253,248,.9);color:#0f3d26;padding:10px 12px 11px;
@@ -93,23 +115,41 @@ export class LabelLayer {
       }
       it.spec = spec;
       const el = it.el;
-      el.className = `ivw-tag${spec.kind === 'room' ? ' ivw-room' : spec.kind === 'note' ? ' ivw-note' : ''}${this.selected === spec.id ? ' ivw-on' : ''}`;
+      const pin = spec.kind === 'place';
+      el.className = `ivw-tag${pin ? ' ivw-pin' : ''}${spec.kind === 'room' ? ' ivw-room' : spec.kind === 'note' ? ' ivw-note' : ''}${this.selected === spec.id ? ' ivw-on' : ''}`;
       el.setAttribute('aria-label', spec.sub ? `${spec.text}, ${spec.sub}` : spec.text);
       el.tabIndex = spec.kind === 'place' ? 0 : -1;
       el.style.setProperty('--c', spec.color ?? '#0f3d26');
       el.replaceChildren();
-      const b = document.createElement('b');
-      if (spec.kind === 'place') b.appendChild(document.createElement('i'));
-      b.appendChild(document.createTextNode(spec.text));
-      el.appendChild(b);
+      if (pin) {
+        // The badge: the place's photo, or its icon on its colour — like the landmarks on the home map.
+        const badge = document.createElement('span');
+        badge.className = 'ivw-badge';
+        if (spec.image) badge.style.backgroundImage = `url("${spec.image.replace(/"/g, '%22')}")`;
+        else if (spec.icon) badge.innerHTML = spec.icon;
+        let h = 0;
+        for (const ch of spec.id) h = (h * 31 + ch.charCodeAt(0)) % 997;
+        el.style.setProperty('--d', `${-(h % 24) / 10}s`);
+        el.appendChild(badge);
+        el.title = spec.text;
+      }
+      if (!pin || spec.showName || this.selected === spec.id) {
+        const b = document.createElement('b');
+        b.appendChild(document.createTextNode(spec.text));
+        el.appendChild(b);
+      }
       if (spec.sub) { const s = document.createElement('small'); s.textContent = spec.sub; el.appendChild(s); }
       it.w = 0; // re-measure
     }
   }
 
   select(id: string | null) {
+    const was = this.selected;
     this.selected = id;
     for (const [k, it] of this.items) it.el.classList.toggle('ivw-on', k === id);
+    // A place's name shows when it's picked, even with names off.
+    const changed = [was, id].map(k => (k ? this.items.get(k) : undefined)).filter((it): it is Item => !!it && it.spec.kind === 'place' && !it.spec.showName);
+    if (changed.length) this.set([...this.items.values()].map(it => it.spec));
   }
 
   /** Place every tag on screen; hide those off-screen, behind, on hidden floors, or crowded out. */

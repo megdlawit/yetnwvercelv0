@@ -6,7 +6,7 @@
 // the venue guide (/venue/:id/guide).
 
 import { useMemo, useState } from 'react';
-import { Navigate, useParams, useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { Loader2, MapPin } from 'lucide-react';
 import { ExploreMap, type ExploreVenue } from './Index';
 import type { MapMode } from '@/components/LocationSplash';
@@ -40,6 +40,12 @@ export default function VenueMap() {
       theme: themeOf(data.building.theme),
       // The institution's Indoor 3D map settings (published with the venue).
       settings: parseMapSettings(data.building.map_settings, data.building.hero_view),
+      // Events, tours, guides and stories — Discover / Explore beside the venue's name.
+      content: data.content ?? [],
+      browseStart: params.get('events') === '1' ? { collectionId: 'events', nonce: 1 }
+        : params.get('collection') ? { collectionId: params.get('collection'), nonce: 1 }
+        : params.get('content') ? { contentId: params.get('content'), nonce: 1 }
+        : params.get('tab') === 'explore' ? { tab: 'explore', nonce: 1 } : null,
       initialView: view === '2d' || view === '3d' ? view : null,
       notice: !data.building.is_published ? 'Preview — not published yet'
         : data.previewing ? 'Preview — includes unpublished changes' : null,
@@ -47,11 +53,6 @@ export default function VenueMap() {
     // Links are read once, when the venue arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, places]);
-
-  // Events and collections are part of the venue guide.
-  if (params.get('events') === '1' || params.get('collection')) {
-    return <Navigate to={`/venue/${buildingId}/guide?${params.toString()}`} replace />;
-  }
 
   if (state === 'unavailable') {
     return (

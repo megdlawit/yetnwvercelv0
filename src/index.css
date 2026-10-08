@@ -345,3 +345,43 @@
 .indoor-map .map-ctrl-btn { box-shadow: 0 6px 20px rgba(20, 50, 30, .14); border: 0; }
 .indoor-map .map-ctrl-btn-green { background: #0f3d26; box-shadow: 0 6px 20px rgba(15, 61, 38, .3); }
 .indoor-map button:focus-visible, .indoor-map a:focus-visible { outline: 3px solid #3ea44a; outline-offset: 2px; }
+
+/* The visitor map keeps its light look (.indoor-map), but the visitor's own
+   full-screen pages — profile, saved places — follow dark mode. */
+.dark .visitor-surface {
+  color-scheme: dark;
+  --background: 160 25% 6%;
+  --foreground: 150 10% 92%;
+  --card: 160 22% 10%;
+  --card-foreground: 150 10% 92%;
+  --popover: 160 22% 10%;
+  --popover-foreground: 150 10% 92%;
+  --primary: 133 55% 45%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 160 18% 15%;
+  --secondary-foreground: 150 10% 92%;
+  --muted: 160 18% 15%;
+  --muted-foreground: 150 8% 60%;
+  --accent: 133 55% 45%;
+  --accent-foreground: 0 0% 100%;
+  --border: 160 15% 18%;
+  --input: 160 15% 18%;
+  --ring: 133 55% 45%;
+}
+
+/* Floor editor map assistant: routes draw in, new things pop, removals blink. */
+.ma-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: ma-draw 0.9s cubic-bezier(.4,0,.2,1) forwards; }
+.ma-glow { animation: ma-glow 1.6s ease-in-out infinite; }
+.ma-march { animation: ma-march 0.8s linear infinite; }
+.ma-blink { animation: ma-blink 1s ease-in-out infinite; }
+.ma-ping { transform-box: fill-box; transform-origin: center; animation: ma-ping 1.4s ease-out infinite; }
+.ma-pop { transform-box: fill-box; transform-origin: center; animation: ma-pop 0.5s cubic-bezier(.34,1.56,.64,1) both; }
+.ma-in { animation: ma-in 0.22s ease-out both; }
+@keyframes ma-draw { to { stroke-dashoffset: 0; } }
+@keyframes ma-glow { 50% { opacity: 0.45; } }
+@keyframes ma-march { to { stroke-dashoffset: -12; } }
+@keyframes ma-blink { 50% { opacity: 0.35; } }
+@keyframes ma-ping { from { transform: scale(0.4); opacity: 0.9; } to { transform: scale(1.8); opacity: 0; } }
+@keyframes ma-pop { from { transform: scale(0); } to { transform: scale(1); } }
+@keyframes ma-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ma-draw { animation: none; stroke-dashoffset: 0; } .ma-glow, .ma-march, .ma-blink, .ma-ping, .ma-pop, .ma-in { animation: none; } }

@@ -89,7 +89,7 @@ export default function ViewMap() {
   const isDesktop = useIsDesktop();
   const [startSheet, setStartSheet] = useState(false);
   const closeStartSheet = () => { setStartSheet(false); try { sessionStorage.setItem(`yetnew-start-${buildingId}`, '1'); } catch { /* private mode */ } };
-  const saved = useSavedPlaces(buildingId);
+  const saved = useSavedPlaces(buildingId, places, building?.name);
 
   // First look, once the venue is in: where the link says to start, which view, which panel.
   const [initialised, setInitialised] = useState(false);
@@ -386,7 +386,7 @@ export default function ViewMap() {
       return <PlaceDetail p={sel} multiFloor={multiFloor} distance={distance} hasElevator={routeNodes.some(n => n.elevator)}
         onBack={() => setSelected(null)} onNavigate={() => setNavigating(true)} onShare={() => share(sel)}
         onExplore={() => { setFocus(n => n + 1); if (mode === 'outdoor') setMode('3d'); setSnap('peek'); }}
-        saved={saved.has(sel.id)} onSave={() => toast.success(saved.toggle(sel.id) ? `Saved ${sel.name}` : 'Removed from saved')}
+        saved={saved.has(sel.id)} onSave={() => toast.success(saved.toggle(sel) ? `Saved ${sel.name}` : 'Removed from saved')}
         onStreetDirections={anchor && sel.gps ? () => { setStreetTo(sel.gps); gps.start(); setShowStreetRoute(true); setMode('outdoor'); setSnap('peek'); } : undefined}
         stories={linked.length ? <div className="space-y-1.5">{linked.map(c => <ContentRowButton key={c.id} c={c} onOpen={() => setOpenContent(c.id)} />)}</div> : null} />;
     }

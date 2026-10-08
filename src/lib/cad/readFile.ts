@@ -1,5 +1,5 @@
 // Picks the reader for a dropped file. Everything runs in the browser except
-// DWG, which has no open specification and goes through /api/dwg-convert.
+// DWG, which our server converts to DXF (/api/dwg-convert, LibreDWG).
 
 import { decodeTextSmart } from '../dxf/readTextSmart';
 import type { CadDrawing } from './types';
@@ -17,13 +17,14 @@ export async function readCadFile(file: File): Promise<CadDrawing> {
     case 'dxf':
       return readDxf(decodeTextSmart(buf));
     case 'dwg': {
-      const bytes = new Uint8Array(buf);
-      let bin = '';
-      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      // Uploads go through a serverless function with a ~4.5 MB request limit.
+      if (buf.byteLength > 4.4 * 1024 * 1024) {
+        throw new Error('This DWG is too large to convert online. In AutoCAD choose File → Save As → AutoCAD DXF and import the DXF instead.');
+      }
       const resp = await fetch('/api/dwg-convert', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dwgBase64: btoa(bin), fileName: file.name }),
+        headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) },
+        body: buf,
       });
       const json = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error([json.error || 'DWG conversion failed.', json.hint].filter(Boolean).join(' '));

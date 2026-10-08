@@ -73,6 +73,20 @@ function dwgConvertDevMiddleware(): Plugin {
   };
 }
 
+// Same again, for api/map-assistant.ts (the floor editor's "Ask your map" bar,
+// for requests it doesn't understand on its own).
+function mapAssistantDevMiddleware(): Plugin {
+  return {
+    name: 'map-assistant-dev-middleware',
+    configureServer(server) {
+      server.middlewares.use('/api/map-assistant', async (req, res) => {
+        const { default: handler } = await server.ssrLoadModule('/api/map-assistant.ts');
+        await handler(req, res);
+      });
+    },
+  };
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
@@ -88,6 +102,7 @@ export default defineConfig(({ mode }) => ({
     osrmDevMiddleware(),
     dxfImportDevMiddleware(),
     dwgConvertDevMiddleware(),
+    mapAssistantDevMiddleware(),
   ],
   resolve: {
     alias: {

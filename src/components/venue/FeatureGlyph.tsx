@@ -9,7 +9,7 @@ interface Props { f: MapFeature; pxPerMeter: number; k: number; selected: boolea
 
 function FeatureGlyph({ f, pxPerMeter, k, selected }: Props) {
   const { w, d } = featureSize(f, pxPerMeter);
-  const color = FEATURE_KINDS[f.kind].color;
+  const color = FEATURE_KINDS[f.kind]?.color ?? '#64748b';
   const stroke = { stroke: color, strokeWidth: 1.5, vectorEffect: 'non-scaling-stroke' as const, fill: 'none' };
   const hw = w / 2, hd = d / 2;
   let body: JSX.Element;
@@ -62,6 +62,65 @@ function FeatureGlyph({ f, pxPerMeter, k, selected }: Props) {
         <circle r={hw * 0.12} fill={color} />
       </>);
       break;
+    case 'palm':
+      // fronds radiating from the crown
+      body = (<>
+        <circle r={hw} fill={`${color}18`} stroke="none" />
+        {Array.from({ length: 7 }, (_, i) => {
+          const a = (i / 7) * Math.PI * 2;
+          return <path key={i} d={`M 0 0 Q ${Math.cos(a + 0.35) * hw * 0.6} ${Math.sin(a + 0.35) * hw * 0.6} ${Math.cos(a) * hw} ${Math.sin(a) * hw}`} {...stroke} strokeWidth={2} />;
+        })}
+        <circle r={hw * 0.12} fill="#8a6a4c" />
+      </>);
+      break;
+    case 'shrub':
+      body = (<>
+        {[[-0.3, 0.1], [0.3, 0.12], [0, -0.25]].map(([dx, dy], i) => <circle key={i} cx={dx * w} cy={dy * w} r={hw * 0.62} fill={`${color}40`} {...stroke} />)}
+      </>);
+      break;
+    case 'flowers':
+      body = (<>
+        <rect x={-hw} y={-hd} width={w} height={d} rx={Math.min(w, d) * 0.4} fill="#8a6a4c22" {...stroke} stroke="#8a6a4c" />
+        {Array.from({ length: 9 }, (_, i) => (
+          <circle key={i} cx={-hw * 0.75 + (i % 5) * (w * 0.75) / 4 + (i >= 5 ? w * 0.09 : 0)} cy={i < 5 ? -hd * 0.35 : hd * 0.35} r={Math.min(w, d) * 0.12}
+            fill={['#ec4899', '#facc15', '#f43f5e', '#a855f7'][i % 4]} />
+        ))}
+      </>);
+      break;
+    case 'grass':
+      body = (<>
+        <rect x={-hw} y={-hd} width={w} height={d} rx={Math.min(w, d) * 0.2} fill={`${color}33`} {...stroke} strokeDasharray="5 3" />
+        {Array.from({ length: 5 }, (_, i) => <path key={i} d={`M ${-hw * 0.6 + i * w * 0.3 * 0.9} ${hd * 0.15} l ${w * 0.03} ${-d * 0.18} l ${w * 0.03} ${d * 0.18}`} {...stroke} strokeWidth={1} />)}
+      </>);
+      break;
+    case 'water':
+      body = (<>
+        <ellipse rx={hw} ry={hd} fill={`${color}40`} {...stroke} />
+        <path d={`M ${-hw * 0.5} 0 q ${w * 0.125} ${-d * 0.12} ${w * 0.25} 0 t ${w * 0.25} 0`} {...stroke} strokeWidth={1} />
+      </>);
+      break;
+    case 'rock':
+      body = <path d={`M ${-hw} ${hd * 0.3} L ${-hw * 0.5} ${-hd} L ${hw * 0.55} ${-hd * 0.8} L ${hw} ${hd * 0.2} L ${hw * 0.2} ${hd} Z`} fill={`${color}55`} {...stroke} />;
+      break;
+    case 'lamp':
+      body = (<>
+        <circle r={Math.max(hw * 4, 8 * k)} fill="#fde68a40" stroke="none" />
+        <circle r={Math.max(hw, 3 * k)} fill={color} stroke="hsl(var(--background))" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+      </>);
+      break;
+    case 'fountain':
+      body = (<>
+        <circle r={hw} fill={`${color}22`} {...stroke} />
+        <circle r={hw * 0.62} fill={`${color}40`} {...stroke} strokeWidth={1} />
+        <circle r={hw * 0.15} fill={color} />
+      </>);
+      break;
+    case 'planter':
+      body = (<>
+        <rect x={-hw} y={-hd} width={w} height={d} rx={Math.min(w, d) * 0.15} fill={`${color}30`} {...stroke} />
+        <circle r={Math.min(hw, hd) * 0.6} fill="#4d7c0f55" stroke="#4d7c0f" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+      </>);
+      break;
     case 'bench':
     case 'furniture':
       body = <rect x={-hw} y={-hd} width={w} height={d} rx={Math.min(w, d) * 0.15} fill={`${color}30`} {...stroke} />;
@@ -77,6 +136,9 @@ function FeatureGlyph({ f, pxPerMeter, k, selected }: Props) {
         </text>
       );
       break;
+    default:
+      // A kind this version doesn't know yet: a plain marker.
+      body = <circle r={Math.max(hw, 6 * k)} fill={`${color}30`} {...stroke} />;
   }
   return (
     <g transform={`translate(${f.x} ${f.y}) rotate(${f.rotationDeg})`}>

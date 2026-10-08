@@ -62,6 +62,11 @@ export class CameraDirector {
   private dragging: { x: number; y: number } | null = null;
   private lastFrame = { center: new THREE.Vector3(), radius: 10 };
   private off: (() => void)[] = [];
+  /** Called when the visitor keeps zooming out past the farthest view (to leave for the outdoor map). */
+  onZoomOutLimit: (() => void) | null = null;
+  private pushes = 0;
+  private pushAt = 0;
+  private firedAt = 0;
 
   constructor(readonly camera: THREE.PerspectiveCamera, private dom: HTMLElement, public reducedMotion = false) {
     this.controls = new OrbitControls(camera, dom);
@@ -87,6 +92,22 @@ export class CameraDirector {
       else if (this.mode === 'follow') this.yawNudge = THREE.MathUtils.clamp(this.yawNudge - dx * 0.006, -1.4, 1.4);
     };
     const pu = () => { this.dragging = null; };
+    // Zooming out past the limit: the wheel, a pinch, or (in zoom()) the − button, a few times in a row.
+    const wheel = (e: WheelEvent) => { if (e.deltaY > 0) this.pushOut(1); };
+    const touches = new Map<number, { x: number; y: number }>();
+    let pinch0 = 0, pinchDone = false;
+    const td = (e: PointerEvent) => { touches.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (touches.size === 2) { const [a, b] = [...touches.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); pinchDone = false; } };
+    const tm = (e: PointerEvent) => {
+      if (!touches.has(e.pointerId)) return;
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.size !== 2 || pinchDone) return;
+      const [a, b] = [...touches.values()];
+      if (pinch0 - Math.hypot(a.x - b.x, a.y - b.y) > 70 && this.atLimit()) { pinchDone = true; this.pushOut(3); }
+    };
+    const tu = (e: PointerEvent) => { touches.delete(e.pointerId); };
+    dom.addEventListener('wheel', wheel, { passive: true });
+    dom.addEventListener('pointerdown', td); window.addEventListener('pointermove', tm); window.addEventListener('pointerup', tu); window.addEventListener('pointercancel', tu);
+    this.off.push(() => { dom.removeEventListener('wheel', wheel); dom.removeEventListener('pointerdown', td); window.removeEventListener('pointermove', tm); window.removeEventListener('pointerup', tu); window.removeEventListener('pointercancel', tu); });
     dom.addEventListener('keydown', kd); dom.addEventListener('keyup', ku);
     dom.addEventListener('pointerdown', pd); window.addEventListener('pointermove', pm); window.addEventListener('pointerup', pu);
     this.off.push(() => { dom.removeEventListener('keydown', kd); dom.removeEventListener('keyup', ku); dom.removeEventListener('pointerdown', pd); window.removeEventListener('pointermove', pm); window.removeEventListener('pointerup', pu); });
@@ -197,12 +218,30 @@ export class CameraDirector {
   /** Walk mode: which floor height the walker stands on. */
   setWalkFloor(y: number) { this.walk.floorY = y; }
 
+  /** Already as far out as the camera goes (overview or top view). */
+  private atLimit() {
+    return (this.mode === 'overview' || this.mode === 'top') && !this.tween
+      && this.camera.position.distanceTo(this.controls.target) >= this.controls.maxDistance * 0.96;
+  }
+
+  /** One more "zoom out" at the limit; a few in a row (or one pinch) leave. */
+  private pushOut(amount: number) {
+    if (!this.onZoomOutLimit || !this.atLimit()) { this.pushes = 0; return; }
+    const now = performance.now();
+    if (now - this.pushAt > 1400) this.pushes = 0;
+    this.pushAt = now;
+    this.pushes += amount;
+    if (this.pushes >= 3 && now - this.firedAt > 2500) { this.firedAt = now; this.pushes = 0; this.onZoomOutLimit(); }
+  }
+
   zoom(factor: number) {
     if (this.mode === 'follow') { this.followDist = THREE.MathUtils.clamp(this.followDist * factor, 1.6, 9); return; }
     if (this.mode === 'walk') return;
+    if (factor > 1 && this.atLimit()) { this.pushOut(1.5); return; }
     const t = this.controls.target;
-    const p = t.clone().add(this.camera.position.clone().sub(t).multiplyScalar(factor));
-    this.flyTo(p, t, 0.35);
+    const off = this.camera.position.clone().sub(t).multiplyScalar(factor);
+    off.setLength(THREE.MathUtils.clamp(off.length(), this.controls.minDistance, this.controls.maxDistance));
+    this.flyTo(t.clone().add(off), t, 0.35);
   }
 
   recenter() { this.frame(this.lastFrame.center, this.lastFrame.radius, true); }

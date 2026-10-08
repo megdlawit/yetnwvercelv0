@@ -34,6 +34,9 @@ interface MapControlsProps {
   bearing?: number;
   /** Tapping the compass snaps the camera back to north-up (only meaningful on the real-map outdoor view). */
   onResetNorth?: () => void;
+  /** Room and place names on the indoor map: shown or not (the button appears when this is given). */
+  showNames?: boolean;
+  onToggleNames?: () => void;
 }
 
 const MapControls: React.FC<MapControlsProps> = ({
@@ -44,6 +47,8 @@ const MapControls: React.FC<MapControlsProps> = ({
   onMyLocation,
   bearing = 0,
   onResetNorth,
+  showNames = false,
+  onToggleNames,
 }) => {
   const [hintDismissed, setHintDismissed] = useState(false);
 
@@ -88,6 +93,14 @@ const MapControls: React.FC<MapControlsProps> = ({
       {show3DToggle && (
         <button onClick={onToggle3D} aria-pressed={is3D} aria-label={is3D ? 'Switch to flat 2D view' : 'Switch to 3D view'} className={CTL_BTN}>
           <Box className="h-5 w-5" />
+        </button>
+      )}
+
+      {/* Names — rooms and places, off by default on phones where space is short */}
+      {onToggleNames && (
+        <button onClick={onToggleNames} aria-pressed={showNames} aria-label={showNames ? 'Hide room names' : 'Show room names'}
+          title={showNames ? 'Hide names' : 'Show names'} className={cn(CTL_BTN, showNames && '!bg-ink !text-white')}>
+          <span className="text-[13px] font-extrabold leading-none tracking-tight">Aa</span>
         </button>
       )}
 

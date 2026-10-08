@@ -11,6 +11,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { IndoorConnector, IndoorFloor, IndoorOpening, IndoorVenue, IndoorWall, Vec2 } from '../model';
 import { add, dist, pointInPolygon, rectCorners, rot, scale, sub, v } from '../geometry';
 import { ROOM_TINTS, type MaterialLibrary } from './theme';
+import { autoScenery, sceneryRing } from '../scenery';
 
 export type LayerId = 'walls' | 'rooms' | 'objects' | 'labels' | 'paths' | 'otherFloors' | 'scenery';
 export type Layers = Record<LayerId, boolean>;
@@ -118,7 +119,7 @@ export function buildFloor(venue: IndoorVenue, floor: IndoorFloor, mats: Materia
       const ground = new THREE.Mesh(new THREE.CircleGeometry(r, 48).rotateX(-Math.PI / 2).translate((minX + maxX) / 2, -0.06, (minZ + maxZ) / 2), mats.ground());
       ground.receiveShadow = true;
       parts.scenery.push(ground);
-      parts.scenery.push(...surroundingTrees({ minX, maxX, minZ, maxZ }, mats));
+      if (autoScenery(venue, floor.id)) parts.scenery.push(...surroundingTrees({ minX, maxX, minZ, maxZ }, mats));
     }
   }
 
@@ -163,6 +164,88 @@ export function buildFloor(venue: IndoorVenue, floor: IndoorFloor, mats: Materia
         objB.add(mats.stone(), box(p.width * 0.35, 2.2, p.depth * 0.35, p.at.x, 1.6, p.at.z, ang));
         break;
       case 'entrance': objB.add(mats.trim(), box(p.width, 0.02, p.depth * 0.6, p.at.x, 0.02, p.at.z, ang)); break;
+      case 'palm': palm(p.at, Math.max(1.2, p.width), objB, mats, p.id); break;
+      case 'shrub':
+        for (const [dx, dz, s] of [[-0.25, 0.1, 0.55], [0.25, 0.12, 0.5], [0, -0.22, 0.6]] as const) {
+          const g = new THREE.IcosahedronGeometry(p.width * s * 0.6, 0);
+          g.scale(1, 0.8, 1);
+          g.translate(p.at.x + dx * p.width, p.width * s * 0.45, p.at.z + dz * p.width);
+          objB.add(mats.treeB(), g);
+        }
+        break;
+      case 'flowers': {
+        objB.add(mats.bark(), box(p.width, 0.14, p.depth, p.at.x, 0.07, p.at.z, ang));
+        const colours = ['#ec4899', '#facc15', '#f43f5e', '#a855f7', '#fb923c'];
+        const along = rot(v(1, 0), ang), across = rot(v(0, 1), ang);
+        const nx = Math.max(2, Math.round(p.width / 0.35)), nz = Math.max(1, Math.round(p.depth / 0.35));
+        for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
+          const o = add(add(p.at, scale(along, ((i + 0.5) / nx - 0.5) * p.width * 0.85)), scale(across, ((j + 0.5) / nz - 0.5) * p.depth * 0.8));
+          objB.add(mats.treeA(), box(0.04, 0.22, 0.04, o.x, 0.24, o.z));
+          const bloom = new THREE.IcosahedronGeometry(0.11, 0);
+          bloom.translate(o.x, 0.38, o.z);
+          objB.add(mats.paint(colours[(i * 3 + j) % colours.length], { roughness: 0.6, flat: true }), bloom);
+        }
+        break;
+      }
+      case 'grass': objB.add(mats.paint('#7cc46b', { roughness: 1 }), box(p.width, 0.03, p.depth, p.at.x, 0.015, p.at.z, ang)); break;
+      case 'water': {
+        // A pond: a stone rim and still water just below it.
+        const rim = 0.25;
+        objB.add(mats.paint('#38a9e0', { opacity: 0.82, roughness: 0.08 }), box(p.width - rim, 0.04, p.depth - rim, p.at.x, 0.05, p.at.z, ang));
+        const along = rot(v(1, 0), ang), across = rot(v(0, 1), ang);
+        for (const sd of [-1, 1]) {
+          const a = add(p.at, scale(across, sd * (p.depth - rim / 2) / 2));
+          objB.add(mats.stone(), box(p.width, 0.18, rim / 2, a.x, 0.09, a.z, ang));
+          const b = add(p.at, scale(along, sd * (p.width - rim / 2) / 2));
+          objB.add(mats.stone(), box(rim / 2, 0.18, p.depth, b.x, 0.09, b.z, ang));
+        }
+        break;
+      }
+      case 'rock': {
+        const g = new THREE.DodecahedronGeometry(Math.max(p.width, p.depth) * 0.5, 0);
+        g.scale(1, 0.62, p.depth / Math.max(p.width, 0.01));
+        g.rotateY(-ang + (p.id.charCodeAt(0) % 7) * 0.4);
+        g.translate(p.at.x, Math.max(p.width, p.depth) * 0.25, p.at.z);
+        objB.add(mats.paint('#a8a29e', { roughness: 0.95, flat: true }), g);
+        break;
+      }
+      case 'lamp': {
+        const pole = new THREE.CylinderGeometry(0.05, 0.07, 3.2, 8);
+        pole.translate(p.at.x, 1.6, p.at.z);
+        objB.add(mats.paint('#334155', { roughness: 0.5 }), pole);
+        objB.add(mats.paint('#334155', { roughness: 0.5 }), box(0.34, 0.08, 0.34, p.at.x, 3.24, p.at.z));
+        objB.add(mats.paint('#fde68a', { emissive: 1.4, roughness: 0.4 }), box(0.24, 0.22, 0.24, p.at.x, 3.07, p.at.z));
+        break;
+      }
+      case 'fountain': {
+        const r0 = Math.max(0.6, p.width / 2);
+        const basin = new THREE.CylinderGeometry(r0, r0 * 1.04, 0.5, 28, 1, true);
+        basin.translate(p.at.x, 0.25, p.at.z);
+        objB.add(mats.stone(), basin);
+        const lip = new THREE.TorusGeometry(r0, 0.08, 6, 28);
+        lip.rotateX(Math.PI / 2); lip.translate(p.at.x, 0.5, p.at.z);
+        objB.add(mats.stone(), lip);
+        const water = new THREE.CircleGeometry(r0 * 0.98, 28);
+        water.rotateX(-Math.PI / 2); water.translate(p.at.x, 0.4, p.at.z);
+        objB.add(mats.paint('#38a9e0', { opacity: 0.85, roughness: 0.05 }), water);
+        const column = new THREE.CylinderGeometry(r0 * 0.12, r0 * 0.16, 1.1, 12);
+        column.translate(p.at.x, 0.95, p.at.z);
+        objB.add(mats.stone(), column);
+        const bowl = new THREE.CylinderGeometry(r0 * 0.42, r0 * 0.2, 0.18, 20);
+        bowl.translate(p.at.x, 1.5, p.at.z);
+        objB.add(mats.stone(), bowl);
+        const jet = new THREE.ConeGeometry(r0 * 0.1, 0.5, 10);
+        jet.translate(p.at.x, 1.84, p.at.z);
+        objB.add(mats.paint('#bae6fd', { opacity: 0.7, roughness: 0.05 }), jet);
+        break;
+      }
+      case 'planter': {
+        objB.add(mats.paint('#c2410c', { roughness: 0.85 }), box(p.width, 0.5, p.depth, p.at.x, 0.25, p.at.z, ang));
+        const g = new THREE.IcosahedronGeometry(Math.min(p.width, p.depth) * 0.42, 0);
+        g.translate(p.at.x, 0.72, p.at.z);
+        objB.add(mats.treeB(), g);
+        break;
+      }
       default: break;
     }
   }
@@ -329,16 +412,28 @@ function tree(at: Vec2, size: number, out: Bucket, mats: MaterialLibrary, alt: b
 
 /** A seeded ring of trees around the building (scenery), the same every visit. */
 function surroundingTrees(b: { minX: number; maxX: number; minZ: number; maxZ: number }, mats: MaterialLibrary): THREE.Mesh[] {
-  let seed = Math.round((b.maxX - b.minX) * 131 + (b.maxZ - b.minZ) * 71) || 7;
-  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
   const out = new Bucket();
-  const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
-  const rx = (b.maxX - b.minX) / 2 + 4, rz = (b.maxZ - b.minZ) / 2 + 4;
-  const count = Math.min(60, Math.round((rx + rz) * 1.2));
-  for (let i = 0; i < count; i++) {
-    const a = (i / count) * Math.PI * 2 + rnd() * 0.3;
-    const k = 1 + rnd() * 0.9;
-    tree(v(cx + Math.cos(a) * rx * k, cz + Math.sin(a) * rz * k), 2 + rnd() * 2.2, out, mats, rnd() > 0.5);
-  }
+  for (const t of sceneryRing(b)) tree(t.at, t.size, out, mats, t.alt);
   return out.meshes({ cast: true });
+}
+
+/** A palm: a tall, slightly leaning trunk and drooping fronds. */
+function palm(at: Vec2, size: number, out: Bucket, mats: MaterialLibrary, id: string) {
+  const h = 2.6 + size * 0.7;
+  const lean = ((id.charCodeAt(id.length - 1) % 5) - 2) * 0.03;
+  const trunk = new THREE.CylinderGeometry(0.1, 0.16, h, 7);
+  trunk.translate(0, h / 2, 0);
+  trunk.rotateZ(lean);
+  trunk.translate(at.x, 0, at.z);
+  out.add(mats.bark(), trunk);
+  const top = { x: at.x - Math.sin(lean) * h, z: at.z };
+  for (let i = 0; i < 7; i++) {
+    const len = size * 0.55;
+    const g = new THREE.BoxGeometry(len, 0.04, 0.32);
+    g.translate(len / 2, 0, 0);
+    g.rotateZ(-0.42);
+    g.rotateY((i / 7) * Math.PI * 2 + (id.charCodeAt(0) % 9) * 0.1);
+    g.translate(top.x, h, top.z);
+    out.add(i % 2 ? mats.treeA() : mats.treeB(), g);
+  }
 }

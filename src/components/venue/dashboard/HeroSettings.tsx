@@ -88,7 +88,7 @@ export default function HeroSettings({ data, places, isPlatformAdmin, onSaved }:
 
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={() => save()} disabled={!dirty || busy !== null}>{busy === 'save' && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />} Save</Button>
-        <Button variant="outline" asChild><a href={`/visit?v=${b.id}`} target="_blank" rel="noreferrer"><ExternalLink className="mr-1.5 h-4 w-4" /> View home page</a></Button>
+        <Button variant="outline" asChild><a href={`/venue/${b.id}`} target="_blank" rel="noreferrer"><ExternalLink className="mr-1.5 h-4 w-4" /> View your venue</a></Button>
       </div>
 
       {isPlatformAdmin && (

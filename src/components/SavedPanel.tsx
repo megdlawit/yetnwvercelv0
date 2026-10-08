@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Bookmark, Share2, Trash2, MapPin } from 'lucide-react';
 import { POI } from '@/data/poi';
@@ -25,6 +26,7 @@ const PLACEHOLDER_IMAGES = [
 const SavedPanel: React.FC<SavedPanelProps> = ({
   savedPlaces, pois, savedPOIs, loading = false, onPOISelect, onUnsave,
 }) => {
+  const navigate = useNavigate();
   // Keep SavedPlace entries even when the POI hasn't loaded yet (race condition
   // between savedPlaces fetch and pois fetch), pairing each with its POI or null.
   const savedWithPoi = savedPlaces.map((sp, index) => ({
@@ -53,7 +55,7 @@ const SavedPanel: React.FC<SavedPanelProps> = ({
         </div>
         <p className="text-sm font-semibold text-foreground">No saved places yet</p>
         <p className="text-xs text-muted-foreground max-w-[220px]">
-          Tap the bookmark icon on any place in Explore to save it here.
+          Tap the bookmark on any place to save it here — it stays saved on this device, and on every device once you add your email in Profile.
         </p>
       </div>
     );
@@ -65,16 +67,15 @@ const SavedPanel: React.FC<SavedPanelProps> = ({
       <AnimatePresence>
         {savedWithPoi.map(({ sp, poi, snapshot, index }) => {
           const fallbackImg = PLACEHOLDER_IMAGES[index % PLACEHOLDER_IMAGES.length];
+          const photo = (poi?.imageUrl && poi.imageUrl.trim()) || (snapshot?.imageUrl && snapshot.imageUrl.trim()) || null;
           // Only use imageUrl if it's a non-empty string; otherwise go straight to placeholder
-          const imgSrc = (poi?.imageUrl && poi.imageUrl.trim())
-            || (snapshot?.imageUrl && snapshot.imageUrl.trim())
-            || fallbackImg;
           const name = poi?.name ?? snapshot?.name ?? 'Saved Place';
           const sub = poi?.subcategory || poi?.description?.slice(0, 28)
             || snapshot?.subcategory || snapshot?.description?.slice(0, 28) || '';
-          // Only navigable when we have the full POI (with coordinates) —
-          // a snapshot alone doesn't carry enough to route to it.
-          const clickable = !!poi;
+          // On the map now: select it. From another venue: open that venue at the place.
+          const elsewhere = !poi && snapshot?.buildingId ? `/venue/${snapshot.buildingId}?place=${encodeURIComponent(snapshot.nodeId ?? sp.poi_id)}` : null;
+          const clickable = !!poi || !!elsewhere;
+          const venue = !poi ? snapshot?.venueName : null;
 
           return (
           <motion.div
@@ -85,28 +86,30 @@ const SavedPanel: React.FC<SavedPanelProps> = ({
             transition={{ delay: index * 0.04, duration: 0.22 }}
             className={`rounded-2xl overflow-hidden w-full ${clickable ? 'cursor-pointer' : ''}`}
             style={{ height: 96 }}
-            onClick={() => poi && onPOISelect?.(poi)}
+            onClick={() => { if (poi) onPOISelect?.(poi); else if (elsewhere) navigate(elsewhere); }}
           >
             <div className="relative w-full h-full flex">
-              <img
-                src={imgSrc}
-                alt={name}
-                className="w-24 h-full object-cover flex-shrink-0"
-                loading={index === 0 ? 'eager' : 'lazy'}
-                onError={(e) => {
-                  // Use a data attribute flag to avoid infinite error loops
-                  const target = e.currentTarget;
-                  if (!target.dataset.errored) {
-                    target.dataset.errored = '1';
-                    target.src = fallbackImg;
-                  }
-                }}
-              />
-              <div className="flex-1 flex flex-col justify-center px-3 py-2 bg-card border-y border-r border-border/30 rounded-r-2xl">
-                <p className="text-sm font-bold text-foreground leading-tight">{name}</p>
-                <div className="flex items-center gap-1 mt-1">
-                  <MapPin className="w-3 h-3 text-muted-foreground" />
-                  <p className="text-xs text-muted-foreground leading-tight">{sub}</p>
+              {photo ? (
+                <img
+                  src={photo}
+                  alt={name}
+                  className="w-24 h-full object-cover flex-shrink-0"
+                  loading={index === 0 ? 'eager' : 'lazy'}
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.dataset.errored) { target.dataset.errored = '1'; target.src = fallbackImg; }
+                  }}
+                />
+              ) : (
+                <div className="w-24 h-full flex-shrink-0 rounded-l-2xl grid place-items-center bg-gradient-to-br from-emerald-100 to-sky-100 dark:from-emerald-950 dark:to-sky-950">
+                  <MapPin className="w-6 h-6 text-primary/60" />
+                </div>
+              )}
+              <div className="flex-1 flex flex-col justify-center px-3 py-2 bg-card border-y border-r border-border/30 rounded-r-2xl min-w-0">
+                <p className="text-sm font-bold text-foreground leading-tight truncate">{name}</p>
+                <div className="flex items-center gap-1 mt-1 min-w-0">
+                  <MapPin className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                  <p className="text-xs text-muted-foreground leading-tight truncate">{venue ? <><b className="font-semibold">{venue}</b>{sub ? ` · ${sub}` : ''}</> : sub}</p>
                 </div>
               </div>
               <div className="flex flex-col justify-center gap-2 px-3">

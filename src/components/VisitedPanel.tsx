@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { History, Trash2, MapPin, CheckCircle2, Navigation } from 'lucide-react';
 import { POI } from '@/data/poi';
@@ -27,6 +28,7 @@ const PLACEHOLDER_IMAGES = [
 const VisitedPanel: React.FC<VisitedPanelProps> = ({
   visitedPlaces, pois, visitedPOIs, loading = false, onPOISelect, onRemove,
 }) => {
+  const navigate = useNavigate();
   const visitedWithPoi = visitedPlaces.map((vp, index) => ({
     vp,
     // Full POI (has coordinates, so the card is tappable-to-navigate) if it's
@@ -68,15 +70,14 @@ const VisitedPanel: React.FC<VisitedPanelProps> = ({
       <AnimatePresence>
         {visitedWithPoi.map(({ vp, poi, snapshot, index }) => {
           const fallbackImg = PLACEHOLDER_IMAGES[index % PLACEHOLDER_IMAGES.length];
-          const imgSrc = (poi?.imageUrl && poi.imageUrl.trim())
-            || (snapshot?.imageUrl && snapshot.imageUrl.trim())
-            || fallbackImg;
+          const photo = (poi?.imageUrl && poi.imageUrl.trim()) || (snapshot?.imageUrl && snapshot.imageUrl.trim()) || null;
           const name = poi?.name ?? snapshot?.name ?? 'Visited Place';
           const sub = poi?.subcategory || poi?.description?.slice(0, 28)
             || snapshot?.subcategory || snapshot?.description?.slice(0, 28) || '';
-          // Only navigable when we have the full POI (with coordinates) —
-          // a snapshot alone doesn't carry enough to route to it.
-          const clickable = !!poi;
+          // On the map now: select it. From another venue: open that venue at the place.
+          const elsewhere = !poi && snapshot?.buildingId ? `/venue/${snapshot.buildingId}?place=${encodeURIComponent(snapshot.nodeId ?? vp.poi_id)}` : null;
+          const clickable = !!poi || !!elsewhere;
+          const venue = !poi ? snapshot?.venueName : null;
 
           return (
           <motion.div
@@ -87,27 +88,30 @@ const VisitedPanel: React.FC<VisitedPanelProps> = ({
             transition={{ delay: index * 0.04, duration: 0.22 }}
             className={`rounded-2xl overflow-hidden w-full ${clickable ? 'cursor-pointer' : ''}`}
             style={{ height: 96 }}
-            onClick={() => poi && onPOISelect?.(poi)}
+            onClick={() => { if (poi) onPOISelect?.(poi); else if (elsewhere) navigate(elsewhere); }}
           >
             <div className="relative w-full h-full flex">
-              <img
-                src={imgSrc}
-                alt={name}
-                className="w-24 h-full object-cover flex-shrink-0"
-                loading={index === 0 ? 'eager' : 'lazy'}
-                onError={(e) => {
-                  const target = e.currentTarget;
-                  if (!target.dataset.errored) {
-                    target.dataset.errored = '1';
-                    target.src = fallbackImg;
-                  }
-                }}
-              />
+              {photo ? (
+                <img
+                  src={photo}
+                  alt={name}
+                  className="w-24 h-full object-cover flex-shrink-0"
+                  loading={index === 0 ? 'eager' : 'lazy'}
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.dataset.errored) { target.dataset.errored = '1'; target.src = fallbackImg; }
+                  }}
+                />
+              ) : (
+                <div className="w-24 h-full flex-shrink-0 rounded-l-2xl grid place-items-center bg-gradient-to-br from-emerald-100 to-sky-100 dark:from-emerald-950 dark:to-sky-950">
+                  <MapPin className="w-6 h-6 text-primary/60" />
+                </div>
+              )}
               <div className="flex-1 flex flex-col justify-center px-3 py-2 bg-card border-y border-r border-border/30 rounded-r-2xl min-w-0">
                 <p className="text-sm font-bold text-foreground leading-tight truncate">{name}</p>
                 <div className="flex items-center gap-1 mt-1">
                   <MapPin className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-                  <p className="text-xs text-muted-foreground leading-tight truncate">{sub}</p>
+                  <p className="text-xs text-muted-foreground leading-tight truncate">{venue ? <><b className="font-semibold">{venue}</b>{sub ? ` · ${sub}` : ''}</> : sub}</p>
                 </div>
                 <div className="flex items-center gap-1.5 mt-1.5">
                   <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-muted-foreground/80">

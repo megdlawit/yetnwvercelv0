@@ -18,6 +18,7 @@ import { centroid } from '../geometry';
 import { locateOnPath, pathFromNodes, pointAt, type Path3D, type Point3 } from '../path3d';
 import { findRoute, nearestNode } from '../nav/router';
 import { formatDuration, t } from '../nav/i18n';
+import { walkway } from '../nav/walkway';
 import type { IndoorNode } from '../model';
 import { buildFloor, DEFAULT_LAYERS, obstacles, pickRoom, type BuiltFloor, type Layers } from './buildFloor';
 import { CameraDirector, type ViewMode } from './camera';
@@ -38,6 +39,10 @@ export interface PlaceTag {
   sub?: string | null;
   color?: string | null;
   priority?: number;
+  /** A photo for the place's badge. */
+  image?: string | null;
+  /** Or an icon for it (SVG markup), on its colour. */
+  icon?: string | null;
 }
 
 export interface Selection { id: string | null; poiId: string | null; nodeId: string | null; roomId: string | null }
@@ -71,6 +76,8 @@ export interface ViewerOptions {
   onSelect?: (sel: Selection | null) => void;
   onFloorChange?: (floorId: string) => void;
   onModeChange?: (mode: ViewMode) => void;
+  /** The visitor zoomed out past the farthest view (e.g. go to the outdoor map). */
+  onZoomOutLimit?: () => void;
 }
 
 interface FloorState { built: BuiltFloor | null; opacity: number; target: number }
@@ -96,6 +103,9 @@ export class IndoorViewer3D {
   /** Walk mode: choosing where to go, on the way, or arrived — and where. */
   private walkInfo: { state: 'off' | 'choose' | 'walking' | 'arrived'; target: string | null; from: string | null } = { state: 'off', target: null, from: null };
   private walkBar: HTMLDivElement | null = null;
+  private lastWalk: { x: number; y: number; z: number; floorId: string }[] = [];
+  /** The line the last walk followed (for tests and overlays). */
+  get walkLine() { return this.lastWalk; }
   private textures = new TextureSet();
   private floors = new Map<string, FloorState>();
   private theme: ViewerTheme;
@@ -167,6 +177,7 @@ export class IndoorViewer3D {
       r.domElement.setAttribute('aria-label', '3D map');
       this.root.appendChild(r.domElement);
       this.director = new CameraDirector(this.camera, r.domElement, this.reduced);
+      this.director.onZoomOutLimit = () => this.opts.onZoomOutLimit?.();
       this.director.controls.addEventListener('change', () => { this.dirty = true; });
       this.director.controls.addEventListener('start', () => { if (this.spin) { this.spin = false; this.director!.controls.autoRotate = false; } });
       this.bindPointer(r.domElement);
@@ -288,29 +299,73 @@ export class IndoorViewer3D {
     this.renderWalkBar();
   }
 
-  /** Glide from one path point to another along the route, facing `face` at the end. */
-  private walkRoute(fromId: string, toId: string, face: THREE.Vector3 | null, extra?: THREE.Vector3, stopShort = 0, onDone?: (arrived: boolean) => void): boolean {
-    const d = this.director;
-    if (!d) return false;
+  /**
+   * Walk from one path point to another. The route picks the floors and the
+   * stairs or lift; on each floor the walk goes the way a person would —
+   * round walls and in through the doorways (walkway.ts), never through a
+   * wall, even where a path line was drawn through one. `fromHere` starts
+   * from where the walker stands now.
+   */
+  private walkRoute(fromId: string, toId: string, face: THREE.Vector3 | null, extra?: THREE.Vector3, stopShort = 0, onDone?: (arrived: boolean) => void, fromHere = false): boolean {
     const route = fromId === toId ? null : findRoute(this.venue, fromId, toId);
+    const startNode = this.venue.nodes.find(n => n.id === fromId);
     const node = this.venue.nodes.find(n => n.id === toId);
-    if (!route && !(fromId === toId && node && extra)) return false;
+    if (!startNode || !node || (!route && !(fromId === toId && extra))) return false;
     const path = route ? pathFromNodes(this.venue, route.nodeIds) : null;
-    const L = path?.length ?? 0;
-    const end = path ? v3(pointAt(path, L).p) : this.elev(node!.floorId, node!.at);
-    // The last stretch off the paths to the tapped spot — only if no wall stands in the way.
-    const ex = extra;
-    if (ex && this.wallLines().some(w => crosses(end.x, end.z, ex.x, ex.z, w.a, w.b))) extra = undefined;
-    const tail = extra ? Math.max(0, end.distanceTo(extra) - 0.4) : 0;
+    const pts: WalkPoint[] = [];
+    if (fromHere) {
+      const c = this.camera.position;
+      this.walkFloor(pts, this.floorId, { x: c.x, z: c.z }, startNode.floorId === this.floorId ? startNode.at : { x: c.x, z: c.z });
+    }
+    if (path) {
+      path.pieces.forEach((piece, i) => {
+        const a = piece.points[0], b = piece.points[piece.points.length - 1];
+        if (piece.kind === 'walk' || piece.kind === 'door') this.walkFloor(pts, piece.floorId, { x: a.x, z: a.z }, { x: b.x, z: b.z });
+        else {
+          // Up (or down) the stairs / lift as drawn; the top belongs to the floor you arrive on.
+          const upper = path.pieces[i + 1]?.floorId ?? piece.floorId;
+          piece.points.forEach((q, k) => pushPoint(pts, v3(q), k === piece.points.length - 1 ? upper : piece.floorId));
+        }
+      });
+    } else this.walkFloor(pts, node.floorId, startNode.at, startNode.at);
+    if (extra) {
+      const last = pts[pts.length - 1];
+      this.walkFloor(pts, last?.floorId ?? node.floorId, last ? { x: last.p.x, z: last.p.z } : node.at, { x: extra.x, z: extra.z });
+    }
+    return this.walkPolyline(pts, face, stopShort, onDone);
+  }
+
+  /** One floor's stretch, through the doorways (straight if the walls allow no way: the plan needs a door). */
+  private walkFloor(pts: WalkPoint[], floorId: string, a: Vec2, b: Vec2) {
+    const y = this.venue.floors.find(f => f.id === floorId)?.elevation ?? 0;
+    const way = walkway(this.venue, floorId, a, b) ?? [a, b];
+    for (const q of way) pushPoint(pts, new THREE.Vector3(q.x, y, q.z), floorId);
+  }
+
+  /** Glide along a line of points (stopping `stopShort` before its end), switching floors on the way. */
+  private walkPolyline(pts: WalkPoint[], face: THREE.Vector3 | null, stopShort = 0, onDone?: (arrived: boolean) => void): boolean {
+    const d = this.director;
+    if (!d || !pts.length) return false;
+    this.lastWalk = pts.map(q => ({ x: q.p.x, y: q.p.y, z: q.p.z, floorId: q.floorId }));
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].p.distanceTo(pts[i - 1].p));
+    const L = cum[cum.length - 1];
     const sample = (s: number) => {
-      if (path && s <= L) { const q = pointAt(path, s); return { p: v3(q.p), floorId: q.floorId }; }
-      const k = tail > 0 ? Math.min(1, (s - L) / tail) : 1;
-      return { p: end.clone().lerp(extra ?? end, k), floorId: node?.floorId };
+      if (pts.length === 1 || s <= 0) return { p: pts[0].p.clone(), floorId: pts[0].floorId };
+      let i = 1;
+      while (i < pts.length - 1 && cum[i] < s) i++;
+      const a = pts[i - 1], b = pts[i];
+      const k = Math.min(1, Math.max(0, (s - cum[i - 1]) / Math.max(1e-6, cum[i] - cum[i - 1])));
+      return { p: a.p.clone().lerp(b.p, k), floorId: k > 0.5 ? b.floorId : a.floorId };
     };
-    d.walkAlong(sample, Math.max(0, L + tail - stopShort), face, {
-      onStep: floorId => {
-        if (floorId && floorId !== this.floorId) this.setFloor(floorId, { frame: false });
-      },
+    // Where the walk ends: if a wall stands between there and what we'd face, turn to the open view that way instead.
+    const endAt = sample(Math.max(0, L - stopShort));
+    const aim = face;
+    if (aim && endAt.floorId && this.obstaclesOn(endAt.floorId).some(w => crosses(endAt.p.x, endAt.p.z, aim.x, aim.z, w.a, w.b))) {
+      face = this.lookInto(endAt.floorId, { x: endAt.p.x, z: endAt.p.z }, null, Math.atan2(aim.z - endAt.p.z, aim.x - endAt.p.x));
+    }
+    d.walkAlong(sample, Math.max(0, L - stopShort), face, {
+      onStep: floorId => { if (floorId && floorId !== this.floorId) this.setFloor(floorId, { frame: false }); },
       onDone,
     });
     this.dirty = true;
@@ -334,7 +389,7 @@ export class IndoorViewer3D {
       this.director.startWalk(this.elev(here.floorId, here.at), this.placeView(tag), 0.6);
       this.walkInfo = { ...this.walkInfo, state: 'arrived', target: id };
     } else {
-      const ok = !!goal && this.walkRoute(here.id, goal.id, this.placeView(tag), undefined, ARRIVE_SHORT, done);
+      const ok = !!goal && this.walkRoute(here.id, goal.id, this.placeView(tag), undefined, ARRIVE_SHORT, done, !from);
       this.walkInfo = { ...this.walkInfo, state: ok ? 'walking' : 'choose', target: ok ? id : null };
     }
     this.renderWalkBar();
@@ -425,29 +480,18 @@ export class IndoorViewer3D {
     return this.elev(tag.floorId, { x: (c.x + tag.at.x) / 2, z: (c.z + tag.at.z) / 2 });
   }
 
-  /** Walk to a spot on the floor that was tapped (along the paths when there's a wall in the way). */
+  /** Walk to a spot on the floor that was tapped: round walls, through doorways. */
   private walkToPoint(p: THREE.Vector3) {
-    const d = this.director;
-    if (!d) return;
-    const feet = this.camera.position.clone().setY(this.elev(this.floorId, { x: 0, z: 0 }).y);
+    if (!this.director) return;
+    const c = this.camera.position;
     const back = () => { this.walkInfo = { ...this.walkInfo, state: 'choose', target: null, from: null }; this.renderWalkBar(); };
-    const clear = !this.wallLines().some(w => crosses(feet.x, feet.z, p.x, p.z, w.a, w.b));
-    const target = p.clone().setY(feet.y);
-    if (clear) {
-      // Straight there; stop a metre short, then turn to the most open view
-      // (keeping roughly the way you walked) — never nose-to-wall.
-      const dir = target.clone().sub(feet).setY(0);
-      const len = Math.max(0, dir.length() - 1);
-      dir.normalize();
-      const stop = feet.clone().addScaledVector(dir, len);
-      d.walkAlong(s => ({ p: feet.clone().addScaledVector(dir, Math.min(s, len)) }), len,
-        this.lookInto(this.floorId, { x: stop.x, z: stop.z }, null, Math.atan2(dir.z, dir.x)), { onDone: back });
-      this.walkInfo = { ...this.walkInfo, state: 'walking', target: null };
-      this.renderWalkBar();
-      return;
-    }
-    const from = this.walkerNode(), to = nearestNode(this.venue, this.floorId, { x: p.x, z: p.z });
-    if (from && to && this.walkRoute(from.id, to.id, this.lookInto(this.floorId, { x: target.x, z: target.z }, to), target, 0, back)) {
+    const pts: WalkPoint[] = [];
+    this.walkFloor(pts, this.floorId, { x: c.x, z: c.z }, { x: p.x, z: p.z });
+    // Stop a metre short, then turn to the most open view, keeping roughly the way you walked.
+    const last = pts[pts.length - 1].p, prev = pts[Math.max(0, pts.length - 2)].p;
+    const heading = Math.atan2(last.z - prev.z, last.x - prev.x);
+    const face = this.lookInto(this.floorId, { x: last.x, z: last.z }, null, Number.isFinite(heading) ? heading : undefined);
+    if (this.walkPolyline(pts, face, 1, back)) {
       this.walkInfo = { ...this.walkInfo, state: 'walking', target: null };
       this.renderWalkBar();
     }
@@ -597,7 +641,7 @@ export class IndoorViewer3D {
   }
 
   /** Update callbacks without rebuilding (React re-renders). */
-  setCallbacks(cb: Pick<ViewerOptions, 'onSelect' | 'onFloorChange' | 'onModeChange'>) { Object.assign(this.opts, cb); }
+  setCallbacks(cb: Pick<ViewerOptions, 'onSelect' | 'onFloorChange' | 'onModeChange' | 'onZoomOutLimit'>) { Object.assign(this.opts, cb); }
 
   dispose() {
     cancelAnimationFrame(this.raf);
@@ -737,8 +781,10 @@ export class IndoorViewer3D {
   private refreshLabels() {
     const specs: LabelSpec[] = [];
     const elev = new Map(this.venue.floors.map(f => [f.id, f.elevation]));
-    const tags = this.layers.labels ? this.tags() : [];
-    for (const t of tags) specs.push({ id: t.id, text: t.name, sub: t.sub, color: t.color, kind: 'place', floorId: t.floorId, at: new THREE.Vector3(t.at.x, (elev.get(t.floorId) ?? 0) + 2.1, t.at.z), priority: t.priority ?? 1 });
+    // Places always get their badge; the Names layer adds names (and room names).
+    const tags = this.tags();
+    const names = !!this.layers.labels;
+    for (const t of tags) specs.push({ id: t.id, text: t.name, sub: t.sub, color: t.color, kind: 'place', floorId: t.floorId, at: new THREE.Vector3(t.at.x, (elev.get(t.floorId) ?? 0) + 2.1, t.at.z), priority: t.priority ?? 1, image: t.image, icon: t.icon, showName: names });
     if (this.layers.labels && this.roomLabels) {
       const tagged = new Set(tags.map(t => t.id));
       for (const r of this.venue.rooms) {
@@ -759,7 +805,7 @@ export class IndoorViewer3D {
   /** A thin stem in each place's colour from the floor up to its tag, and a dot where it stands. */
   private buildStems() {
     if (this.stems) { this.scene.remove(this.stems); this.stems.geometry.dispose(); (this.stems.material as THREE.Material).dispose(); this.stems = null; }
-    const tags = this.layers.labels ? this.tags().filter(t => t.floorId === this.floorId) : [];
+    const tags = this.tags().filter(t => t.floorId === this.floorId);
     if (!tags.length) return;
     const geo = new THREE.CylinderGeometry(0.035, 0.035, 1, 6).translate(0, 0.5, 0);
     const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ roughness: 0.6 }), tags.length);
@@ -817,6 +863,7 @@ export class IndoorViewer3D {
   }
 
   private wallCache: { floor: string; lines: { a: Vec2; b: Vec2 }[] } | null = null;
+  private obstaclesOn(floorId: string) { return floorId === this.floorId ? this.wallLines() : obstacles(this.venue, floorId); }
   private wallLines() {
     if (this.wallCache?.floor !== this.floorId) this.wallCache = { floor: this.floorId, lines: obstacles(this.venue, this.floorId) };
     return this.wallCache.lines;
@@ -924,6 +971,14 @@ export class IndoorViewer3D {
 }
 
 const v3 = (p: Point3) => new THREE.Vector3(p.x, p.y, p.z);
+
+/** A point on a walk, and the floor it's on. */
+interface WalkPoint { p: THREE.Vector3; floorId: string }
+function pushPoint(pts: WalkPoint[], p: THREE.Vector3, floorId: string) {
+  const q = pts[pts.length - 1];
+  if (!q || q.p.distanceTo(p) > 0.05) pts.push({ p, floorId });
+  else if (q.floorId !== floorId) q.floorId = floorId;
+}
 /** Walking to a place stops this far short of it (about a room's doorway), so the place is in front of you. */
 const ARRIVE_SHORT = 2.2;
 

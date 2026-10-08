@@ -105,6 +105,8 @@ export function useSvgViewport() {
   useEffect(() => {
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
+      // Panels floating over the plan (data-wheel-own) scroll themselves.
+      if (e.target instanceof Element && e.target.closest('[data-wheel-own]')) return;
       e.preventDefault();
       // Trackpad two-finger scroll (no ctrl) pans; mouse wheel and pinch
       // (which browsers report as ctrl+wheel) zoom.

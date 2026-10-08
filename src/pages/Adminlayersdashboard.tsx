@@ -1,5 +1,10 @@
 import { useState, useMemo, useEffect, useCallback, useRef, useReducer } from "react";
 import type { ComponentType, CSSProperties, ReactNode, SVGProps } from "react";
+import { lazy, Suspense, useMemo as useMemo3 } from "react";
+import type { LandmarkArea, LandmarkItem, LandmarkLine } from "@/components/landmarks/LandmarkMap";
+import type { LandmarkKind } from "@/lib/landmarks/landmarks";
+// three.js only loads with the map.
+const LandmarkMap = lazy(() => import("@/components/landmarks/LandmarkMap"));
 import {
   ArrowLeft,
   Building2,
@@ -621,6 +626,39 @@ function AddItemButton({ color, label, onClick }: {color:string;label:string;onC
 }
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
+// ─── The 3D preview (the home map's look) ─────────────────────────────────────
+type LL = { lat: number; lng: number };
+const KIND_OF: Partial<Record<LayerType, LandmarkKind>> = { stores: "bag", events: "flag", entrances: "pin", buildings: "crown", parking: "pin" };
+
+/** Visible layers as the 3D map's landmarks, areas and paths (metres from the park centre). */
+function useLayerScene(layers: Layer[]) {
+  return useMemo3(() => {
+    const k = Math.cos((PARK.lat * Math.PI) / 180);
+    const P = (p: LL) => ({ x: (p.lng - PARK.lng) * k * 111320, y: (PARK.lat - p.lat) * 110540 });
+    const items: LandmarkItem[] = [], lines: LandmarkLine[] = [], areas: LandmarkArea[] = [];
+    for (const l of layers) {
+      if (!l.visible) continue;
+      for (const ft of l.features) {
+        const id = `${l.id}::${ft.id}`;
+        if (Array.isArray(ft.waypoints)) { lines.push({ id, points: ft.waypoints.map(P), color: l.color, width: l.type === "navpaths" ? 1.2 : 0.9 }); continue; }
+        if (Array.isArray(ft.polygon) && ft.polygon.length >= 3) {
+          const pts = ft.polygon.map(P);
+          areas.push({ id, points: pts, color: l.color });
+          const c = pts.reduce((a: { x: number; y: number }, p: { x: number; y: number }) => ({ x: a.x + p.x / pts.length, y: a.y + p.y / pts.length }), { x: 0, y: 0 });
+          items.push({ id, name: ft.name ?? l.name, x: c.x, y: c.y, color: l.color, kind: KIND_OF[l.type] ?? "pin", sub: l.name, muted: true });
+          continue;
+        }
+        if (typeof ft.lat === "number" && typeof ft.lng === "number") {
+          const p = P(ft);
+          const kind: LandmarkKind = l.type === "entrances" && ft.isMainEntrance ? "crown" : KIND_OF[l.type] ?? "pin";
+          items.push({ id, name: ft.name ?? l.name, x: p.x, y: p.y, color: l.type === "events" && ft.isLive ? "#dc2626" : l.color, kind, sub: l.name, muted: l.type === "stores" && ft.isOpen === false });
+        }
+      }
+    }
+    return { items, lines, areas };
+  }, [layers]);
+}
+
 interface AdminLayersDashboardProps {
   embedded?: boolean;
 }
@@ -647,6 +685,7 @@ export default function AdminLayersDashboard({ embedded = false }: AdminLayersDa
   const selected = layers.find(l=>l.id===selectedId);
   const activeLayers = layers.filter(l=>l.visible);
   const totalFeatures = layers.reduce((n,l)=>n+l.features.length,0);
+  const scene = useLayerScene(layers);
 
   const toggleVisible = (id:string) => setLayers(ls=>ls.map(l=>l.id===id?{...l,visible:!l.visible}:l));
   const updateLayer = (updated:Layer) => setLayers(ls=>ls.map(l=>l.id===updated.id?updated:l));
@@ -673,37 +712,39 @@ export default function AdminLayersDashboard({ embedded = false }: AdminLayersDa
         </div>
       )}
 
-      <div style={{background:G.primary,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,overflowX:"auto"}}>
-        <StatBadge icon={Layers} label="Layers" value={layers.length}/>
-        <StatBadge icon={Eye} label="Visible" value={activeLayers.length} accent/>
-        <StatBadge icon={MapPin} label="Features" value={totalFeatures}/>
-        <div style={{flex:1,minWidth:8}}/>
-        {embedded && (
-          <button onClick={()=>setShowExport(true)} style={{background:"rgba(255,255,255,0.14)",border:"1px solid rgba(255,255,255,0.12)",borderRadius:999,padding:"7px 11px",color:"white",fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
-            <Clipboard style={{width:14,height:14}} /> Export
-          </button>
-        )}
-      </div>
-
-      <div style={{background:"white",borderBottom:`1px solid ${G.border}`,boxShadow:"0 1px 10px rgba(15,58,34,0.04)"}}>
-        <button onClick={()=>setShowMap(v=>!v)} style={{width:"100%",padding:"12px 16px",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
-          <span style={{fontSize:12,fontWeight:800,color:G.textMid,letterSpacing:"0.04em",textTransform:"uppercase",display:"flex",alignItems:"center",gap:8}}>
-            <Map style={{width:15,height:15,color:G.primary}} /> Live Map Preview
-          </span>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            {activeLayers.length>0
-              ? <div style={{display:"flex",gap:4}}>{activeLayers.map(l=><div key={l.id} style={{width:9,height:9,borderRadius:"50%",background:l.color,boxShadow:`0 0 0 2px ${l.color}22`}} title={l.name}/>)}</div>
-              : <span style={{fontSize:11,color:G.textMuted}}>No layers on</span>}
-            {showMap ? <ChevronUp style={{width:15,height:15,color:G.textMuted}} /> : <ChevronDown style={{width:15,height:15,color:G.textMuted}} />}
-          </div>
-        </button>
-        {showMap && (
-          <div style={{padding:"0 16px 14px",borderTop:"1px solid #f1f5f2"}}>
-            <div style={{borderRadius:14,overflow:"hidden",border:`1px solid ${G.border}`,boxShadow:"0 10px 24px rgba(15,58,34,0.08)"}}>
-              <MiniMap layers={layers}/>
+      <div className="space-y-4 px-4 pt-5 sm:px-5">
+        <div className="flex flex-wrap items-center gap-2">
+          {[
+            { icon: Layers, label: "Layers", value: layers.length },
+            { icon: Eye, label: "Showing on the map", value: activeLayers.length },
+            { icon: MapPin, label: "Features", value: totalFeatures },
+          ].map(st => (
+            <div key={st.label} className="flex min-w-[170px] flex-1 items-center gap-3 rounded-2xl border bg-card p-3">
+              <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary/10 text-primary"><st.icon style={{ width: 16, height: 16 }} /></span>
+              <span><span className="block text-xl font-black leading-none tabular-nums">{st.value}</span><span className="text-[11px] text-muted-foreground">{st.label}</span></span>
             </div>
+          ))}
+          <button onClick={()=>setShowExport(true)} className="flex h-10 items-center gap-1.5 rounded-xl border bg-card px-3 text-sm font-semibold hover:bg-muted">
+            <Clipboard style={{ width: 15, height: 15 }} /> Export
+          </button>
+          <button onClick={()=>setShowAddModal(true)} className="flex h-10 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">
+            <Plus style={{ width: 15, height: 15 }} /> Add layer
+          </button>
+        </div>
+        <div className="relative">
+          <Suspense fallback={<div className="flex h-[460px] items-center justify-center rounded-3xl bg-muted/50 text-sm text-muted-foreground">Building the 3D map…</div>}>
+            <LandmarkMap items={scene.items} lines={scene.lines} areas={scene.areas} className="h-[460px] border"
+              selectedId={null} onSelect={id => { if (id) { setSelectedId(id.split("::")[0]); setEditorTab("features"); } }}
+              emptyText="Switch a layer on to see it here in 3D" />
+          </Suspense>
+          <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap gap-1.5">
+            {activeLayers.map(l => (
+              <span key={l.id} className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-card/90 px-2.5 py-1 text-[11px] font-semibold shadow backdrop-blur">
+                <span className="h-2 w-2 rounded-full" style={{ background: l.color }} />{l.name}
+              </span>
+            ))}
           </div>
-        )}
+        </div>
       </div>
 
       <div style={{flex:1,overflowY:"auto",padding:"18px 16px 24px"}}>

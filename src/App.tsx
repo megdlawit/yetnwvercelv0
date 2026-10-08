@@ -9,22 +9,17 @@ import { AdminAuthProvider } from "@/contexts/AdminAuthContext";
 import RequireAdminAuth from "@/components/admin/RequireAdminAuth";
 import { RequirePlatformAdmin, RequireVenueEditor } from "@/components/admin/AccessGuards";
 import Index from "./pages/Index";
-import VisitorHome from "./pages/VisitorHome";
 import NotFound from "./pages/NotFound";
-import AdminBuildings from "./pages/AdminBuildings";
-import AdminPOIs from "./pages/AdminPOIs";
-import AdminVenuePaths from "./pages/AdminVenuePaths";
-import AdminLayersDashboard from "./pages/Adminlayersdashboard";
-import AdminDashboard from "./pages/AdminDashboard";
+import AdminLayout from "./pages/admin/AdminLayout";
+import AdminTools from "./pages/admin/AdminTools";
+import { Overview as AdminOverview, Approvals as AdminApprovals, Institutions as AdminInstitutions, Venues as AdminVenues, People as AdminPeople, Activity as AdminActivity } from "./pages/admin/AdminPages";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import FloorEditor from "./pages/FloorEditor";
-import MerchantDashboard from "./pages/MerchantDashboard";
 import DocsIntro from "./pages/docs/DocsIntro";
 import DocsAdmin from "./pages/docs/DocsAdmin";
 import DocsApi from "./pages/docs/DocsApi";
 import Embed from "./pages/Embed";
-import ViewMap from "./pages/ViewMap";
 import VenueMap from "./pages/VenueMap";
 import { WorkspaceProvider } from "@/contexts/WorkspaceContext";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
@@ -47,6 +42,13 @@ const queryClient = new QueryClient();
 
 /** Old per-venue dashboard links now open that venue in the institution dashboard. */
 const VenueRedirect = () => <Navigate to={`/dashboard?venue=${useParams().buildingId}`} replace />;
+/** The old venue home (/visit?v=…): the venue's map, or the home page. */
+const VisitRedirect = () => {
+  const v = new URLSearchParams(window.location.search).get('v');
+  return <Navigate to={v ? `/venue/${v}` : '/'} replace />;
+};
+/** The old venue guide: Discover and Explore now live on the venue's map. */
+const GuideRedirect = () => <Navigate to={`/venue/${useParams().buildingId}${window.location.search}`} replace />;
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -60,7 +62,8 @@ const App = () => (
               {/* The landing page: the Indoor experience (3D park, journey, museum tour) */}
               <Route path="/" element={<Suspense fallback={<div className="fixed inset-0 bg-paper" />}><Landing /></Suspense>} />
               {/* A venue's visitor home page, from its published data (?v=venue) */}
-              <Route path="/visit" element={<VisitorHome />} />
+              {/* The venue home page is now the home page (/) and each venue's map. */}
+              <Route path="/visit" element={<VisitRedirect />} />
               {/* The city map: GPS to the venue, then indoor navigation (the original visitor app). */}
               <Route path="/explore" element={<Index />} />
               <Route path="/login" element={<Login />} />
@@ -86,14 +89,23 @@ const App = () => (
                 <Route path="team" element={<Team />} />
                 <Route path="publish" element={<PublishSettings />} />
               </Route>
-              <Route path="/admin" element={<RequireAdminAuth><RequirePlatformAdmin><AdminDashboard /></RequirePlatformAdmin></RequireAdminAuth>} />
-              <Route path="/admin/buildings" element={<RequireAdminAuth><RequirePlatformAdmin><AdminBuildings /></RequirePlatformAdmin></RequireAdminAuth>} />
+              {/* The Yet New control center: every institution, venue and person, and the approvals. */}
+              <Route path="/admin" element={<RequireAdminAuth><RequirePlatformAdmin><AdminLayout /></RequirePlatformAdmin></RequireAdminAuth>}>
+                <Route index element={<AdminOverview />} />
+                <Route path="approvals" element={<AdminApprovals />} />
+                <Route path="institutions" element={<AdminInstitutions />} />
+                <Route path="venues" element={<AdminVenues />} />
+                <Route path="users" element={<AdminPeople />} />
+                <Route path="activity" element={<AdminActivity />} />
+                <Route path="tools/:tool" element={<AdminTools />} />
+              </Route>
+              <Route path="/admin/buildings" element={<Navigate to="/admin/tools/buildings" replace />} />
               <Route path="/admin/venues/:buildingId" element={<VenueRedirect />} />
-              <Route path="/admin/pois"element={<RequireAdminAuth><RequirePlatformAdmin><AdminPOIs /></RequirePlatformAdmin></RequireAdminAuth>} />
-              <Route path="/admin/venue-paths" element={<RequireAdminAuth><RequirePlatformAdmin><AdminVenuePaths /></RequirePlatformAdmin></RequireAdminAuth>} />
-              <Route path="/AdminLayersDashboard" element={<RequireAdminAuth><RequirePlatformAdmin><AdminLayersDashboard /></RequirePlatformAdmin></RequireAdminAuth>} />
+              <Route path="/admin/pois" element={<Navigate to="/admin/tools/pois" replace />} />
+              <Route path="/admin/venue-paths" element={<Navigate to="/admin/tools/paths" replace />} />
+              <Route path="/AdminLayersDashboard" element={<Navigate to="/admin/tools/layers" replace />} />
               <Route path="/admin/floors/:buildingId/:floorId/editor" element={<RequireAdminAuth><RequireVenueEditor><FloorEditor /></RequireVenueEditor></RequireAdminAuth>} />
-              <Route path="/merchant" element={<RequireAdminAuth><RequirePlatformAdmin><MerchantDashboard /></RequirePlatformAdmin></RequireAdminAuth>} />
+              <Route path="/merchant" element={<Navigate to="/admin/tools/commerce" replace />} />
               <Route path="/doc" element={<DocsIntro />} />
               <Route path="/doc/admin" element={<DocsAdmin />} />
               <Route path="/doc/api" element={<DocsApi />} />
@@ -101,7 +113,7 @@ const App = () => (
               {/* The venue map: the /explore map and navigation, scoped to one published venue. */}
               <Route path="/venue/:buildingId" element={<VenueMap />} />
               {/* The venue guide: events, stories, collections and the 3D model. */}
-              <Route path="/venue/:buildingId/guide" element={<ViewMap />} />
+              <Route path="/venue/:buildingId/guide" element={<GuideRedirect />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>

@@ -11,7 +11,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   MapPin, Navigation, Volume2, VolumeX,
   RotateCcw, Play, X, Footprints, Smartphone,
-  ChevronLeft, History, CornerDownRight,
+  ChevronLeft, History, CornerDownRight, Sparkles, Compass,
   type LucideIcon,
 } from 'lucide-react';
 import { useProfile } from '@/contexts/UserProfileContext';
@@ -31,6 +31,8 @@ import ExplorePanel from './ExplorePanel';
 import SavedPanel from './SavedPanel';
 import VisitedPanel from './VisitedPanel';
 import ProfilePage from './ProfilePage';
+import { BrowseBody, BrowseHeader, type BrowseTab } from './visitor/VenueBrowse';
+import { useBrowseTab, type VenueBrowseProps } from './visitor/VenueBrowsePanel';
 import EmailGateDialog from './EmailGateDialog';
 import BottomNavPill from './BottomNavPill';
 
@@ -76,6 +78,8 @@ interface BottomSheetProps {
    *  strip hides while this is true, and reappears as a "swipe up to
    *  discover" pill rather than immediately auto-showing the cards again. */
   hideExploreStrip?: boolean;
+  /** Discover / Explore for a venue (its events, tours, guides and stories). */
+  browse?: VenueBrowseProps;
 }
 
 const BottomSheet: React.FC<BottomSheetProps> = ({
@@ -89,10 +93,12 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
   isAnchored, anchorName, voiceEnabled, onToggleVoice,
   building, pois = [], nearbyPOIs = [], onPOISelect,
   parkName = 'Unity Park',
-  activeTab = 'explore', onTabChange,
+  activeTab = 'explore', onTabChange, browse,
   hideExploreStrip = false,
 }) => {
-  const [exploreOpen, setExploreOpen] = useState(false);
+  const [exploreOpen, setExploreOpen] = useState(() => !!browse?.start);
+  const [browseTab, setBrowseTab] = useBrowseTab(browse?.start);
+  const openBrowse = (t: BrowseTab) => { setBrowseTab(t); setExploreOpen(true); };
   const [routeOpen, setRouteOpen] = useState(false);
   const [placesSubTab, setPlacesSubTab] = useState<'saved' | 'visited'>('saved');
   // 'cards' = full auto-scrolling explore strip; 'hint' = the small "swipe up
@@ -112,12 +118,6 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     if (tab === 'explore') {
       setExploreOpen(false);
       setRouteOpen(false);
-    }
-    // Gate profile tab — show email dialog first if no email on record
-    if (tab === 'profile' && !hasEmail) {
-      setPendingSavePoiId(null); // no POI pending, just profile access
-      setEmailGateOpen(true);
-      return;
     }
     onTabChange?.(tab);
   };
@@ -149,8 +149,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     prevIsLiveRef.current = isLive;
   }, [hasPath, isLive, autoOpenRoute]);
   const { profile, loading: profileLoading, signOut, updateProfile, updateEmail, hasEmail, error: profileError, stepsHistory } = useProfile();
-  const { savedPlaces, savedPOIs, loading: savedLoading, isSaved, toggleSave, unsavePlace, error: savedError, refresh: refreshSaved } = useSavedPlaces(profile?.id);
-  const { visitedPlaces, visitedPOIs, loading: visitedLoading, removeVisit, refresh: refreshVisited } = useVisitedPlaces(profile?.id);
+  const { savedPlaces, savedPOIs, loading: savedLoading, isSaved, toggleSave, unsavePlace, error: savedError, refresh: refreshSaved } = useSavedPlaces(profile?.id, pois);
+  const { visitedPlaces, visitedPOIs, loading: visitedLoading, removeVisit, refresh: refreshVisited } = useVisitedPlaces(profile?.id, pois);
   const { toast } = useToast();
 
   // Refresh both lists whenever the Saved/Visited or Profile overlay is opened,
@@ -183,13 +183,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
       return;
     }
 
-    // First save attempt — require an email
-    if (!hasEmail) {
-      setPendingSavePoiId(poiId);
-      setEmailGateOpen(true);
-      return;
-    }
-
+    // Saved at once, guest or not; an email (Profile) keeps it on every device.
     const ok = await toggleSave(poiId);
     if (!ok) {
       toast({
@@ -199,7 +193,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
       });
       return;
     }
-    toast({ title: 'Saved!', description: 'View it anytime in the Saved tab.' });
+    toast({ title: 'Saved!', description: hasEmail ? 'View it anytime in the Saved tab.' : 'Find it in Saved. Add your email in Profile to keep it on every device.' });
   };
 
   const handleEmailGateSubmit = async (email: string): Promise<boolean> => {
@@ -269,15 +263,27 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
               if (info.offset.y > 60) setExploreOpen(false);
             }}
           >
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-widest leading-none" style={{ color: 'hsl(var(--primary))' }}>EXPLORE</p>
-              <h1 className="text-lg font-black text-foreground leading-tight truncate">{parkName}</h1>
-            </div>
-            <span className="text-xs text-muted-foreground font-medium">TODAY</span>
+            {browse ? (
+              <><div className="min-w-0 flex-1"><BrowseHeader name={browse.name} sub={browse.sub} accent={browse.accent} tab={browseTab} onTab={setBrowseTab} /></div>
+              <button onClick={() => setExploreOpen(false)} aria-label="Close" className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"><X className="h-4 w-4" /></button></>
+            ) : (
+              <>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-widest leading-none" style={{ color: 'hsl(var(--primary))' }}>EXPLORE</p>
+                  <h1 className="text-lg font-black text-foreground leading-tight truncate">{parkName}</h1>
+                </div>
+                <span className="text-xs text-muted-foreground font-medium">TODAY</span>
+              </>
+            )}
           </motion.div>
 
           {/* ── Scrollable content ── */}
           <div className="flex-1 overflow-y-auto scroll-touch overscroll-contain min-h-0">
+            {browse ? (
+              <BrowseBody tab={browseTab} places={browse.places} content={browse.content} start={browse.start}
+                onPlace={id => { setExploreOpen(false); browse.onPlace(id); }}
+                onNavigate={id => { setExploreOpen(false); browse.onNavigate(id); }} />
+            ) : (
             <ExplorePanel
               pois={pois}
               onPOISelect={(poi) => {
@@ -289,6 +295,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
               isSaved={isSaved}
               onToggleSave={handleToggleSave}
             />
+            )}
           </div>
 
           {/* ── Bottom nav inside full-screen (so it's always visible) ── */}
@@ -494,7 +501,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 32, stiffness: 300 }}
-            className="fixed inset-0 z-50 bg-card flex flex-col"
+            className="visitor-surface fixed inset-0 z-50 bg-card text-foreground flex flex-col"
             style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
           >
             <div
@@ -631,6 +638,18 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
         {!isLive && !hideExploreStrip && (
           stripState === 'cards' ? (
             <div className="pt-2">
+              {browse && (
+                <div className="mx-4 mb-2 flex items-center gap-2 rounded-2xl bg-card/95 py-1.5 pl-3 pr-1.5 shadow-[0_6px_20px_-6px_hsl(152_40%_10%/0.25)] backdrop-blur">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-bold leading-tight text-foreground">{browse.name}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">{browse.sub}</span>
+                  </span>
+                  <span className="flex shrink-0 rounded-full bg-muted p-0.5 text-xs font-semibold">
+                    <button onClick={() => openBrowse('discover')} className="flex items-center gap-1 rounded-full px-2.5 py-1.5 text-foreground"><Sparkles className="h-3.5 w-3.5" /> Discover</button>
+                    <button onClick={() => openBrowse('explore')} className="flex items-center gap-1 rounded-full px-2.5 py-1.5 text-muted-foreground"><Compass className="h-3.5 w-3.5" /> Explore</button>
+                  </span>
+                </div>
+              )}
               <ExplorePanel
                 pois={pois}
                 nearbyPOIs={nearbyPOIs}

@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { useCallback, useEffect, useMemo } from 'react';
 import { POI, POICategory } from '@/data/poi';
+import {
+  useVisitorStore, rememberPlaces, snapshotFor, recordVisit as storeVisit, removeVisit as storeRemove, getVisitorState, syncVisitor,
+} from '@/lib/visitor/visitorStore';
 
 export type VisitSource = 'auto' | 'manual';
 
@@ -14,8 +16,8 @@ export interface VisitedPlace {
   last_visited_at: string;
 }
 
-// Minimal POI snapshot stored alongside each visited place so the history
-// list always has the image/name even when the current building differs.
+// What's kept about each visited place, so the history shows its name and
+// photo even when that venue isn't the one open now.
 export interface VisitedPOISnapshot {
   id: string;
   name: string;
@@ -23,205 +25,46 @@ export interface VisitedPOISnapshot {
   subcategory: string;
   imageUrl: string | null;
   category: POICategory;
-}
-
-const POI_SNAPSHOT_COLUMNS = 'id, name, description, subcategory, image_url, category';
-
-function toSnapshot(row: {
-  id: string; name: string | null; description: string | null;
-  subcategory: string | null; image_url: string | null; category: string | null;
-}): VisitedPOISnapshot {
-  return {
-    id: row.id,
-    name: row.name ?? 'Visited Place',
-    description: row.description ?? '',
-    subcategory: row.subcategory ?? '',
-    imageUrl: row.image_url ?? null,
-    category: (row.category as POICategory) ?? 'attraction',
-  };
+  buildingId?: string | null;
+  nodeId?: string | null;
+  venueName?: string | null;
 }
 
 /**
- * Manages the current profile's visit history — places they've actually
- * been to, as opposed to useSavedPlaces' bookmark list. Visits can be
- * recorded automatically (navigation arrival, QR anchor) or manually
- * ("Mark as visited" on a POI card). Repeat visits update the same row
- * (bumping visit_count / last_visited_at) instead of duplicating.
+ * The visitor's visit history — places they've actually been to, as opposed
+ * to the saved list. Recorded automatically (navigation arrival, QR) or by
+ * hand ("Mark as visited"); a repeat visit bumps the count. Kept on the
+ * device and synced to the profile (see lib/visitor/visitorStore).
  */
-export function useVisitedPlaces(profileId: string | null | undefined) {
-  const [visitedPlaces, setVisitedPlaces] = useState<VisitedPlace[]>([]);
-  const [visitedPOIs, setVisitedPOIs]     = useState<Map<string, VisitedPOISnapshot>>(new Map());
-  const [loading, setLoading]             = useState(true);
-  const [error, setError]                 = useState<string | null>(null);
+export function useVisitedPlaces(profileId: string | null | undefined, pois?: POI[]) {
+  const store = useVisitorStore();
+  useEffect(() => { if (pois?.length) rememberPlaces(pois); }, [pois]);
+  useEffect(() => { void syncVisitor(profileId); }, [profileId]);
 
-  const fetchVisited = useCallback(async () => {
-    if (!profileId) {
-      setVisitedPlaces([]);
-      setVisitedPOIs(new Map());
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
+  const visitedPlaces = useMemo<VisitedPlace[]>(() => store.visits.map(e => ({
+    id: e.id, profile_id: profileId ?? '', poi_id: e.id, visit_count: e.count, source: e.source, first_visited_at: e.firstAt, last_visited_at: e.lastAt,
+  })), [store.visits, profileId]);
+  const visitedPOIs = useMemo(() => new Map<string, VisitedPOISnapshot>(store.visits.map(e => [e.id, {
+    id: e.id, name: e.name, description: e.detail, subcategory: e.detail, imageUrl: e.imageUrl,
+    category: e.category as POICategory, buildingId: e.buildingId, nodeId: e.nodeId, venueName: e.venueName,
+  }])), [store.visits]);
 
-    const { data, error: fetchError } = await supabase
-      .from('visited_places')
-      .select('*')
-      .eq('profile_id', profileId)
-      .order('last_visited_at', { ascending: false });
+  const isVisited = useCallback((poiId: string) => visitedPlaces.some(vp => vp.poi_id === poiId), [visitedPlaces]);
+  const getVisit = useCallback((poiId: string) => visitedPlaces.find(vp => vp.poi_id === poiId) ?? null, [visitedPlaces]);
 
-    if (fetchError) {
-      console.error('[useVisitedPlaces] fetchVisited failed:', fetchError);
-      setError(fetchError.message);
-      setVisitedPlaces([]);
-      setLoading(false);
-      return;
-    }
-
-    const places = (data ?? []) as VisitedPlace[];
-    setVisitedPlaces(places);
-
-    if (places.length > 0) {
-      const poiIds = places.map(p => p.poi_id);
-      const { data: poiRows, error: poiError } = await supabase
-        .from('pois')
-        .select(POI_SNAPSHOT_COLUMNS)
-        .in('id', poiIds);
-
-      if (!poiError && poiRows) {
-        const map = new Map<string, VisitedPOISnapshot>();
-        for (const row of poiRows) map.set(row.id, toSnapshot(row));
-        setVisitedPOIs(map);
-      }
-    } else {
-      setVisitedPOIs(new Map());
-    }
-
-    setLoading(false);
-  }, [profileId]);
-
-  useEffect(() => {
-    fetchVisited();
-  }, [fetchVisited]);
-
-  const isVisited = useCallback(
-    (poiId: string) => visitedPlaces.some(vp => vp.poi_id === poiId),
-    [visitedPlaces]
-  );
-
-  const getVisit = useCallback(
-    (poiId: string) => visitedPlaces.find(vp => vp.poi_id === poiId) ?? null,
-    [visitedPlaces]
-  );
-
-  /** Records a visit to a POI — first time inserts a row, later visits bump the count. */
-  const recordVisit = useCallback(async (poiId: string, source: VisitSource = 'auto') => {
-    if (!profileId) {
-      console.error('[useVisitedPlaces] recordVisit failed: no profile loaded.');
-      return false;
-    }
-
-    const existing = visitedPlaces.find(vp => vp.poi_id === poiId);
-    const nowIso = new Date().toISOString();
-
-    if (existing) {
-      const { data, error: updateError } = await supabase
-        .from('visited_places')
-        .update({
-          visit_count: existing.visit_count + 1,
-          last_visited_at: nowIso,
-          source,
-        })
-        .eq('id', existing.id)
-        .select()
-        .maybeSingle<VisitedPlace>();
-
-      if (updateError) {
-        console.error('[useVisitedPlaces] recordVisit (update) failed:', updateError);
-        setError(updateError.message);
-        return false;
-      }
-      if (data) {
-        setVisitedPlaces(prev => prev.map(vp => (vp.id === data.id ? data : vp)));
-      }
-      return true;
-    }
-
-    const { data, error: insertError } = await supabase
-      .from('visited_places')
-      .insert({
-        profile_id: profileId,
-        poi_id: poiId,
-        visit_count: 1,
-        source,
-        first_visited_at: nowIso,
-        last_visited_at: nowIso,
-      })
-      .select()
-      .maybeSingle<VisitedPlace>();
-
-    if (insertError) {
-      // Unique violation just means another call beat us to it — refresh and treat as success.
-      if (insertError.code === '23505') {
-        await fetchVisited();
-        return true;
-      }
-      console.error('[useVisitedPlaces] recordVisit (insert) failed:', insertError);
-      setError(insertError.message);
-      return false;
-    }
-
-    if (data) {
-      setVisitedPlaces(prev => [data, ...prev]);
-      const { data: poiRow } = await supabase
-        .from('pois')
-        .select(POI_SNAPSHOT_COLUMNS)
-        .eq('id', poiId)
-        .maybeSingle();
-      if (poiRow) {
-        setVisitedPOIs(prev => {
-          const next = new Map(prev);
-          next.set(poiRow.id, toSnapshot(poiRow));
-          return next;
-        });
-      }
-    }
+  /** Records a visit — the first one adds the place, later ones bump the count. `log: false` when the caller logs its own activity (a walk). */
+  const recordVisit = useCallback(async (poiId: string, source: VisitSource = 'auto', opts?: { log?: boolean }) => {
+    storeVisit(snapshotFor(poiId), source, opts);
     return true;
-  }, [profileId, visitedPlaces, fetchVisited]);
-
+  }, []);
   const removeVisit = useCallback(async (poiId: string) => {
-    if (!profileId) return false;
-    const { error: deleteError } = await supabase
-      .from('visited_places')
-      .delete()
-      .eq('profile_id', profileId)
-      .eq('poi_id', poiId);
-
-    if (deleteError) {
-      console.error('[useVisitedPlaces] removeVisit failed:', deleteError);
-      setError(deleteError.message);
-      return false;
-    }
-    setVisitedPlaces(prev => prev.filter(vp => vp.poi_id !== poiId));
-    setVisitedPOIs(prev => {
-      const next = new Map(prev);
-      next.delete(poiId);
-      return next;
-    });
+    if (!getVisitorState().visits.some(v => v.id === poiId)) return false;
+    storeRemove(poiId);
     return true;
-  }, [profileId]);
+  }, []);
+  const refresh = useCallback(() => syncVisitor(profileId, true), [profileId]);
 
-  return {
-    visitedPlaces,
-    visitedPOIs,
-    loading,
-    error,
-    isVisited,
-    getVisit,
-    recordVisit,
-    removeVisit,
-    refresh: fetchVisited,
-  };
+  return { visitedPlaces, visitedPOIs, loading: false, error: null as string | null, isVisited, getVisit, recordVisit, removeVisit, refresh };
 }
 
 /** Formats a last-visited timestamp as a short relative label, e.g. "Today", "3d ago". */

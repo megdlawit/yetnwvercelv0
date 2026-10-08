@@ -23,7 +23,12 @@ export default function PublishDialog({ open, onOpenChange, data, me, onDone }: 
   const run = async (what: 'publish' | 'unpublish') => {
     setBusy(what);
     try {
-      if (what === 'publish') await publishVenue(b.id); else await unpublishVenue(b.id);
+      if (what === 'publish') {
+        if (await publishVenue(b.id) === 'review') {
+          toast.success('Sent to Yet New for review', { description: 'Your institution is new, so the first publish is checked by our team. It goes live as soon as it is approved — usually within a day.', duration: 9000 });
+          onOpenChange(false); onDone(); return;
+        }
+      } else await unpublishVenue(b.id);
       const first = what === 'publish' && !b.published_at;
       if (first) celebrateBuild();
       toast.success(first ? `🎉 ${b.name} is live! Share the link or print your QR codes.` : what === 'publish' ? 'Published — visitors now see the latest version' : 'Your venue is offline for visitors');

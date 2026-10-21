@@ -4,7 +4,7 @@
 // level, new floor or fill an empty one), then built and saved while the
 // floors stack up into the building.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Layers, Files, FileStack, PenLine, UploadCloud, Loader2, Check, AlertTriangle, ArrowRight, X, Building2, Sparkles,
@@ -19,6 +19,7 @@ import { extOf } from '@/lib/cad/readFile';
 import { buildPart, fillLevels, partsFromFile, type FloorPart } from '@/lib/cad/floorParts';
 import { commitVenue } from '@/lib/cad/commitVenue';
 import type { BuiltVenue } from '@/lib/cad/buildVenue';
+import type { LayerMapping } from '@/lib/cad/types';
 
 export interface ExistingFloor { id: string; name: string; level: number; hasMap: boolean }
 type Mode = 'one' | 'many' | 'empty';
@@ -26,7 +27,7 @@ type Stage = 'choose' | 'analyzing' | 'review' | 'building' | 'done';
 type Row = FloorPart & { include: boolean; level: number; target: string /* 'new' or an existing floor id */; built: BuiltVenue };
 type Status = 'waiting' | 'building' | 'done' | 'error';
 
-export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors, area = { one: 'Floor', many: 'Floors' }, pxPerMeter = 40, initialFile, onDone }: {
+export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors, area = { one: 'Floor', many: 'Floors' }, pxPerMeter = 40, initialFile, initialMapping, onDone }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   buildingId: string;
@@ -36,6 +37,8 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
   pxPerMeter?: number;
   /** Opened from the single-floor import with a file that holds several floors. */
   initialFile?: File | null;
+  /** The layer mapping reviewed there (AI labels confirmed) — used for every floor of that file. */
+  initialMapping?: LayerMapping;
   onDone: (created: { id: string; name: string }[]) => void | Promise<void>;
 }) {
   const [stage, setStage] = useState<Stage>('choose');
@@ -73,17 +76,23 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
     setStage('analyzing'); setError(null);
     try {
       const found: FloorPart[] = [];
-      for (const f of fs) found.push(...await partsFromFile(f, { split: m === 'one' }));
+      // The reviewed mapping belongs to the file it was reviewed on.
+      for (const f of fs) found.push(...await partsFromFile(f, { mapping: f === initialFile ? initialMapping : undefined }));
       if (!found.length) throw new Error('No floor plans were found in that file.');
-      const free = (lvl: number) => floors.find(fl => fl.level === lvl);
-      const levelled = fillLevels(found, floors.filter(fl => fl.hasMap).map(fl => fl.level));
+      const atLevel = (lvl: number) => floors.find(fl => fl.level === lvl);
+      // Levels from the drawing's titles; the rest in order.
+      const levelled = fillLevels(found).sort((a, b) => Number(b.include !== false) - Number(a.include !== false) || a.level - b.level);
+      const taken = new Set<string>();
       setRows(levelled.map(p => {
-        const same = free(p.level);
+        const include = p.include ?? true;
+        const same = atLevel(p.level);
+        // The floor at the same level is filled — or replaced, when importing the building again:
+        // never a second "Ground floor". (A plan that's off doesn't claim it.)
+        const target = include && same && !taken.has(same.id) ? same.id : 'new';
+        if (target !== 'new') taken.add(target);
         return {
-          ...p, include: true,
-          // An empty floor at the same level is filled; a level already mapped gets a new floor above.
-          target: same && !same.hasMap ? same.id : 'new',
-          built: buildPart(p, pxPerMeter),
+          ...p, include, target,
+          built: buildPart(p, pxPerMeter, p.file === initialFile?.name ? initialMapping : undefined),
         };
       }));
       setStage('review');
@@ -101,6 +110,8 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
   const clash = useMemo(() => {
     const out: Record<string, string> = {};
     for (const r of chosen) {
+      const sameTarget = r.target !== 'new' && chosen.find(c => c !== r && c.target === r.target);
+      if (sameTarget) { out[r.key] = `“${sameTarget.name}” goes into the same ${one}`; continue; }
       if (r.target !== 'new') continue;
       const existing = floors.find(fl => fl.level === r.level && !chosen.some(c => c.target === fl.id));
       const twin = chosen.find(c => c !== r && c.target === 'new' && c.level === r.level);
@@ -108,7 +119,7 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
       else if (twin) out[r.key] = `Two new ${many} at level ${r.level}`;
     }
     return out;
-  }, [chosen, floors, many]);
+  }, [chosen, floors, many, one]);
 
   const build = async () => {
     setStage('building'); setError(null);
@@ -162,7 +173,7 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Layers className="h-5 w-5 text-primary" />
-            {stage === 'done' ? `${created.length} ${created.length === 1 ? one : many} added` : stage === 'building' ? `Building your ${many}…` : stage === 'review' ? `We found ${rows.length} ${rows.length === 1 ? one : many}` : `Add ${many}`}
+            {stage === 'done' ? `${created.length} ${created.length === 1 ? one : many} added` : stage === 'building' ? `Building your ${many}…` : stage === 'review' ? `We found ${chosen.length} ${chosen.length === 1 ? one : many}` : `Add ${many}`}
           </DialogTitle>
           <DialogDescription>
             {stage === 'review' ? `Check each ${one}'s name and level. Nothing is saved until you add them.`
@@ -235,11 +246,13 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
         {(stage === 'review' || stage === 'building' || stage === 'done') && (
           <div className="grid gap-4 md:grid-cols-[1fr_240px]">
             <ul className="space-y-2">
-              {rows.map(r => {
+              {rows.map((r, i) => {
                 const st = status[r.key];
+                const firstOff = stage === 'review' && !r.include && (i === 0 || rows[i - 1].include);
                 const locked = stage !== 'review';
-                return (
-                  <li key={r.key} className={cn('flex gap-3 rounded-2xl border p-2.5 transition-all', !r.include && 'opacity-50', st === 'building' && 'border-primary/50 bg-primary/5', st === 'done' && 'border-primary/30')}>
+                return (<Fragment key={r.key}>
+                  {firstOff && <li className="pt-2 text-xs font-medium text-muted-foreground">Also on the sheet — not added (tick to add)</li>}
+                  <li className={cn('flex gap-3 rounded-2xl border p-2.5 transition-all', !r.include && 'opacity-50', st === 'building' && 'border-primary/50 bg-primary/5', st === 'done' && 'border-primary/30')}>
                     <PlanThumb venue={r.built} />
                     <div className="min-w-0 flex-1 space-y-1.5">
                       <div className="flex items-center gap-2">
@@ -249,13 +262,13 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
                         </label>
                       </div>
                       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        <span className="truncate">{r.file} · {r.origin}</span>
+                        <span className="truncate">{r.file} · {r.origin}{r.note ? ` · ${r.note}` : ''}</span>
                         <span>· {r.built.walls.length} walls · {r.built.rooms.length} rooms · {r.built.features.filter(f => f.kind === 'door').length} doors</span>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <select value={r.target} disabled={locked} onChange={e => update(r.key, { target: e.target.value })} className="h-7 rounded-md border bg-background px-2 text-xs" aria-label={`Where ${r.name} goes`}>
                           <option value="new">New {one}</option>
-                          {floors.map(fl => <option key={fl.id} value={fl.id}>{fl.hasMap ? 'Replace' : 'Fill'} “{fl.name}”</option>)}
+                          {floors.map(fl => <option key={fl.id} value={fl.id}>{fl.hasMap ? 'Replaces' : 'Goes into'} “{fl.name}”</option>)}
                         </select>
                         {!locked && r.target !== 'new' && floors.find(fl => fl.id === r.target)?.hasMap && <span className="text-[11px] text-amber-700 dark:text-amber-400">its current map is replaced</span>}
                         {!locked && clash[r.key] && r.include && <span className="flex items-center gap-1 text-[11px] text-destructive"><AlertTriangle className="h-3 w-3" /> {clash[r.key]}</span>}
@@ -271,7 +284,7 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
                         : r.include ? <span className="h-5 w-5 rounded-full border" /> : null}
                     </div>
                   </li>
-                );
+                </Fragment>);
               })}
               {error && <li className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs">{error}</li>}
             </ul>

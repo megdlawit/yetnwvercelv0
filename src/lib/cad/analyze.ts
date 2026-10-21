@@ -229,6 +229,87 @@ export function findDrawings(d: CadDrawing, perMeter: number, arcs = quarterArcs
   return areas;
 }
 
+/**
+ * The FLOOR PLANS on a sheet, one area per plan. Real sheets carry plans next
+ * to elevations, sections, the site plan and legends, all tied together by
+ * dimension and grid lines — so drawings are found by their walls (walls of
+ * two plans never touch), and a floor plan is one with door swings in it
+ * (elevations and sections show no swings). Pieces of one plan split by a wide
+ * opening are joined when their boxes overlap.
+ */
+export function findFloorPlans(d: CadDrawing, isWallLayer: (layer: string) => boolean, perMeter: number,
+                               arcs = quarterArcs(d.entities)): DrawingArea[] {
+  const cell = 1.5 * perMeter;
+  const occ = new Map<string, number>();   // cell → wall length in it (drawing units)
+  const markAlong = (a: DxfPoint, b: DxfPoint) => {
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const n = Math.max(1, Math.ceil(len / cell));
+    for (let i = 0; i <= n; i++) {
+      const k = `${Math.floor((a.x + ((b.x - a.x) * i) / n) / cell)},${Math.floor((a.y + ((b.y - a.y) * i) / n) / cell)}`;
+      occ.set(k, (occ.get(k) ?? 0) + len / (n + 1));
+    }
+  };
+  for (const e of d.entities) {
+    if (!isWallLayer(e.layer)) continue;
+    if (e.kind === 'LINE') markAlong(e.a, e.b);
+    else if (e.kind === 'POLYLINE') for (let i = 1; i < e.pts.length; i++) markAlong(e.pts[i - 1], e.pts[i]);
+  }
+  type Box = { minX: number; minY: number; maxX: number; maxY: number; len: number };
+  const seen = new Set<string>();
+  let boxes: Box[] = [];
+  for (const start of occ.keys()) {
+    if (seen.has(start)) continue;
+    const box: Box = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, len: 0 };
+    const stack = [start];
+    seen.add(start);
+    while (stack.length) {
+      const k = stack.pop()!;
+      const [cx, cy] = k.split(',').map(Number);
+      box.minX = Math.min(box.minX, cx * cell); box.maxX = Math.max(box.maxX, (cx + 1) * cell);
+      box.minY = Math.min(box.minY, cy * cell); box.maxY = Math.max(box.maxY, (cy + 1) * cell);
+      box.len += occ.get(k)!;
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        const nk = `${cx + dx},${cy + dy}`;
+        if (occ.has(nk) && !seen.has(nk)) { seen.add(nk); stack.push(nk); }
+      }
+    }
+    boxes.push(box);
+  }
+  // One plan in pieces (a wide opening, a gap in the outer wall): join boxes that overlap.
+  const overlap = (a: Box, b: Box) => a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
+  for (let merged = true; merged;) {
+    merged = false;
+    outer: for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+      if (!overlap(boxes[i], boxes[j])) continue;
+      const a = boxes[i], b = boxes[j];
+      boxes[i] = { minX: Math.min(a.minX, b.minX), minY: Math.min(a.minY, b.minY), maxX: Math.max(a.maxX, b.maxX), maxY: Math.max(a.maxY, b.maxY), len: a.len + b.len };
+      boxes = boxes.filter((_, k) => k !== j);
+      merged = true;
+      break outer;
+    }
+  }
+  const doorsIn = (b: Box) => arcs.filter(a => a.radius / perMeter >= DOOR_MIN_M && a.radius / perMeter <= DOOR_MAX_M
+    && a.center.x >= b.minX && a.center.x <= b.maxX && a.center.y >= b.minY && a.center.y <= b.maxY).length;
+  const candidates = boxes
+    .map(b => ({ ...b, doors: doorsIn(b), w: b.maxX - b.minX, h: b.maxY - b.minY }))
+    .filter(b => b.len / perMeter >= 20 && Math.min(b.w, b.h) / perMeter >= 4);
+  const withDoors = candidates.filter(b => b.doors >= 1);
+  // A floor without door swings (a basement car park) still counts when it has the footprint
+  // of a floor that has them: floors of one building share it, elevations and sections don't.
+  const sameFootprint = (a: typeof candidates[number], b: typeof candidates[number]) =>
+    Math.abs(a.w - b.w) <= 0.15 * b.w && Math.abs(a.h - b.h) <= 0.15 * b.h && a.len >= 0.4 * b.len;
+  const plans = candidates
+    .filter(b => b.doors >= 1 || withDoors.some(o => sameFootprint(b, o)))
+    .sort((a, b) => a.minX - b.minX || a.minY - b.minY);
+  return plans.map(b => {
+    const w = (b.maxX - b.minX) / perMeter, h = (b.maxY - b.minY) / perMeter;
+    return {
+      minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY, entities: Math.round(b.len / perMeter), doors: b.doors,
+      label: `Floor plan — ${w.toFixed(0)} × ${h.toFixed(0)} m, ${b.doors} door${b.doors === 1 ? '' : 's'}`,
+    };
+  });
+}
+
 /** Entities inside a drawing area (by their first point) — the rest of the sheet is left out. */
 export function withinArea(d: CadDrawing, area: DrawingArea | null): CadDrawing {
   if (!area) return d;

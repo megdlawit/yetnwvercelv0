@@ -1,0 +1,183 @@
+[
+  {
+    "body": {
+      "text": "connect the cafe to the main entrance",
+      "context": {
+        "floor": "Ground",
+        "floors": [
+          "Ground",
+          "First"
+        ],
+        "selection": "Room 1",
+        "last": "Cafe",
+        "brief": "Floors (low→high): Ground [level 0, OPEN]; First [level 1]\nRooms on this floor (1) — name | kind | size m | centre x,y m | reachable:\n- Cafe | office | 6.0×4.0 | 3.0,2.0 | yes"
+      }
+    },
+    "message": "Map summary:\nCurrent floor: Ground\nAll floors: Ground, First\nSelected (\"this\"): Room 1\nJust talked about (\"it\"): Cafe\nFloors (low→high): Ground [level 0, OPEN]; First [level 1]\nRooms on this floor (1) — name | kind | size m | centre x,y m | reachable:\n- Cafe | office | 6.0×4.0 | 3.0,2.0 | yes\n\nThey said: connect the cafe to the main entrance"
+  },
+  {
+    "body": {
+      "text": "  add a restroom here please  ",
+      "history": [
+        {
+          "who": "me",
+          "text": "hi"
+        },
+        {
+          "who": "map",
+          "text": "Hello!"
+        }
+      ],
+      "context": {
+        "floor": "G",
+        "places": [
+          "Lobby",
+          "Cafe",
+          42
+        ],
+        "selection": null
+      }
+    },
+    "message": "Map summary:\nCurrent floor: G\nAll floors: one floor\nSelected (\"this\"): nothing\nJust talked about (\"it\"): nothing\nPlaces on this floor: Lobby, Cafe\n\nConversation so far:\nManager: hi\nAssistant: Hello!\n\nThey said: add a restroom here please"
+  },
+  {
+    "body": {
+      "text": "ሽንት ቤት የት ነው?",
+      "context": {}
+    },
+    "message": "Map summary:\nCurrent floor: unknown\nAll floors: one floor\nSelected (\"this\"): nothing\nJust talked about (\"it\"): nothing\nPlaces on this floor: none yet\n\nThey said: ሽንት ቤት የት ነው?"
+  },
+  {
+    "body": {
+      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "context": {
+        "floor": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+        "floors": [
+          "Floor 0",
+          "Floor 1",
+          "Floor 2",
+          "Floor 3",
+          "Floor 4",
+          "Floor 5",
+          "Floor 6",
+          "Floor 7",
+          "Floor 8",
+          "Floor 9",
+          "Floor 10",
+          "Floor 11",
+          "Floor 12",
+          "Floor 13",
+          "Floor 14",
+          "Floor 15",
+          "Floor 16",
+          "Floor 17",
+          "Floor 18",
+          "Floor 19",
+          "Floor 20",
+          "Floor 21",
+          "Floor 22",
+          "Floor 23",
+          "Floor 24",
+          "Floor 25",
+          "Floor 26",
+          "Floor 27",
+          "Floor 28",
+          "Floor 29",
+          "Floor 30",
+          "Floor 31",
+          "Floor 32",
+          "Floor 33",
+          "Floor 34",
+          "Floor 35",
+          "Floor 36",
+          "Floor 37",
+          "Floor 38",
+          "Floor 39",
+          "Floor 40",
+          "Floor 41",
+          "Floor 42",
+          "Floor 43",
+          "Floor 44"
+        ]
+      }
+    },
+    "message": "Map summary:\nCurrent floor: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF\nAll floors: Floor 0, Floor 1, Floor 2, Floor 3, Floor 4, Floor 5, Floor 6, Floor 7, Floor 8, Floor 9, Floor 10, Floor 11, Floor 12, Floor 13, Floor 14, Floor 15, Floor 16, Floor 17, Floor 18, Floor 19, Floor 20, Floor 21, Floor 22, Floor 23, Floor 24, Floor 25, Floor 26, Floor 27, Floor 28, Floor 29, Floor 30, Floor 31, Floor 32, Floor 33, Floor 34, Floor 35, Floor 36, Floor 37, Floor 38, Floor 39\nSelected (\"this\"): nothing\nJust talked about (\"it\"): nothing\nPlaces on this floor: none yet\n\nThey said: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+    "body": {
+      "text": "undo",
+      "history": [
+        {
+          "who": "me",
+          "text": "turn 0"
+        },
+        {
+          "who": "map",
+          "text": "turn 1"
+        },
+        {
+          "who": "me",
+          "text": "turn 2"
+        },
+        {
+          "who": "map",
+          "text": "turn 3"
+        },
+        {
+          "who": "me",
+          "text": "turn 4"
+        },
+        {
+          "who": "map",
+          "text": "turn 5"
+        },
+        {
+          "who": "me",
+          "text": "turn 6"
+        },
+        {
+          "who": "map",
+          "text": "turn 7"
+        },
+        {
+          "who": "me",
+          "text": "turn 8"
+        },
+        {
+          "who": "map",
+          "text": "turn 9"
+        },
+        {
+          "who": "me",
+          "text": "turn 10"
+        },
+        {
+          "who": "map",
+          "text": "turn 11"
+        },
+        {
+          "who": "me",
+          "text": "turn 12"
+        },
+        {
+          "who": "map",
+          "text": "turn 13"
+        },
+        {
+          "who": "me"
+        }
+      ],
+      "context": {
+        "brief": "   "
+      }
+    },
+    "message": "Map summary:\nCurrent floor: unknown\nAll floors: one floor\nSelected (\"this\"): nothing\nJust talked about (\"it\"): nothing\nPlaces on this floor: none yet\n\nConversation so far:\nAssistant: turn 5\nManager: turn 6\nAssistant: turn 7\nManager: turn 8\nAssistant: turn 9\nManager: turn 10\nAssistant: turn 11\nManager: turn 12\nAssistant: turn 13\n\nThey said: undo"
+  },
+  {
+    "body": {
+      "text": "what is wrong with my map",
+      "context": null
+    },
+    "message": "Map summary:\nCurrent floor: unknown\nAll floors: one floor\nSelected (\"this\"): nothing\nJust talked about (\"it\"): nothing\nPlaces on this floor: none yet\n\nThey said: what is wrong with my map"
+  }
+]

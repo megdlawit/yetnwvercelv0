@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yetnew-layers"
+version = "0.1.0"
+description = "Yet New: label the layers of DXF floor plans with a local model, and fine-tune it on reviewed labels."
+requires-python = ">=3.11"
+# Versions checked on PyPI (2026-10-10).
+dependencies = [
+  "ezdxf==1.4.4",
+  "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+server = [
+  "fastapi==0.143.0",
+  "uvicorn==0.54.0",
+  "python-multipart==0.0.32",
+]
+dev = ["pytest==9.1.1", "jinja2==3.1.6"]  # jinja2: renders the Hugging Face chat template in tests
+# scripts/check_notebook_data.py: the notebooks' pinned transformers (tokenizer only, no torch).
+notebook-check = ["transformers==5.5.0", "jinja2==3.1.6"]
+
+[tool.setuptools.packages.find]
+include = ["yetnew_layers*", "server*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+  # Starlette 1.x prefers httpx2 for its TestClient; httpx still works for tests.
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]

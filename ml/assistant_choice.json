@@ -1,0 +1,16 @@
+{
+  "winner": "finetuned",
+  "finetuned_model": "yetnew-assistant",
+  "base_model": "qwen2.5:3b",
+  "spec_version": 2,
+  "finetuned_schema": false,
+  "exact": {
+    "base": 0.5,
+    "finetuned": 0.98
+  },
+  "difference": 0.48,
+  "ci95": [
+    0.3144,
+    0.6522
+  ]
+}

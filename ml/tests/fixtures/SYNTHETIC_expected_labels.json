@@ -1,0 +1,24 @@
+{
+  "synthetic": true,
+  "do_not_train": true,
+  "labels": {
+    "A-WALL": "wall",
+    "A-WALL-PATT": "ignore",
+    "A-DOOR": "door",
+    "A-GLAZ": "window",
+    "A-FLOR-STRS": "stairs",
+    "A-FLOR-EVTR": "elevator",
+    "A-AREA": "room",
+    "A-AREA-IDEN": "text",
+    "WC": "restroom",
+    "I-FURN": "furniture",
+    "L-PLNT": "vegetation",
+    "C-WALK": "walkable",
+    "A-ANNO-DIMS": "dimension",
+    "A-ANNO-TTLB": "ignore",
+    "Defpoints": "ignore",
+    "0": "unknown",
+    "Layer3": "unknown",
+    "NEW": "unknown"
+  }
+}

@@ -9,7 +9,7 @@
 import type { IndoorVenue, Vec2 } from '../model';
 import { obstacles } from '../walls';
 
-interface Grid { x0: number; z0: number; cs: number; w: number; h: number; free: Uint8Array }
+interface Grid { x0: number; z0: number; cs: number; w: number; h: number; free: Uint8Array; area?: Int32Array }
 
 /** Grid cell size (m) and how far to keep from a wall's centre line (m). */
 const CELL = 0.2;
@@ -70,6 +70,34 @@ function gridFor(venue: IndoorVenue, floorId: string): Grid {
   return g;
 }
 
+/**
+ * Which open area each free cell is in (8-way, as A* moves), labelled once per grid:
+ * two points in different areas have no way between them, so there's nothing to search.
+ */
+function areas(g: Grid): Int32Array {
+  if (g.area) return g.area;
+  const area = new Int32Array(g.w * g.h).fill(-1), q = new Int32Array(g.w * g.h);
+  let id = 0;
+  for (let c0 = 0; c0 < g.w * g.h; c0++) {
+    if (!g.free[c0] || area[c0] >= 0) continue;
+    let head = 0, tail = 0;
+    area[c0] = id; q[tail++] = c0;
+    while (head < tail) {
+      const c = q[head++], ci = c % g.w, cj = (c - ci) / g.w;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        const i = ci + di, j = cj + dj;
+        if ((!di && !dj) || i < 0 || j < 0 || i >= g.w || j >= g.h) continue;
+        const n = j * g.w + i;
+        if (!g.free[n] || area[n] >= 0) continue;
+        if (di && dj && (!g.free[cj * g.w + i] || !g.free[j * g.w + ci])) continue;
+        area[n] = id; q[tail++] = n;
+      }
+    }
+    id++;
+  }
+  return (g.area = area);
+}
+
 /** The free cell nearest a point (within a couple of metres), or -1. */
 function snap(g: Grid, p: Vec2): number {
   const ci = Math.round((p.x - g.x0) / g.cs), cj = Math.round((p.z - g.z0) / g.cs);
@@ -107,12 +135,15 @@ export function walkway(venue: IndoorVenue, floorId: string, from: Vec2, to: Vec
   const g = gridFor(venue, floorId);
   const s = snap(g, from), e = snap(g, to);
   if (s < 0 || e < 0) return null;
+  if (areas(g)[s] !== areas(g)[e]) return null; // walled off from each other
   const at = (c: number): Vec2 => ({ x: g.x0 + (c % g.w) * g.cs, z: g.z0 + Math.floor(c / g.w) * g.cs });
   if (s !== e) {
     // A* over the grid, 8 ways, never cutting a wall's corner.
     const ex = e % g.w, ez = Math.floor(e / g.w);
     const hcost = (c: number) => { const dx = Math.abs((c % g.w) - ex), dz = Math.abs(Math.floor(c / g.w) - ez); return Math.max(dx, dz) + 0.4142 * Math.min(dx, dz); };
-    const cost = new Float32Array(g.w * g.h).fill(Infinity);
+    // 64-bit costs: 32-bit rounding re-queues the same cells over and over on big grids.
+    const cost = new Float64Array(g.w * g.h).fill(Infinity);
+    const done = new Uint8Array(g.w * g.h);
     const prev = new Int32Array(g.w * g.h).fill(-1);
     const heap = new MinHeap();
     cost[s] = 0;
@@ -120,6 +151,8 @@ export function walkway(venue: IndoorVenue, floorId: string, from: Vec2, to: Vec
     let found = false;
     while (heap.size) {
       const c = heap.pop();
+      if (done[c]) continue;
+      done[c] = 1;
       if (c === e) { found = true; break; }
       const ci = c % g.w, cj = Math.floor(c / g.w), cc = cost[c];
       for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
@@ -135,15 +168,17 @@ export function walkway(venue: IndoorVenue, floorId: string, from: Vec2, to: Vec
     }
     if (!found) return null;
     const cells: number[] = [];
-    for (let c = e; c !== -1; c = prev[c]) cells.unshift(c);
+    for (let c = e; c !== -1; c = prev[c]) cells.push(c);
+    cells.reverse();
     // Pull it straight: from each corner, jump to the furthest cell still in plain sight.
     const raw = cells.map(at);
     const startPt = clearLine(g, from, raw[0]) ? from : raw[0];
     const out: Vec2[] = [startPt];
     let k = 0;
+    // Scan forward (not back from the end): a long way would otherwise test every pair.
     while (k < raw.length - 1) {
-      let next = raw.length - 1;
-      while (next > k + 1 && !clearLine(g, out[out.length - 1], raw[next])) next--;
+      let next = k + 1;
+      while (next + 1 < raw.length && clearLine(g, out[out.length - 1], raw[next + 1])) next++;
       out.push(raw[next]);
       k = next;
     }

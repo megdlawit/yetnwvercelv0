@@ -21,6 +21,9 @@ export interface Place extends DiscoverPlace {
   gps: { lat: number; lng: number } | null;
   /** Greet visitors within this many metres (0 = only when inside the place's area). */
   greetRadiusM: number;
+  /** The institution's own category and kind for it (as the control center shows them). */
+  poiCategory?: string | null;
+  poiSubcategory?: string | null;
 }
 
 export interface Floor {

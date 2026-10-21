@@ -62,9 +62,10 @@ export function repairPathsThroughWalls(rows: PlanRows, opts: RepairOptions): Pa
   const SHARE = 0.25;
   // Paths that already exist (so a shared stretch isn't drawn twice).
   const key = (p: string, q: string) => (p < q ? p + '|' + q : q + '|' + p);
-  const have = new Set(rows.edges.filter(x => !bad.includes(x.id)).map(x => key(x.from_node, x.to_node)));
+  const badSet = new Set(bad), edgeById = new Map(rows.edges.map(x => [x.id, x] as const));
+  const have = new Set(rows.edges.filter(x => !badSet.has(x.id)).map(x => key(x.from_node, x.to_node)));
   for (const id of bad) {
-    const e = rows.edges.find(x => x.id === id)!;
+    const e = edgeById.get(id)!;
     const a = node.get(e.from_node)!, b = node.get(e.to_node)!;
     const way = walkway(venue, a.floorId, a.at, b.at);
     if (!way || way.length < 2) { result.dropped.push(id); continue; }

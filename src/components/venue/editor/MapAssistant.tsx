@@ -4,14 +4,18 @@
 // Undo after every one, and the map health always in view.
 //
 // Understanding is local first (src/lib/assistant/intent.ts); anything it
-// doesn't recognise goes to /api/map-assistant (Claude) when that's set up.
+// doesn't recognise goes to the free local assistant (ml/ service, a local model)
+// when it runs, else to /api/map-assistant (Claude) when that's set up.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Check, ChevronDown, ChevronUp, Loader2, Sparkles, Undo2, X, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
-import { parseIntent, type MapAction } from '@/lib/assistant/intent';
-import { plan, suggestions, type Chip, type HealthItem, type Highlight, type MapState, type Plan, type Thing } from '@/lib/assistant/engine';
+import { guardModelActions, parseIntent, type MapAction } from '@/lib/assistant/intent';
+import { smallTalk, smallTalkKind } from '@/lib/assistant/smalltalk';
+import { knowledge } from '@/lib/assistant/knowledge';
+import { labelerUrl } from '@/lib/cad/layerLabels/client';
+import { brief, plan, suggestions, type Chip, type HealthItem, type Highlight, type MapState, type Plan, type Thing } from '@/lib/assistant/engine';
 
 type BaseState = Omit<MapState, 'last' | 'lastChange'>;
 
@@ -47,8 +51,19 @@ export interface MapAssistantProps {
   ask?: { key: number; text: string } | null;
 }
 
-const HINTS = ['Connect Room 1 and Room 2', 'Add a restroom here', 'Make this hallway walkable', 'Connect Floor 1 to Floor 2 via the elevator', 'Fix everything'];
+const HINTS = ['Connect Room 1 and Room 2', 'Add a 6 by 4 m meeting room here', 'Make the walls 3 m high', 'Show it in 3D', 'How far is the entrance from the café?', 'Rotate this 90 degrees', 'Make room 3 a restroom', 'Fix everything'];
+/** Edits that only change what's on screen (or can't be taken back from here). */
+const NOT_UNDOABLE = new Set(['undo', 'redo', 'show', 'view', 'fit', 'floor', 'setting', 'tool', 'select_all', 'select_none', 'open', 'publish']);
 const nextFrame = () => new Promise<void>(r => requestAnimationFrame(() => setTimeout(r, 30)));
+/** How long to wait for the AI (the free local model is slow on a laptop CPU). */
+const AI_TIMEOUT_MS = 120_000;
+
+/** fetch with a time limit. */
+async function fetchWithin(url: string, init: RequestInit, ms: number): Promise<Response> {
+  const ctl = new AbortController();
+  const t = window.setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, { ...init, signal: ctl.signal }); } finally { window.clearTimeout(t); }
+}
 
 export default function MapAssistant(props: MapAssistantProps) {
   const { getState, apply, onHighlight, undo, health, selectedName, greeting } = props;
@@ -60,6 +75,8 @@ export default function MapAssistant(props: MapAssistantProps) {
   const [showDetails, setShowDetails] = useState<number | null>(null);
   const [earlier, setEarlier] = useState(false);
   const [hint, setHint] = useState(0);
+  // Waiting on the AI (not the instant local understanding): say so, it can take a while.
+  const [thinking, setThinking] = useState(false);
   const last = useRef<Thing | null>(null);
   const lastChange = useRef<MapState['lastChange']>(null);
   const queue = useRef<MapAction[]>([]);
@@ -133,7 +150,7 @@ export default function MapAssistant(props: MapAssistantProps) {
         if (p.edit?.op === 'undo') lastChange.current = null;
         else if (p.change) lastChange.current = { label: p.label ?? '', edges: p.change.edges.map(e => e.id) };
         flash(p.highlight);
-        say({ who: 'map', text: p.done ?? p.reply, tone: p.tone, chips: queue.current.length ? undefined : p.chips, details: p.details, undoable: p.edit?.op !== 'undo' && p.edit?.op !== 'show' });
+        say({ who: 'map', text: p.done ?? p.reply, tone: p.tone, chips: queue.current.length ? undefined : p.chips, details: p.details, undoable: !p.edit || !NOT_UNDOABLE.has(p.edit.op) });
         await nextFrame();
       } else {
         if (p.highlight) flash(p.highlight);
@@ -154,7 +171,7 @@ export default function MapAssistant(props: MapAssistantProps) {
       if (!ok) { say({ who: 'map', text: "I couldn't save that change. Check your connection and try again.", tone: 'warn' }); return; }
       lastChange.current = p.change ? { label: p.label ?? '', edges: p.change.edges.map(e => e.id) } : null;
       flash(p.highlight);
-      say({ who: 'map', text: p.done ?? 'Done.', tone: 'ok', chips: p.chips, undoable: true });
+      say({ who: 'map', text: p.done ?? 'Done.', tone: 'ok', chips: p.chips, undoable: !p.edit || !NOT_UNDOABLE.has(p.edit.op) });
       await nextFrame();
       if (queue.current.length) await run(queue.current);
     } finally { setBusy(false); }
@@ -165,11 +182,24 @@ export default function MapAssistant(props: MapAssistantProps) {
     try {
       const { data } = await supabase.auth.getSession();
       const names = s ? [...new Set(s.rows.rooms.filter(r => r.floor_id === s.floorId).map(r => r.name).concat(s.rows.nodes.filter(n => n.floor_id === s.floorId && !n.is_hallway).map(n => n.name)).filter((x): x is string => !!x))] : [];
-      const r = await fetch('/api/map-assistant', {
+      // The whole picture (kinds, sizes, positions, paths, health) and the last few turns, so follow-ups make sense.
+      let mapBrief = '';
+      try { const full = state(); if (full) mapBrief = brief(full); } catch (err) { console.error('map brief failed', err); }
+      const history = msgs.slice(-10).map(m => ({ who: m.who, text: m.text.slice(0, 400) }));
+      const init = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {}) },
-        body: JSON.stringify({ text: said, context: { floor: props.floorName, floors: props.floors, places: names, selection: selectedName, last: last.current?.name ?? null } }),
-      });
+        body: JSON.stringify({ text: said, history, context: { floor: props.floorName, floors: props.floors, places: names, selection: selectedName, last: last.current?.name ?? null, brief: mapBrief } }),
+      };
+      // The free local assistant first (a local model; same request and answer), then Claude if it isn't running.
+      const local = labelerUrl();
+      if (local) {
+        try {
+          const r = await fetchWithin(`${local}/assistant`, init, AI_TIMEOUT_MS);
+          if (r.ok) return await r.json();
+        } catch { /* not running or too slow: try the Claude route */ }
+      }
+      const r = await fetchWithin('/api/map-assistant', init, AI_TIMEOUT_MS);
       if (!r.ok) return null;
       return await r.json();
     } catch { return null; }
@@ -182,14 +212,35 @@ export default function MapAssistant(props: MapAssistantProps) {
     if (raw && /\s$/.test(raw)) { setText(raw); inputRef.current?.focus(); return; }
     setText('');
     setOpen(true);
+    // "yes" / "ok" / "apply" or "no" / "cancel" answer the change that's waiting for Apply.
+    const kind = smallTalkKind(said);
+    if (pending && (kind === 'yes' || kind === 'no' || (kind === 'ack' && /^(ok|okay|k|fine|alright)$/i.test(said.trim())))) {
+      say({ who: 'me', text: said });
+      await decide(pending, kind !== 'no');
+      return;
+    }
     if (pending) { setMsgs(p => p.map(x => (x.preview ? { ...x, preview: undefined } : x))); onHighlight(null); queue.current = []; }
     say({ who: 'me', text: said });
+    // Greetings, thanks, "what can you do?": answered right away, never sent to the AI.
+    const chat = smallTalk(said, state());
+    if (chat) { say({ who: 'map', text: chat.reply, tone: 'info', chips: chat.chips.length ? chat.chips : undefined }); return; }
+    // "What's a room?", "how do I publish?": what Yet New is and does, answered from what it really does.
+    const known = knowledge(said);
+    if (known) { say({ who: 'map', text: known.reply, tone: 'info', chips: known.chips.length ? known.chips : undefined }); return; }
     setBusy(true);
     try {
       let actions = parseIntent(said);
       if (!actions) {
-        const ai = await askClaude(said);
-        if (ai?.actions?.length) actions = ai.actions;
+        setThinking(true);
+        const ai = await askClaude(said).finally(() => setThinking(false));
+        // Never the opposite of what was asked ("don't connect…" answered with a connect).
+        const guarded = ai?.actions?.length ? guardModelActions(said, ai.actions) : null;
+        if (guarded && !guarded.actions.length) { say({ who: 'map', text: guarded.reply!, tone: 'info' }); return; }
+        if (ai?.actions?.length) {
+          actions = ai.actions;
+          // An answer that comes with actions ("There are 3 — here's the nearest") is said first.
+          if (ai.reply) say({ who: 'map', text: ai.reply, tone: 'info' });
+        }
         else {
           const s = state();
           say({ who: 'map', text: ai?.reply ?? "I didn't quite get that. You can say things like \"Connect Room 1 and Room 2\", \"Add a restroom here\" or \"Fix everything\".", tone: 'info', chips: s ? suggestions(s) : undefined });
@@ -258,7 +309,12 @@ export default function MapAssistant(props: MapAssistantProps) {
                 </div>
               </div>
             ))}
-            {busy && !pending && <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Working on it…</div>}
+            {busy && !pending && (
+              <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {thinking ? 'Thinking about that — this can take up to a minute…' : 'Working on it…'}
+              </div>
+            )}
           </div>
         )}
 

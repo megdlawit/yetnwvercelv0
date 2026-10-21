@@ -88,6 +88,12 @@ describe('building a venue', () => {
     expect(v.rooms[0].polygon.length).toBeGreaterThanOrEqual(4);
   });
 
+  it('gives rooms the type of their layer when the layer was confirmed as one (e.g. restrooms)', () => {
+    const v = buildVenue(drawing, mapping, { ...opts(true), roomTypes: { 'A-AREA': 'restroom' } });
+    expect(v.rooms.map(r => r.type)).toEqual(['restroom', 'restroom']);
+    expect(buildVenue(drawing, mapping, opts(true)).rooms.every(r => r.type === undefined)).toBe(true);
+  });
+
   it('turns blocks, arcs, circles and line clusters into objects', () => {
     const v = buildVenue(drawing, mapping, opts(true));
     const kinds = (k: string) => v.features.filter(f => f.kind === k);

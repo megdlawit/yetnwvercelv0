@@ -2,15 +2,16 @@ import React from 'react';
 import DocsShell from '@/components/docs/DocsShell';
 import {
   DocsTitle, DocsDescription, DocsH2, DocsH3, DocsP, DocsList, DocsListItem,
-  DocsInlineCode, DocsCodeBlock, DocsCallout, DocsSection, DocsTable,
+  DocsInlineCode, DocsCodeBlock, DocsCallout, DocsSection, DocsTable, DocsEyebrow,
 } from '@/components/docs/DocsTypography';
 
 const DocsApi: React.FC = () => (
   <DocsShell>
     <DocsSection>
-      <DocsTitle>API &amp; SDK</DocsTitle>
+      <DocsEyebrow>Developers</DocsEyebrow>
+      <DocsTitle>API &amp; embeds</DocsTitle>
       <DocsDescription>
-        Embed the venue map on another site or app using a scoped partner API key —
+        Put a venue’s indoor and outdoor map on another website or app with a scoped partner API key —
         three ways in, one Edge Function underneath.
       </DocsDescription>
 
@@ -24,11 +25,11 @@ const DocsApi: React.FC = () => (
 
       <DocsH2 id="getting-a-key">Getting an API key</DocsH2>
       <DocsP>
-        Keys are generated from the admin panel — no SQL required day to day:
+        Keys are generated in the Yet New control center — no SQL required day to day:
       </DocsP>
       <DocsList>
-        <DocsListItem><DocsInlineCode>/admin</DocsInlineCode> → Buildings tab → click the <DocsInlineCode>{'</>'}</DocsInlineCode> icon on a building's card, or</DocsListItem>
-        <DocsListItem><DocsInlineCode>/admin</DocsInlineCode> → Embed tab → pick a building first</DocsListItem>
+        <DocsListItem><DocsInlineCode>/admin/tools/embed</DocsInlineCode> (<b>Platform tools → Embed codes</b>) → pick a venue, or</DocsListItem>
+        <DocsListItem><DocsInlineCode>/admin/tools/buildings</DocsInlineCode> → the <DocsInlineCode>{'</>'}</DocsInlineCode> icon on a building’s card.</DocsListItem>
       </DocsList>
       <DocsP>
         Either path opens the same dialog: type a partner name, hit
@@ -117,17 +118,21 @@ import { IndoorMap } from '@ethi/indoor-maps-sdk';
         rows={[
           [<DocsInlineCode>apiKey</DocsInlineCode>, 'string', 'Yes', 'Partner key scoped server-side to allowed buildings.'],
           [<DocsInlineCode>buildingId</DocsInlineCode>, 'string', 'Yes', 'Which building\'s venue graph to render.'],
-          [<DocsInlineCode>floor</DocsInlineCode>, 'number', 'No', 'Currently a no-op — see Limitations below.'],
+          [<DocsInlineCode>floor</DocsInlineCode>, 'number', 'No', 'Which floor to open (defaults to the ground floor).'],
+          [<DocsInlineCode>initialView</DocsInlineCode>, "'outdoor' | 'indoor'", 'No', 'Which side to open on (outdoor when the venue has a location).'],
           [<DocsInlineCode>mapStyle</DocsInlineCode>, "'standard' | 'satellite' | 'terrain'", 'No', "Defaults to 'standard'."],
           [<DocsInlineCode>route</DocsInlineCode>, '{ from, to }', 'No', 'Draws a straight line between two GPS points.'],
           [<DocsInlineCode>onPoiClick</DocsInlineCode>, '(poi) => void', 'No', 'Fires when a POI marker is tapped.'],
+          [<DocsInlineCode>onNavigate</DocsInlineCode>, '(poi) => void', 'No', 'Replaces the default “Go” behaviour (opening the full app in a new tab for live turn-by-turn).'],
+          [<DocsInlineCode>mainAppUrl</DocsInlineCode>, 'string', 'No', 'Where “Go” sends people; defaults to the app the embed is served from.'],
+          [<DocsInlineCode>apiBaseUrl</DocsInlineCode>, 'string', 'No', 'Override the API endpoint (defaults to production).'],
           [<DocsInlineCode>onError</DocsInlineCode>, '(error) => void', 'No', 'error.message is safe to show end users.'],
         ]}
       />
       <DocsP>
         Options A and B accept the same parameters by name (<DocsInlineCode>key</DocsInlineCode>/<DocsInlineCode>apiKey</DocsInlineCode>,
         <DocsInlineCode>building</DocsInlineCode>/<DocsInlineCode>buildingId</DocsInlineCode>, <DocsInlineCode>floor</DocsInlineCode>,{' '}
-        <DocsInlineCode>style</DocsInlineCode>/<DocsInlineCode>mapStyle</DocsInlineCode>) — as URL query params for the iframe, as an options object for the script tag.
+        <DocsInlineCode>style</DocsInlineCode>/<DocsInlineCode>mapStyle</DocsInlineCode>, <DocsInlineCode>view</DocsInlineCode>/<DocsInlineCode>initialView</DocsInlineCode>, and <DocsInlineCode>from</DocsInlineCode>/<DocsInlineCode>to</DocsInlineCode> as <DocsInlineCode>lat,lng</DocsInlineCode> for a route) — as URL query params for the iframe, as an options object for the script tag.
       </DocsP>
 
       <DocsH3>Error codes</DocsH3>
@@ -144,15 +149,14 @@ import { IndoorMap } from '@ethi/indoor-maps-sdk';
       <DocsH2 id="how-it-works">How it works</DocsH2>
       <DocsList>
         <DocsListItem>All three doors — the <DocsInlineCode>{"<IndoorMap />"}</DocsInlineCode> component, the <DocsInlineCode>/embed</DocsInlineCode> iframe page, and the <DocsInlineCode>embed.js</DocsInlineCode> script loader — call the same Supabase Edge Function (<DocsInlineCode>indoor-maps-api</DocsInlineCode>).</DocsListItem>
-        <DocsListItem>The function checks the <DocsInlineCode>x-api-key</DocsInlineCode> header against <DocsInlineCode>partner_keys</DocsInlineCode>, confirms it's scoped to the requested building, then reads <DocsInlineCode>venue_nodes</DocsInlineCode> / <DocsInlineCode>venue_paths</DocsInlineCode> / <DocsInlineCode>pois</DocsInlineCode> with a service-role client.</DocsListItem>
+        <DocsListItem>The function checks the <DocsInlineCode>x-api-key</DocsInlineCode> header against <DocsInlineCode>partner_keys</DocsInlineCode>, confirms it's scoped to the requested building, then reads the venue’s published data (floors, places, paths and outdoor graph) with a service-role client.</DocsListItem>
         <DocsListItem>It reshapes that into a stable public JSON contract — never raw table rows.</DocsListItem>
-        <DocsListItem>Each door adapts that response and renders it with the same <DocsInlineCode>VenueMapRenderer</DocsInlineCode> the main app uses.</DocsListItem>
+        <DocsListItem>Each door adapts that response and renders it with the same map renderers the main app uses — the outdoor map and the indoor floor plan. “Go” opens the full app for live turn-by-turn.</DocsListItem>
       </DocsList>
 
       <DocsH2 id="limitations">Limitations (today)</DocsH2>
       <DocsCallout tone="warning">
         <DocsList>
-          <DocsListItem><strong>No floor support yet</strong> — this covers the outdoor venue graph only. The <DocsInlineCode>floor</DocsInlineCode> prop is reserved for a future indoor floor-plan integration.</DocsListItem>
           <DocsListItem><strong>Routes are straight lines</strong>, not real routed paths — <DocsInlineCode>route</DocsInlineCode> doesn't call the app's actual pathfinding engine.</DocsListItem>
           <DocsListItem><strong>No rate limiting</strong> on the Edge Function yet — only manual key revocation.</DocsListItem>
           <DocsListItem><strong>Option C only builds from within this repo</strong> — the npm package isn't published standalone yet.</DocsListItem>

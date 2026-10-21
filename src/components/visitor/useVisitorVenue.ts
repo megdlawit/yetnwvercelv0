@@ -117,6 +117,7 @@ export function derivePlaces(d: Pick<VisitorVenueData, 'nodes' | 'rooms' | 'pois
       navigable: poi?.navigable ?? true, featured: poi?.is_featured ?? false,
       gps: poi?.lat != null && poi?.lng != null ? { lat: poi.lat, lng: poi.lng } : null,
       greetRadiusM: poi?.trigger_radius ?? 0,
+      poiCategory: poi?.category ?? null, poiSubcategory: poi?.subcategory ?? null,
     }];
   });
   return { places, placeById: new Map(places.map(p => [p.id, p] as const)), floorById, roomByNode };

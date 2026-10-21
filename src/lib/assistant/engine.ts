@@ -7,8 +7,8 @@
 
 import { crossesWall, fromPlan, obstacles, pathsThroughWalls, repairPathsThroughWalls, type PlanRows } from '@ethi/indoor-core';
 import { parsePolygon } from '@/lib/venue/features';
-import { pointInPolygon, polygonCentroid, type Pt } from '@/lib/cad/geometry';
-import { HERE, IT, THIS, addKind, titleCase, type Direction, type MapAction } from './intent';
+import { bbox, pointInPolygon, polygonArea, polygonCentroid, type Pt } from '@/lib/cad/geometry';
+import { HERE, IT, THIS, addKind, roomKind, titleCase, type Direction, type MapAction, type Panel, type ViewMode } from './intent';
 
 export const PPM = 40; // the editor's plan pixels per metre
 
@@ -26,7 +26,7 @@ export interface Thing {
 export interface MapState {
   floorId: string;
   rows: PlanRows; // every floor, including unsaved-to-state edits
-  selection: { nodes: string[]; rooms: string[]; features: string[] };
+  selection: { nodes: string[]; rooms: string[]; features: string[]; walls?: string[] };
   /** Where they last clicked on the plan ("here"). */
   click: Pt | null;
   /** The centre of what's on screen. */
@@ -39,13 +39,15 @@ export interface MapState {
 
 export interface NewNode { id: string; floor_id: string; name: string; x: number; y: number; hallway: boolean }
 export interface NewEdge { id: string; from_node: string; to_node: string; weight: number; connection?: 'stairs' | 'elevator' | 'ramp' | 'escalator'; accessible?: boolean }
-export interface NewFeature { id: string; floor_id: string; kind: string; x: number; y: number; label: string | null }
+export interface NewFeature { id: string; floor_id: string; kind: string; x: number; y: number; label: string | null; rotation_deg?: number; width?: number | null }
+export interface NewRoom { id: string; floor_id: string; name: string; type: string; x: number; y: number; width: number; height: number; node_id: string | null }
 
 /** Row changes, written together as one undoable step. */
 export interface Change {
   nodes: NewNode[];
   edges: NewEdge[];
   features: NewFeature[];
+  rooms?: NewRoom[];
   removeEdges: string[];
   removeNodes: string[];
   /** Rooms that get the new place as theirs. */
@@ -58,7 +60,23 @@ export type Edit =
   | { op: 'rename'; thing: Thing; name: string }
   | { op: 'remove'; thing: Thing }
   | { op: 'undo' }
-  | { op: 'show'; thing: Thing };
+  | { op: 'show'; thing: Thing }
+  | { op: 'redo' }
+  | { op: 'set_type'; thing: Thing; kind: string }
+  /** A rectangle room's new box (plan px), a uniform scale, or an object's size (metres). */
+  | { op: 'resize'; thing: Thing; rect?: { x: number; y: number; width: number; height: number }; scale?: number; size?: { width: number | null; depth: number | null } }
+  | { op: 'rotate'; thing: Thing; deg: number }
+  | { op: 'duplicate'; thing: Thing }
+  | { op: 'set_3d'; table: 'walls' | 'rooms' | 'map_features' | 'floors'; ids: string[]; patch: Record<string, unknown>; what: string }
+  | { op: 'view'; mode: ViewMode }
+  | { op: 'floor'; floorId: string }
+  | { op: 'fit' }
+  | { op: 'setting'; setting: 'grid' | 'snap'; on: boolean | null }
+  | { op: 'tool'; tool: string }
+  | { op: 'select_all' }
+  | { op: 'select_none' }
+  | { op: 'publish' }
+  | { op: 'open'; panel: Panel };
 
 export interface Seg2 { a: Pt; b: Pt }
 export interface Highlight { route: Seg2[]; removed: Seg2[]; spots: Pt[]; things: string[] }
@@ -89,8 +107,8 @@ export interface Plan {
 
 let seq = 0;
 export const newId = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `a${Date.now().toString(36)}${(seq++).toString(36)}`);
-const emptyChange = (): Change => ({ nodes: [], edges: [], features: [], removeEdges: [], removeNodes: [], roomPlaces: [] });
-const isEmpty = (c: Change) => !c.nodes.length && !c.edges.length && !c.features.length && !c.removeEdges.length && !c.removeNodes.length && !c.roomPlaces.length;
+const emptyChange = (): Change => ({ nodes: [], edges: [], features: [], rooms: [], removeEdges: [], removeNodes: [], roomPlaces: [] });
+const isEmpty = (c: Change) => !c.nodes.length && !c.edges.length && !c.features.length && !c.rooms?.length && !c.removeEdges.length && !c.removeNodes.length && !c.roomPlaces.length;
 const d = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
 const round = (p: Pt) => ({ x: Math.round(p.x), y: Math.round(p.y) });
 
@@ -255,7 +273,7 @@ export function withChange(rows: PlanRows, c: Change): PlanRows {
     nodes: [...rows.nodes.filter(n => !goneN.has(n.id)), ...c.nodes.map(n => ({ id: n.id, floor_id: n.floor_id, name: n.name, x: n.x, y: n.y, is_hallway: n.hallway }))],
     edges: [...rows.edges.filter(e => !goneE.has(e.id)), ...c.edges.map(e => ({ id: e.id, from_node: e.from_node, to_node: e.to_node, connection: e.connection ?? null }))],
     map_features: [...rows.map_features, ...c.features],
-    rooms: rows.rooms.map(r => { const l = c.roomPlaces.find(x => x.roomId === r.id); return l ? { ...r, node_id: l.nodeId } : r; }),
+    rooms: [...rows.rooms.map(r => { const l = c.roomPlaces.find(x => x.roomId === r.id); return l ? { ...r, node_id: l.nodeId } : r; }), ...(c.rooms ?? [])],
   };
 }
 
@@ -359,7 +377,351 @@ export function plan(action: MapAction, s: MapState): Plan {
     }
     case 'connect_floors': return connectFloors(action.via ?? null, action.floor ?? null, s, view);
     case 'accessible': return accessible(s, view);
+    case 'redo': return { reply: 'Redone.', edit: { op: 'redo' }, tone: 'ok' };
+    case 'publish': return { reply: 'Publishing your map — visitors will see this version in a moment.', done: 'Published — visitors now see your latest map.', edit: { op: 'publish' }, confirm: true, tone: 'info' };
+    case 'view': return { reply: action.mode === 'split' ? 'Showing the plan and the 3D view side by side.' : `Switched to ${action.mode.toUpperCase()}.`, edit: { op: 'view', mode: action.mode }, tone: 'ok' };
+    case 'fit': return { reply: 'Here’s the whole floor.', edit: { op: 'fit' }, tone: 'ok' };
+    case 'go_floor': return goFloor(action.floor, s);
+    case 'setting': return { reply: `${action.setting === 'grid' ? 'Grid' : 'Snapping'} ${action.on == null ? 'toggled' : action.on ? 'on' : 'off'}.`, edit: { op: 'setting', setting: action.setting, on: action.on ?? null }, tone: 'ok' };
+    case 'tool': return { reply: TOOL_HINT[action.tool] ?? 'Tool ready.', edit: { op: 'tool', tool: action.tool }, tone: 'ok' };
+    case 'open': return { reply: PANEL_REPLY[action.panel], edit: { op: 'open', panel: action.panel }, tone: 'ok' };
+    case 'select': {
+      if (action.target === 'all') return { reply: 'Selected everything on this floor.', edit: { op: 'select_all' }, tone: 'ok' };
+      if (action.target === 'none') return { reply: 'Selection cleared.', edit: { op: 'select_none' }, tone: 'ok' };
+      const t = resolve(action.target, s, view);
+      if (!t) return notFound(action.target, s);
+      return { reply: `Selected ${t.name}.`, edit: { op: 'show', thing: t }, mention: t, tone: 'ok' };
+    }
+    case 'set_type': return setType(action.target, action.kind, s, view);
+    case 'add_room': return addRoom(action, s, view);
+    case 'resize': return resize(action, s, view);
+    case 'rotate': {
+      const t = resolve(action.target, s, view);
+      if (!t) return notFound(action.target, s);
+      if (!Number.isFinite(action.degrees) || !action.degrees) return ask(`How many degrees should I turn ${t.name}?`);
+      return { reply: `Rotated ${t.name} ${Math.abs(action.degrees)}° ${action.degrees > 0 ? 'clockwise' : 'counter-clockwise'}.`, edit: { op: 'rotate', thing: t, deg: action.degrees }, mention: t, tone: 'ok', label: `Rotate ${t.name}` };
+    }
+    case 'duplicate': {
+      const t = resolve(action.target, s, view);
+      if (!t) return notFound(action.target, s);
+      return { reply: `Made a copy of ${t.name}, 1 m down and to the right. Say "move it…" to place it.`, edit: { op: 'duplicate', thing: t }, mention: t, tone: 'ok', chips: [{ label: 'Rename it', say: 'Rename it to ' }, { label: 'Move it right', say: 'Move it to the right' }] };
+    }
+    case 'set_3d': return set3d(action.target, action.field, action.value, s, view);
+    case 'measure': return measure(action.from, action.to, s, view);
+    case 'list': return list(action.what ?? null, s, view);
+    case 'describe': {
+      const t = resolve(action.target, s, view);
+      if (!t) return notFound(action.target, s);
+      return { reply: describeThing(t, s, view), mention: t, tone: 'info', highlight: { route: [], removed: [], spots: [t.at], things: [t.id] } };
+    }
   }
+}
+
+// ── The rest of the editor ──────────────────────────────────────────────────
+
+const TOOL_HINT: Record<string, string> = {
+  wall: 'Wall tool ready — click to start a wall, click again to end it. Esc to stop.',
+  door: 'Door tool ready — click on a wall to put a door in it.',
+  room: 'Room tool ready — click the corners, then click the first corner (or press Enter) to finish.',
+  'add-edge': 'Path tool ready — click two places to connect them.',
+  'add-node': 'Place tool ready — click where visitors should be able to go.',
+  object: 'Object tool ready — pick an object, then click to place it.',
+  scenery: 'Scenery tool ready — pick a tree, lawn, pond or lamp, then click to place it.',
+  text: 'Text tool ready — click to add a label.',
+  measure: 'Measure tool ready — click two points.',
+  area: 'Area tool ready — click the corners, Enter to finish.',
+  select: 'Select tool ready.', hand: 'Pan tool ready — drag to move around.', delete: 'Eraser ready — click anything to delete it.',
+  trim: 'Trim ready — click the part of a wall to cut away.', extend: 'Extend ready — click near a wall end.',
+  split: 'Split ready — click a wall to split it.', join: 'Join ready — click two walls in line.', offset: 'Offset ready — click a wall to copy it parallel.',
+};
+const PANEL_REPLY: Record<Panel, string> = {
+  import: 'Opening the importer — drop in a DWG, DXF, SVG or a floor-plan image.',
+  add_floor: 'Opening "Add floors" — choose how many and where.',
+  tour: 'Starting the editor tour.',
+  shortcuts: 'Here are the keyboard shortcuts.',
+  world_map: 'Opening “Place on the world map” — line your plan up with the real site so GPS and outdoor directions lead visitors to your door.',
+};
+
+function goFloor(word: string, s: MapState): Plan {
+  const sorted = [...s.rows.floors].sort((a, b) => a.level - b.level);
+  const i = sorted.findIndex(f => f.id === s.floorId);
+  let f: (typeof sorted)[number] | undefined;
+  if (word === 'up') f = sorted[i + 1];
+  else if (word === 'down') f = sorted[i - 1];
+  else {
+    const q = norm(word);
+    const ord = ['ground', 'first', 'second', 'third', 'fourth', 'fifth'].indexOf(q);
+    f = sorted.find(x => norm(x.name) === q || tokens(x.name).includes(q))
+      ?? sorted.find(x => String(x.level) === q)
+      ?? (ord >= 0 ? sorted.find(x => x.level === ord) : undefined)
+      ?? (/^\d+$/.test(q) ? sorted[Number(q) - 1] : undefined);
+  }
+  if (!f) return ask(sorted.length < 2 ? 'This venue has one floor. Say "add a floor" to add another.' : `Which floor? This venue has ${listNames(sorted.map(x => x.name))}.`, sorted.length < 2 ? [{ label: 'Add a floor', say: 'Add a floor' }] : undefined);
+  if (f.id === s.floorId) return { reply: `You're already on ${f.name}.`, tone: 'ok' };
+  return { reply: `Opening ${f.name}…`, edit: { op: 'floor', floorId: f.id }, tone: 'ok' };
+}
+
+/** Room kinds and object kinds the editor stores. */
+const ROOM_TYPES = ['office', 'meeting', 'entrance', 'stairs', 'elevator', 'restroom', 'reception', 'utility'];
+const FEATURE_OF: Record<string, string> = { stairs: 'stairs', elevator: 'elevator', entrance: 'entrance' };
+
+function setType(word: string, kindWord: string, s: MapState, view: MapView): Plan {
+  const t = resolve(word, s, view);
+  if (!t) return notFound(word, s);
+  const kind = ROOM_TYPES.includes(kindWord) ? kindWord : roomKind(kindWord);
+  if (!kind) return ask(`I can make it one of: ${ROOM_TYPES.join(', ')}. Which one?`);
+  // A place inside a room → that room.
+  const room = t.kind === 'room' ? t : (() => {
+    const r = s.rows.rooms.find(x => x.floor_id === t.floorId && (x.node_id === t.nodeId || pointInPolygon(t.at, view.roomOutline(x))));
+    return r ? view.things(t.floorId).find(x => x.id === r.id) ?? null : null;
+  })();
+  if (room) return { reply: `${room.name} is now a ${kind === 'meeting' ? 'meeting room' : kind}.`, edit: { op: 'set_type', thing: room, kind }, mention: room, tone: 'ok', label: `Make ${room.name} a ${kind}` };
+  if (t.kind === 'object' && FEATURE_OF[kind]) return { reply: `${t.name} is now ${kind === 'stairs' ? 'stairs' : `an ${kind}`}.`, edit: { op: 'set_type', thing: t, kind: FEATURE_OF[kind] }, mention: t, tone: 'ok' };
+  return ask(`${t.name} isn't a room. Draw a room around it (say "add a room here"), then I can set its kind.`, [{ label: 'Add a room here', say: `Add a room called ${t.name} here` }]);
+}
+
+function addRoom(action: Extract<MapAction, { op: 'add_room' }>, s: MapState, view: MapView): Plan {
+  const w = Math.max(1, Math.min(200, action.width ?? 5)) * PPM, h = Math.max(1, Math.min(200, action.depth ?? 4)) * PPM;
+  let near: Thing | null = null;
+  let at: Pt | null;
+  if (action.near === HERE) at = s.click;
+  else if (action.near) {
+    near = resolve(action.near, s, view);
+    if (!near) return notFound(action.near, s);
+    // Beside it, a room's width away.
+    const side = action.side ?? 'right';
+    const step = side === 'left' || side === 'right' ? w / 2 + 1.5 * PPM : h / 2 + 1.5 * PPM;
+    at = { x: near.at.x + STEP[side].x * step, y: near.at.y + STEP[side].y * step };
+  } else at = s.click ?? s.view;
+  if (!at) return ask('Click where the room should go, then say "add a room here".');
+  at = round(at);
+  const taken = new Set(view.things(s.floorId).map(t => norm(t.name)));
+  const base = action.name?.trim() || (action.kind ? titleCase(action.kind === 'meeting' ? 'Meeting room' : action.kind) : 'Room');
+  let name = base;
+  for (let i = 2; taken.has(norm(name)); i++) name = `${base} ${i}`;
+  const kind = action.kind && ROOM_TYPES.includes(action.kind) ? action.kind : roomKind(name) ?? 'office';
+  const c = emptyChange();
+  const nodeId = newId(), roomId = newId();
+  c.nodes.push({ id: nodeId, floor_id: s.floorId, name, x: at.x, y: at.y, hallway: false });
+  c.rooms!.push({ id: roomId, floor_id: s.floorId, name, type: kind, x: Math.round(at.x - w / 2), y: Math.round(at.y - h / 2), width: Math.round(w), height: Math.round(h), node_id: nodeId });
+  let joined = false;
+  const rows = withChange(s.rows, c);
+  const main = new MapView(rows, s.floorId).networks(s.floorId)[0];
+  if (main?.length) {
+    const link = linkWalkable(rows, nodeId, main, s.floorId);
+    if (link) { c.nodes.push(...link.nodes); c.edges.push(...link.edges); joined = true; }
+  }
+  const v2 = new MapView(withChange(s.rows, c), s.floorId);
+  const thing: Thing = { kind: 'room', id: roomId, name, at, nodeId, floorId: s.floorId };
+  return {
+    reply: `Added ${name} (${(w / PPM).toFixed(1)} × ${(h / PPM).toFixed(1)} m)${near ? ` next to ${near.name}` : ''}.${main?.length ? (joined ? ' Visitors can walk to it.' : ' Walls are in the way, so it isn\'t connected yet.') : ''}`,
+    change: c, label: `Add ${name}`, mention: thing, tone: 'ok', select: { kind: 'rooms', id: roomId },
+    highlight: { route: c.edges.map(e => v2.edgeSeg(e)).filter((x): x is Seg2 => !!x), removed: [], spots: [at], things: [] },
+    chips: [{ label: 'Make it bigger', say: 'Make it bigger' }, { label: 'Rename it', say: 'Rename it to ' }, { label: 'Draw walls', say: 'Draw walls' }],
+  };
+}
+
+function resize(action: Extract<MapAction, { op: 'resize' }>, s: MapState, view: MapView): Plan {
+  const t = resolve(action.target, s, view);
+  if (!t) return notFound(action.target, s);
+  if (t.kind === 'object') {
+    const f = s.rows.map_features.find(x => x.id === t.id);
+    const scale = action.scale ?? null;
+    const width = action.width ?? (scale && f?.width ? f.width * scale : null);
+    const depth = action.depth ?? (scale && f?.depth ? f.depth * scale : null);
+    if (width == null && depth == null) return ask(`How big should ${t.name} be? e.g. "make it 2 by 1 m".`);
+    return { reply: `${t.name} is now ${width != null ? `${width.toFixed(1)} m wide` : ''}${width != null && depth != null ? ' and ' : ''}${depth != null ? `${depth.toFixed(1)} m deep` : ''}.`, edit: { op: 'resize', thing: t, size: { width, depth } }, mention: t, tone: 'ok' };
+  }
+  const room = t.kind === 'room' ? s.rows.rooms.find(r => r.id === t.id) : s.rows.rooms.find(r => r.node_id === t.nodeId);
+  if (!room) return ask(`${t.name} is a point, not a room — there's no size to change. Say "add a room here" to draw one around it.`);
+  const thing = t.kind === 'room' ? t : view.things(t.floorId).find(x => x.id === room.id)!;
+  const outline = view.roomOutline(room);
+  const b = bbox(outline);
+  const bw = b.maxX - b.minX, bh = b.maxY - b.minY;
+  if (action.scale && !action.width && !action.depth) {
+    return { reply: `${action.scale > 1 ? 'Enlarged' : 'Shrunk'} ${thing.name} to ${((bw * action.scale) / PPM).toFixed(1)} × ${((bh * action.scale) / PPM).toFixed(1)} m.`, edit: { op: 'resize', thing, scale: action.scale }, mention: thing, tone: 'ok' };
+  }
+  const w = (action.width ?? bw / PPM) * PPM, h = (action.depth ?? bh / PPM) * PPM;
+  if (room.polygon && parsePolygon(room.polygon)) {
+    // A drawn shape keeps its shape: scale it to the new width.
+    const k = action.width ? w / bw : h / bh;
+    return { reply: `${thing.name} has a drawn shape, so I scaled it evenly to about ${((bw * k) / PPM).toFixed(1)} × ${((bh * k) / PPM).toFixed(1)} m.`, edit: { op: 'resize', thing, scale: k }, mention: thing, tone: 'ok' };
+  }
+  const cx = room.x + room.width / 2, cy = room.y + room.height / 2;
+  return {
+    reply: `${thing.name} is now ${(w / PPM).toFixed(1)} × ${(h / PPM).toFixed(1)} m (${((w * h) / PPM / PPM).toFixed(0)} m²).`,
+    edit: { op: 'resize', thing, rect: { x: Math.round(cx - w / 2), y: Math.round(cy - h / 2), width: Math.round(w), height: Math.round(h) } }, mention: thing, tone: 'ok',
+  };
+}
+
+const WALL_MATERIALS = ['plaster', 'brick', 'concrete', 'glass', 'wood', 'stone'];
+const FLOOR_MATERIALS = ['tile', 'wood', 'carpet', 'concrete', 'stone', 'marble', 'grass'];
+const metresOf = (v: string) => { const n = parseFloat(v.replace(',', '.')); return Number.isFinite(n) ? (/cm/.test(v) ? n / 100 : n) : null; };
+const yes = (v: string) => /^(yes|true|on|1|step[- ]?free|accessible)$/i.test(v.trim());
+
+function set3d(target: string, fieldRaw: string, value: string, s: MapState, view: MapView): Plan {
+  const field = fieldRaw.toLowerCase().replace(/[\s-]+/g, '_');
+  const walls = s.rows.walls.filter(w => w.floor_id === s.floorId);
+  // Walls: all on this floor, or the selected ones.
+  if (/^(all_)?(the_)?walls?$/.test(norm(target).replace(/ /g, '_')) || (target === THIS && s.selection.walls?.length && !s.selection.rooms.length && !s.selection.features.length)) {
+    const ids = target === THIS ? s.selection.walls ?? [] : walls.map(w => w.id);
+    if (!ids.length) return ask('There are no walls on this floor yet. Say "draw walls" to start.');
+    const n = ids.length, which = target === THIS ? `the ${n} selected wall${n === 1 ? '' : 's'}` : `all ${n} wall${n === 1 ? '' : 's'} on this floor`;
+    if (/height|tall|high/.test(field)) { const m = metresOf(value); if (!m || m < 0.3 || m > 30) return ask('How high, in metres? e.g. "make the walls 3 m high".'); return { reply: `Set ${which} to ${m} m high.`, edit: { op: 'set_3d', table: 'walls', ids, patch: { height_m: m }, what: 'Wall height' }, tone: 'ok' }; }
+    if (/thick/.test(field)) { const m = metresOf(value); if (!m || m < 0.03 || m > 2) return ask('How thick, in metres? e.g. "walls 0.2 m thick".'); return { reply: `Set ${which} to ${m} m thick.`, edit: { op: 'set_3d', table: 'walls', ids, patch: { thickness_m: m }, what: 'Wall thickness' }, tone: 'ok' }; }
+    if (/material|made|finish/.test(field)) { const v = value.toLowerCase().replace('wooden', 'wood'); if (!WALL_MATERIALS.includes(v)) return ask(`Walls can be ${WALL_MATERIALS.join(', ')}.`); return { reply: `${titleCase(which)} are now ${v}.`, edit: { op: 'set_3d', table: 'walls', ids, patch: { material: v }, what: 'Wall material' }, tone: 'ok' }; }
+    return ask('For walls I can set the height, thickness or material.');
+  }
+  // The floor itself.
+  if (/^(this )?(floor|level|storey)$/.test(norm(target)) || /ceiling_height|elevation/.test(field) || (field === 'ceiling' && !/^(this|it)$/.test(target) && target === 'floor')) {
+    const f = s.rows.floors.find(x => x.id === s.floorId);
+    if (!f) return ask('Open a floor first.');
+    if (/ceiling/.test(field)) { const m = metresOf(value); if (!m || m < 1.8 || m > 40) return ask('How high is the ceiling, in metres?'); return { reply: `${f.name}'s ceiling is now ${m} m high.`, edit: { op: 'set_3d', table: 'floors', ids: [f.id], patch: { ceiling_height_m: m }, what: 'Ceiling height' }, tone: 'ok' }; }
+    if (/elevation|above|height/.test(field)) { const m = metresOf(value); if (m == null) return ask('How far above the ground, in metres?'); return { reply: `${f.name} now sits ${m} m above ground.`, edit: { op: 'set_3d', table: 'floors', ids: [f.id], patch: { elevation_m: m }, what: 'Floor height' }, tone: 'ok' }; }
+    if (/amharic|name_am/.test(field)) return { reply: `${f.name} is called “${value}” in Amharic now.`, edit: { op: 'set_3d', table: 'floors', ids: [f.id], patch: { name_am: value }, what: 'Amharic name' }, tone: 'ok' };
+    return ask('For the floor I can set the ceiling height, its height above ground, or its Amharic name.');
+  }
+  const t = resolve(target, s, view);
+  if (!t) return notFound(target, s);
+  if (t.kind === 'room' || (t.kind === 'place' && s.rows.rooms.some(r => r.node_id === t.nodeId))) {
+    const room = t.kind === 'room' ? s.rows.rooms.find(r => r.id === t.id)! : s.rows.rooms.find(r => r.node_id === t.nodeId)!;
+    const name = room.name || t.name;
+    if (/floor|material|finish/.test(field)) { const v = value.toLowerCase(); if (!FLOOR_MATERIALS.includes(v)) return ask(`Room floors can be ${FLOOR_MATERIALS.join(', ')}.`); return { reply: `${name} now has a ${v} floor.`, edit: { op: 'set_3d', table: 'rooms', ids: [room.id], patch: { floor_material: v }, what: 'Floor finish' }, mention: t, tone: 'ok' }; }
+    if (/ceiling|roof/.test(field)) { const on = !/^(no|off|false|0|none|open)$/i.test(value.trim()); return { reply: `${name} ${on ? 'has a ceiling' : 'is open to the sky'} now.`, edit: { op: 'set_3d', table: 'rooms', ids: [room.id], patch: { has_ceiling: on }, what: 'Ceiling' }, mention: t, tone: 'ok' }; }
+    if (/amharic|name_am/.test(field)) return { reply: `${name} is called “${value}” in Amharic now — visitors using Amharic will see it.`, edit: { op: 'set_3d', table: 'rooms', ids: [room.id], patch: { name_am: value }, what: 'Amharic name' }, mention: t, tone: 'ok' };
+    return ask(`For ${name} I can set the floor finish, whether it has a ceiling, or its Amharic name.`);
+  }
+  if (t.kind === 'object') {
+    if (/height|tall|high/.test(field)) { const m = metresOf(value); if (!m) return ask('How high, in metres?'); return { reply: `${t.name} is now ${m} m high.`, edit: { op: 'set_3d', table: 'map_features', ids: [t.id], patch: { height_m: m }, what: 'Height' }, mention: t, tone: 'ok' }; }
+    if (/sill/.test(field)) { const m = metresOf(value); if (m == null) return ask('How high is the sill, in metres?'); return { reply: `${t.name}'s sill is now ${m} m.`, edit: { op: 'set_3d', table: 'map_features', ids: [t.id], patch: { sill_m: m }, what: 'Sill height' }, mention: t, tone: 'ok' }; }
+    if (/step/.test(field) && /\d/.test(value)) return { reply: `${t.name} has ${parseInt(value, 10)} steps now.`, edit: { op: 'set_3d', table: 'map_features', ids: [t.id], patch: { step_count: parseInt(value, 10) }, what: 'Steps' }, mention: t, tone: 'ok' };
+    if (/access|step_free|wheelchair/.test(field)) { const on = yes(value); return { reply: `${t.name} is ${on ? 'step-free' : 'not step-free'} now.`, edit: { op: 'set_3d', table: 'map_features', ids: [t.id], patch: { accessible: on }, what: 'Step-free' }, mention: t, tone: 'ok' }; }
+    if (/amharic|label_am/.test(field)) return { reply: `${t.name} is called “${value}” in Amharic now.`, edit: { op: 'set_3d', table: 'map_features', ids: [t.id], patch: { label_am: value }, what: 'Amharic name' }, mention: t, tone: 'ok' };
+    return ask(`For ${t.name} I can set its height, sill, number of steps, step-free access or Amharic name.`);
+  }
+  return ask(`${t.name} is a point on the map — select a room, wall or object to change its 3D details.`);
+}
+
+function measure(fromW: string, toW: string, s: MapState, view: MapView): Plan {
+  const A = resolve(fromW, s, view), B = resolve(toW, s, view);
+  if (!A) return notFound(fromW, s);
+  if (!B) return notFound(toW, s);
+  const straight = d(A.at, B.at) / PPM;
+  const r = A.nodeId && B.nodeId ? view.route(A.nodeId, B.nodeId) : null;
+  const walk = r ? routeLength(view, r) / PPM : null;
+  const sameFloor = A.floorId === B.floorId;
+  return {
+    reply: `${A.name} → ${B.name}: ${sameFloor ? `${straight.toFixed(1)} m in a straight line` : 'on different floors'}${walk != null ? `, about ${walk.toFixed(0)} m on foot (${Math.max(1, Math.round(walk / 1.3 / 60))} min walk)` : ' — they aren\'t connected by paths yet'}.`,
+    tone: 'info', mention: B,
+    highlight: { route: r ? view.segs(r) : [], removed: [], spots: [A.at, B.at], things: [A.id, B.id] },
+    chips: r ? undefined : [{ label: `Connect them`, say: `Connect ${A.name} and ${B.name}` }],
+  };
+}
+
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+function list(whatRaw: string | null, s: MapState, view: MapView): Plan {
+  const what = (whatRaw ?? '').toLowerCase().replace(/s$/, '').replace(/^(poi|thing)$/, 'place');
+  const things = view.things(s.floorId);
+  const rooms = s.rows.rooms.filter(r => r.floor_id === s.floorId);
+  const feats = s.rows.map_features.filter(f => f.floor_id === s.floorId);
+  const floorName = view.floorName(s.floorId);
+  const names = (xs: string[]) => (xs.length ? `: ${xs.slice(0, 12).join(', ')}${xs.length > 12 ? `, and ${xs.length - 12} more` : ''}` : '');
+  const byKind = (k: string) => {
+    const rs = rooms.filter(r => r.type === k).map(r => r.name || titleCase(k));
+    const fs = feats.filter(f => f.kind === k).map(f => f.label || titleCase(k));
+    const ns = things.filter(t => t.kind === 'place' && new RegExp(k, 'i').test(t.name)).map(t => t.name);
+    return [...new Set([...rs, ...fs, ...ns])];
+  };
+  const kindWord: Record<string, string> = { toilet: 'restroom', restroom: 'restroom', lift: 'elevator', elevator: 'elevator', stair: 'stairs', staircase: 'stairs', entrance: 'entrance', exit: 'entrance', door: 'door', office: 'office', 'meeting room': 'meeting', tree: 'tree', bench: 'bench' };
+  if (!what) {
+    const main = new Set(view.networks(s.floorId)[0] ?? []);
+    const named = things.filter(t => t.kind !== 'object');
+    const reach = named.filter(t => t.nodeId && main.has(t.nodeId)).length;
+    const types = Object.entries(rooms.reduce<Record<string, number>>((a, r) => { const k = r.type || 'room'; a[k] = (a[k] ?? 0) + 1; return a; }, {})).map(([k, n]) => plural(n, k === 'meeting' ? 'meeting room' : k));
+    const area = rooms.reduce((sum, r) => sum + polygonArea(view.roomOutline(r)), 0) / PPM / PPM;
+    const h = healthOf(s);
+    return {
+      reply: `${floorName}: ${plural(rooms.length, 'room')}${types.length ? ` (${types.join(', ')})` : ''}, ${plural(named.length, 'place')} (${reach} reachable on foot), ${plural(feats.length, 'object')}, ${plural(s.rows.walls.filter(w => w.floor_id === s.floorId).length, 'wall')}. Rooms cover about ${area.toFixed(0)} m².${s.rows.floors.length > 1 ? ` The venue has ${plural(s.rows.floors.length, 'floor')}.` : ''}${h.length ? ` ${plural(h.length, 'thing')} need${h.length === 1 ? 's' : ''} attention.` : ' Map health ✓'}`,
+      tone: 'info', chips: h.length ? [{ label: "What's wrong?", say: "What's wrong?" }] : undefined,
+    };
+  }
+  if (what === 'room') return { reply: `${plural(rooms.length, 'room')} on ${floorName}${names(rooms.map(r => r.name || titleCase(r.type ?? 'room')))}.`, tone: 'info' };
+  if (what === 'place') { const xs = things.filter(t => t.kind !== 'object').map(t => t.name); return { reply: `${plural(xs.length, 'place')} visitors can find on ${floorName}${names(xs)}.`, tone: 'info' }; }
+  if (what === 'object') {
+    const counts = Object.entries(feats.reduce<Record<string, number>>((a, f) => { a[f.kind] = (a[f.kind] ?? 0) + 1; return a; }, {})).map(([k, n]) => `${n} ${k}`);
+    return { reply: `${plural(feats.length, 'object')} on ${floorName}${counts.length ? `: ${counts.join(', ')}` : ''}.`, tone: 'info' };
+  }
+  if (what === 'floor') return { reply: `${plural(s.rows.floors.length, 'floor')}: ${[...s.rows.floors].sort((a, b) => a.level - b.level).map(f => `${f.name}${f.id === s.floorId ? ' (open)' : ''}`).join(', ')}.`, tone: 'info' };
+  if (what === 'wall') return { reply: `${plural(s.rows.walls.filter(w => w.floor_id === s.floorId).length, 'wall')} on ${floorName}.`, tone: 'info' };
+  if (what === 'path') {
+    const es = s.rows.edges.filter(e => view.nodeAt.get(e.from_node)?.floor === s.floorId);
+    const nets = view.networks(s.floorId);
+    return { reply: `${plural(es.length, 'path segment')} on ${floorName}, in ${plural(nets.length, 'connected network')}${nets.length > 1 ? ' — some places are cut off from the rest. Say "fix everything" to join them.' : '.'}`, tone: nets.length > 1 ? 'warn' : 'info' };
+  }
+  const k = kindWord[what] ?? what;
+  const xs = byKind(k);
+  return { reply: xs.length ? `${plural(xs.length, k === 'stairs' ? 'stairway' : k)} on ${floorName}${names(xs)}.` : `No ${k === 'stairs' ? 'stairs' : `${k}s`} on ${floorName} yet.`, tone: 'info', chips: xs.length ? undefined : [{ label: `Add ${k === 'stairs' ? 'stairs' : `a ${k}`} here`, say: `Add ${k === 'stairs' ? 'stairs' : `a ${k}`} here` }] };
+}
+
+function describeThing(t: Thing, s: MapState, view: MapView): string {
+  const parts: string[] = [];
+  const floor = view.floorName(t.floorId);
+  if (t.kind === 'room') {
+    const r = s.rows.rooms.find(x => x.id === t.id)!;
+    const o = view.roomOutline(r); const b = bbox(o);
+    const kind = r.type === 'meeting' ? 'meeting room' : r.type || 'room';
+    parts.push(`${t.name} is ${/^[aeiou]/.test(kind) ? 'an' : 'a'} ${kind} on ${floor}, about ${((b.maxX - b.minX) / PPM).toFixed(1)} × ${((b.maxY - b.minY) / PPM).toFixed(1)} m (${(polygonArea(o) / PPM / PPM).toFixed(0)} m²).`);
+    if (r.floor_material) parts.push(`Floor: ${r.floor_material}.`);
+    if (r.name_am) parts.push(`Amharic name: ${r.name_am}.`);
+  } else if (t.kind === 'object') {
+    const f = s.rows.map_features.find(x => x.id === t.id)!;
+    parts.push(`${t.name} is ${/^[aeiou]/.test(f.kind) ? 'an' : 'a'} ${f.kind} on ${floor}${f.width ? `, ${f.width.toFixed(1)} m wide` : ''}${f.rotation_deg ? `, turned ${Math.round(f.rotation_deg)}°` : ''}.`);
+  } else parts.push(`${t.name} is a place visitors can navigate to on ${floor}.`);
+  if (t.nodeId) {
+    const main = new Set(view.networks(t.floorId)[0] ?? []);
+    const links = view.adj.get(t.nodeId)?.length ?? 0;
+    parts.push(main.has(t.nodeId) ? `It's connected to the walking paths (${plural(links, 'link')}).` : crossFloor(view, t.nodeId) ? 'It links to another floor.' : "It isn't connected to the walking paths yet.");
+  }
+  return parts.join(' ');
+}
+
+/**
+ * A compact, plain-text picture of the map for the AI: floors, what's on
+ * this floor with kinds, sizes and positions (metres), the paths, what's
+ * selected and what needs fixing. Names only — no personal data.
+ */
+export function brief(s: MapState): string {
+  const view = new MapView(s.rows, s.floorId);
+  const m = (v: number) => (v / PPM).toFixed(1);
+  const floors = [...s.rows.floors].sort((a, b) => a.level - b.level);
+  const main = new Set(view.networks(s.floorId)[0] ?? []);
+  const rooms = s.rows.rooms.filter(r => r.floor_id === s.floorId);
+  const roomNodes = new Set(rooms.map(r => r.node_id).filter(Boolean));
+  const out: string[] = [];
+  out.push(`Floors (low→high): ${floors.map(f => `${f.name} [level ${f.level}${f.id === s.floorId ? ', OPEN' : ''}${f.ceiling_height_m ? `, ceiling ${f.ceiling_height_m} m` : ''}]`).join('; ') || 'one floor'}`);
+  out.push(`Rooms on this floor (${rooms.length}) — name | kind | size m | centre x,y m | reachable:`);
+  for (const r of rooms.slice(0, 160)) {
+    const o = view.roomOutline(r); const b = bbox(o); const c = polygonCentroid(o);
+    out.push(`- ${r.name || '(unnamed)'} | ${r.type ?? 'room'} | ${m(b.maxX - b.minX)}×${m(b.maxY - b.minY)} | ${m(c.x)},${m(c.y)} | ${r.node_id && main.has(r.node_id) ? 'yes' : 'no'}${r.floor_material ? ` | floor ${r.floor_material}` : ''}`);
+  }
+  const places = s.rows.nodes.filter(n => n.floor_id === s.floorId && !n.is_hallway && n.name && !roomNodes.has(n.id));
+  out.push(`Other places (${places.length}) — name | x,y m | reachable:`);
+  for (const n of places.slice(0, 120)) out.push(`- ${n.name} | ${m(n.x)},${m(n.y)} | ${main.has(n.id) ? 'yes' : crossFloor(view, n.id) ? 'other floor' : 'no'}`);
+  const feats = s.rows.map_features.filter(f => f.floor_id === s.floorId);
+  const counts = feats.reduce<Record<string, number>>((a, f) => { a[f.kind] = (a[f.kind] ?? 0) + 1; return a; }, {});
+  out.push(`Objects (${feats.length}): ${Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(', ') || 'none'}`);
+  for (const f of feats.filter(x => x.label || ['elevator', 'stairs', 'entrance', 'escalator', 'ramp'].includes(x.kind)).slice(0, 60)) out.push(`- ${f.label || f.kind} | ${f.kind} | ${m(f.x)},${m(f.y)}`);
+  const walls = s.rows.walls.filter(w => w.floor_id === s.floorId);
+  out.push(`Walls: ${walls.length}${walls.some(w => w.height_m) ? ` (heights: ${[...new Set(walls.map(w => w.height_m).filter(Boolean))].slice(0, 4).join(', ')} m)` : ''}`);
+  const es = s.rows.edges.filter(e => view.nodeAt.get(e.from_node)?.floor === s.floorId);
+  out.push(`Walking paths: ${es.length} segments in ${view.networks(s.floorId).length} network(s); ${es.filter(e => e.connection).length} floor links (${[...new Set(es.map(e => e.connection).filter(Boolean))].join(', ') || 'none'})`);
+  const sel = [...s.selection.rooms.map(id => rooms.find(r => r.id === id)?.name), ...s.selection.nodes.map(id => view.nodeAt.get(id)?.name), ...s.selection.features.map(id => { const f = feats.find(x => x.id === id); return f ? f.label || f.kind : null; })].filter(Boolean);
+  out.push(`Selected: ${sel.length ? sel.join(', ') : 'nothing'}${s.selection.walls?.length ? ` + ${plural(s.selection.walls.length, 'wall')}` : ''}`);
+  out.push(`Last click ("here"): ${s.click ? `${m(s.click.x)},${m(s.click.y)} m` : 'none'}; screen centre ${m(s.view.x)},${m(s.view.y)} m`);
+  const h = healthOf(s);
+  out.push(`Health: ${h.length ? h.map(i => i.text).join('; ') : 'all good'}`);
+  return out.join('\n');
 }
 
 function connect(fromW: string, toW: string, s: MapState, view: MapView): Plan {
@@ -543,6 +905,57 @@ function block(word: string, s: MapState, view: MapView): Plan {
   };
 }
 
+type Room = PlanRows['rooms'][number];
+const DOOR_W = 0.9 * PPM;
+
+/** The point of segment a–b nearest p, kept `margin` from its ends (null when it's too short). */
+function onWall(p: Pt, a: Pt, b: Pt, margin: number): { at: Pt; dist: number; angle: number } | null {
+  const L = Math.hypot(b.x - a.x, b.y - a.y);
+  if (L < 2 * margin) return null;
+  const t = Math.max(margin / L, Math.min(1 - margin / L, ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / (L * L)));
+  const at = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+  return { at, dist: Math.hypot(p.x - at.x, p.y - at.y), angle: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI };
+}
+
+/** Distance from p to a polygon's outline. */
+function toOutline(p: Pt, poly: Pt[]): number {
+  let best = Infinity;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const w = onWall(p, poly[j], poly[i], 0);
+    if (w) best = Math.min(best, w.dist);
+  }
+  return best;
+}
+
+/**
+ * Where a door goes — always ON a wall, turned along it; never floating in a room or outside.
+ * Clicked near a wall: on that wall. A room (selected, clicked inside, or walled in): on the
+ * room's own wall that faces the walking paths, where visitors would come in. Null: no wall to use.
+ */
+export function doorSpot(s: MapState, view: MapView, opts: { at?: Pt | null; room?: Room | null }): { x: number; y: number; rotationDeg: number } | null {
+  const walls = s.rows.walls.filter(w => w.floor_id === s.floorId).map(w => ({ a: { x: w.x1, y: w.y1 }, b: { x: w.x2, y: w.y2 } }));
+  if (!walls.length) return null;
+  const margin = 0.5 * PPM;
+  if (opts.at) {
+    const near = walls.map(w => onWall(opts.at!, w.a, w.b, margin)).filter((x): x is NonNullable<typeof x> => !!x).sort((x, y) => x.dist - y.dist)[0];
+    if (near && near.dist <= 1.2 * PPM) return { ...round(near.at), rotationDeg: Math.round(near.angle) };
+  }
+  const room = opts.room ?? (opts.at ? s.rows.rooms.find(r => r.floor_id === s.floorId && pointInPolygon(opts.at!, view.roomOutline(r))) ?? null : null);
+  if (!room) return null;
+  const poly = view.roomOutline(room);
+  // The room's own walls: lying along its outline.
+  const own = walls.filter(w => toOutline(w.a, poly) <= 0.5 * PPM && toOutline(w.b, poly) <= 0.5 * PPM);
+  if (!own.length) return null;
+  // Where visitors come from: the nearest point of the main walking network outside the room.
+  const main = view.networks(s.floorId)[0] ?? [];
+  const outside = main.map(id => view.nodeAt.get(id)).filter((n): n is NonNullable<typeof n> => !!n && !pointInPolygon(n, poly));
+  const c = polygonCentroid(poly);
+  const target = outside.sort((x, y) => d(x, c) - d(y, c))[0] ?? null;
+  const pick = own.map(w => onWall(target ?? c, w.a, w.b, margin)).filter((x): x is NonNullable<typeof x> => !!x)
+    .sort((x, y) => (target ? x.dist - y.dist : y.dist - x.dist))[0];
+  return pick ? { ...round(pick.at), rotationDeg: Math.round(pick.angle) } : null;
+}
+
 function add(action: Extract<MapAction, { op: 'add' }>, s: MapState, view: MapView): Plan {
   const kind = addKind(action.what, action.name);
   // Where: here (last click), next to something, or what's selected / on screen.
@@ -555,6 +968,17 @@ function add(action: Extract<MapAction, { op: 'add' }>, s: MapState, view: MapVi
   } else at = s.click ?? selected(s, view)?.at ?? s.view;
   if (!at) return ask(`Click where it should go, then say "add a ${action.what} here".`);
   at = round(at);
+  // A door is always on a wall: the clicked wall, or the selected room's wall facing the paths.
+  let doorAngle: number | null = null;
+  if (kind.type === 'feature' && kind.feature === 'door') {
+    const sel = selected(s, view);
+    const room = sel?.kind === 'room' ? s.rows.rooms.find(r => r.id === sel.id) ?? null : null;
+    const spot = doorSpot(s, view, { at: action.near === HERE || !action.near ? (s.click ?? null) : at, room: s.click ? null : room })
+      ?? doorSpot(s, view, { at, room });
+    if (!spot) return ask('Click on the wall where the door should go (or select the room), then say "add a door here".');
+    at = { x: spot.x, y: spot.y };
+    doorAngle = spot.rotationDeg;
+  }
   const c = emptyChange();
   const label = kind.type === 'feature' ? kind.name : kind.name;
   const taken = new Set(view.things(s.floorId).map(t => norm(t.name)));
@@ -564,7 +988,8 @@ function add(action: Extract<MapAction, { op: 'add' }>, s: MapState, view: MapVi
   const walkTo = kind.type === 'place' || kind.type === 'entrance' || (kind.type === 'feature' && ['elevator', 'stairs', 'escalator', 'ramp'].includes(kind.feature));
   if (kind.type === 'feature' || kind.type === 'entrance') {
     featureId = newId();
-    c.features.push({ id: featureId, floor_id: s.floorId, kind: kind.type === 'entrance' ? 'entrance' : kind.feature, x: at.x, y: at.y, label: kind.type === 'feature' && !action.name ? null : name });
+    c.features.push({ id: featureId, floor_id: s.floorId, kind: kind.type === 'entrance' ? 'entrance' : kind.feature, x: at.x, y: at.y, label: kind.type === 'feature' && !action.name ? null : name,
+      ...(doorAngle !== null ? { rotation_deg: doorAngle, width: DOOR_W } : {}) });
   }
   if (walkTo) {
     nodeId = newId();
@@ -580,12 +1005,23 @@ function add(action: Extract<MapAction, { op: 'add' }>, s: MapState, view: MapVi
       if (link) { c.nodes.push(...link.nodes); c.edges.push(...link.edges); joined = true; }
     }
   }
+  if (doorAngle !== null) {
+    const rows = withChange(s.rows, c);
+    const v = new MapView(rows, s.floorId);
+    const main = v.networks(s.floorId)[0];
+    const mainSet = new Set(main ?? []);
+    const behind = v.things(s.floorId).find(t => t.kind !== 'object' && t.nodeId && !mainSet.has(t.nodeId) && d(t.at, at!) < 6 * PPM);
+    const link = behind && main?.length ? linkWalkable(rows, behind.nodeId!, main, s.floorId) : null;
+    if (link) { c.nodes.push(...link.nodes); c.edges.push(...link.edges); joined = true; }
+  }
   const v2 = new MapView(withChange(s.rows, c), s.floorId);
   const thing: Thing = { kind: nodeId ? 'place' : 'object', id: nodeId ?? featureId!, name, at, nodeId, floorId: s.floorId };
   const where = near ? ` next to ${near.name}` : '';
   const hasPaths = !!v2.networks(s.floorId).length;
   return {
-    reply: `Added ${name}${where}.${nodeId && hasPaths ? (joined ? ' Visitors can walk to it.' : ' Walls are in the way, so it isn\'t connected yet.') : ''}`,
+    reply: doorAngle !== null
+      ? `Added a door in the wall${joined ? ' — the room behind it is now connected to the walking paths' : ''}. Not the right spot? Say “undo” and click on the wall where it should go.`
+      : `Added ${name}${where}.${nodeId && hasPaths ? (joined ? ' Visitors can walk to it.' : ' Walls are in the way, so it isn\'t connected yet.') : ''}`,
     change: c, label: `Add ${name}`, mention: thing, tone: 'ok',
     select: nodeId ? { kind: 'nodes', id: nodeId } : { kind: 'features', id: featureId! },
     highlight: { route: c.edges.map(e => v2.edgeSeg(e)).filter((x): x is Seg2 => !!x), removed: [], spots: [at], things: [] },
@@ -761,7 +1197,7 @@ function fixAll(s: MapState): Plan {
   }
   if (roomsNoPlace.length) { done.push(`${roomsNoPlace.length} room${roomsNoPlace.length === 1 ? '' : 's'} got a place visitors can navigate to`); rows = withChange(s.rows, c); }
   // 3. Places with no walkable connection → join the main walking network.
-  let joined = 0;
+  let joined = 0, doors = 0;
   const stuck: string[] = [];
   for (let guard = 0; guard < 40; guard++) {
     const v = new MapView(rows, s.floorId);
@@ -771,12 +1207,24 @@ function fixAll(s: MapState): Plan {
     const lonely = v.things(s.floorId).filter(t => t.kind !== 'object' && t.nodeId && !mainSet.has(t.nodeId) && !crossFloor(v, t.nodeId) && !stuck.includes(t.name));
     if (!lonely.length) break;
     const t = lonely[0];
-    const link = linkWalkable(rows, t.nodeId!, main, s.floorId);
+    let link = linkWalkable(rows, t.nodeId!, main, s.floorId);
+    if (!link) {
+      // Walled in: give its room a door where the paths are, then try again.
+      const room = rows.rooms.find(r => r.floor_id === s.floorId && (r.node_id === t.nodeId || pointInPolygon(t.at, v.roomOutline(r))));
+      const spot = room ? doorSpot({ ...s, rows }, v, { room }) : null;
+      if (spot) {
+        const door = { id: newId(), floor_id: s.floorId, kind: 'door', x: spot.x, y: spot.y, label: null, rotation_deg: spot.rotationDeg, width: DOOR_W };
+        const tryRows = withChange(s.rows, { ...c, features: [...c.features, door] });
+        link = linkWalkable(tryRows, t.nodeId!, main, s.floorId);
+        if (link) { c.features.push(door); doors++; }
+      }
+    }
     if (!link) { stuck.push(t.name); continue; }
     c.nodes.push(...link.nodes); c.edges.push(...link.edges); joined++;
     rows = withChange(s.rows, c);
   }
   if (joined) done.push(`${joined} place${joined === 1 ? ' is' : 's are'} now walkable`);
+  if (doors) done.push(`${doors} walled-in room${doors === 1 ? ' got a door' : 's got doors'} on the wall facing the paths — check ${doors === 1 ? 'it' : 'them'} in the preview`);
   if (stuck.length) left.push(`${listNames(stuck)} ${stuck.length === 1 ? 'is' : 'are'} walled in — add a door to ${stuck.length === 1 ? 'it' : 'them'}`);
   // 4. Floors: needs their say (which connector), so ask.
   const floorsLeft = healthOf({ ...s, rows }).filter(i => !i.safe && i.fix);
@@ -797,15 +1245,41 @@ function fixAll(s: MapState): Plan {
 
 // ── Greetings and ideas ─────────────────────────────────────────────────────
 
+/**
+ * What to suggest next, from the map as it is: an empty floor → import or draw;
+ * problems → the fix; a selection → act on it; "here" only after a click.
+ * Every chip is a sentence the local parser understands (engine.test.ts checks
+ * this), so a tap answers instantly and never waits for the AI.
+ */
 export function suggestions(s: MapState): Chip[] {
   const v = new MapView(s.rows, s.floorId);
-  const named = v.things(s.floorId).filter(t => t.kind !== 'object');
+  const here = (x: { floor_id: string }) => x.floor_id === s.floorId;
+  const empty = !s.rows.walls.some(here) && !s.rows.rooms.some(here) && !s.rows.nodes.some(n => here(n) && !n.is_hallway);
+  if (empty) {
+    return [
+      { label: 'Import my floor plan', say: 'Import my floor plan' },
+      { label: 'Draw walls', say: 'I want to draw walls' },
+      { label: 'Add a 6 by 4 m room', say: 'Add a 6 by 4 m room' },
+      { label: 'Show me around', say: 'Show me around' },
+    ];
+  }
   const out: Chip[] = [];
+  const health = healthOf(s);
+  const fix = health.find(h => h.fix)?.fix;
+  if (fix) out.push(fix.label === 'Fix it' || fix.label === 'Fix them' ? { label: 'Fix everything', say: fix.say } : fix);
+  if (health.length) out.push({ label: "What's wrong?", say: "What's wrong?" });
+  const selected = s.rows.rooms.find(r => s.selection.rooms.includes(r.id))?.name
+    ?? s.rows.nodes.find(n => s.selection.nodes.includes(n.id))?.name;
+  if (selected) out.push({ label: `Rename ${selected}…`, say: `Rename ${selected} to ` });
+  const named = v.things(s.floorId).filter(t => t.kind !== 'object' && t.name);
+  if (s.click) out.push({ label: 'Add a restroom here', say: 'Add a restroom here' });
+  else if (named[0]) out.push({ label: `Add a restroom near ${named[0].name}`, say: `Add a restroom near ${named[0].name}` });
   if (named.length >= 2) out.push({ label: `Connect ${named[0].name} and ${named[1].name}`, say: `Connect ${named[0].name} and ${named[1].name}` });
-  out.push({ label: 'Add a restroom here', say: 'Add a restroom here' });
-  out.push({ label: 'Check accessibility', say: 'Make the route wheelchair accessible' });
-  out.push({ label: "What's wrong?", say: "What's wrong?" });
-  return out;
+  out.push({ label: 'Show it in 3D', say: 'Show it in 3D' });
+  if (!health.length) out.push({ label: 'Place it on the world map', say: 'Place the venue on the world map' });
+  out.push({ label: 'Check accessibility', say: 'Check accessibility' });
+  const seen = new Set<string>();
+  return out.filter(c => (seen.has(c.label) ? false : (seen.add(c.label), true))).slice(0, 4);
 }
 
 /** "Your floor plan is ready. I found 24 rooms, 3 entrances…" */
@@ -829,6 +1303,7 @@ export function importSummary(s: MapState): { reply: string; chips: Chip[] } {
       { label: 'Connect rooms', say: 'Connect ' },
       ...(entrances ? [] : [{ label: 'Add entrances', say: 'Add an entrance here' }]),
       { label: 'Review paths', say: "What's wrong?" },
+      { label: 'Next: place on world map', say: 'Place it on the world map' },
       { label: 'Check accessibility', say: 'Make the route wheelchair accessible' },
     ],
   };

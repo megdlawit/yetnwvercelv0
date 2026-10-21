@@ -7,7 +7,7 @@
 
 import type { DxfEntity, DxfPoint } from '../dxf/parseDxf';
 import { quarterArcs, isLeafOf, DOOR_RANGE_M } from './analyze';
-import { detectRooms } from './detectRooms';
+import { detectRooms, doorwaySeals, rayToWall, sheetFrame } from './detectRooms';
 import { categoryFromBlock } from './classify';
 import type { CadDrawing, Category, LayerMapping } from './types';
 import {
@@ -18,7 +18,11 @@ import {
 export type FeatureKind =
   | 'door' | 'window' | 'stairs' | 'elevator' | 'entrance' | 'tree' | 'bench' | 'furniture' | 'landmark' | 'label';
 
-export interface BuiltRoom { name: string; polygon: Pt[]; x: number; y: number; width: number; height: number }
+export interface BuiltRoom {
+  name: string; polygon: Pt[]; x: number; y: number; width: number; height: number;
+  /** Room type known from its layer (e.g. a layer confirmed as restrooms); otherwise guessed from the name on save. */
+  type?: string;
+}
 export interface BuiltFeature {
   kind: FeatureKind; x: number; y: number; rotationDeg: number;
   width?: number | null; depth?: number | null; label?: string | null;
@@ -31,6 +35,8 @@ export interface BuildOptions {
   fix: { gaps: boolean; overlaps: boolean; rooms: boolean; floating: boolean };
   /** Find doors from swing arcs and rooms from the spaces walls enclose (both on unless turned off). */
   detect?: { doors?: boolean; rooms?: boolean };
+  /** Room type for every room outlined on a layer (layer name → type, e.g. "restroom"). */
+  roomTypes?: Record<string, string>;
 }
 
 export interface Health {
@@ -43,9 +49,62 @@ export interface Health {
   unitsSuspect: boolean;
   doorsFromSwings: number;   // doors recognised from quarter-circle swings
   roomsFromWalls: number;    // rooms traced from enclosed spaces
+  notAPlan: boolean;         // no doors and no room names: a map, artwork or pattern, not a building
 }
 
 export interface BuiltVenue { walls: Seg[]; rooms: BuiltRoom[]; features: BuiltFeature[]; health: Health; warnings: string[] }
+
+/**
+ * A room's name from the tag written in it. Tags on real sheets carry the floor finish and
+ * area too ("B. ROOM Ceramic ff A=14.6 m²") and drafting shorthands; visitors search for
+ * "Bedroom", "Master bath". Finish and area are cut, shorthands spelled out, capitals tidied.
+ */
+const FINISH_OR_AREA = /\s+(?:A\s*=|AREA\b|ceramic|ceram\b|tiles?\b|terrazzo|marble|granite|parquet|carpet|vinyl|pvc\b|screed|epoxy|wooden floor|f\.?f\.?\b|flooring|floor finish|\d+(?:[.,]\d+)?\s*(?:feet|foot|ft|metres?|meters?|m)\s+wide\b)/i;
+const SHORTHANDS: [RegExp, string][] = [
+  [/\b(?:b\.\s*room|bed\s*room|b\/r)\b/gi, 'bedroom'], [/\bm\.\s*(?=\w)/gi, 'master '], [/\bc\.\s*(?=\w)/gi, 'common '],
+  [/\bo\.\s*(?=\w)/gi, 'open '], [/\bk\.(?=\s|$)/gi, 'kitchen'], [/\bjanitary(?:\s+room)?\b/gi, 'janitor room'], [/\bmaids\b/gi, "maid's"],
+  [/,(?=\S)/g, ', '],
+];
+export function roomNameFrom(tag: string): string {
+  let name = tag.replace(/\s+/g, ' ').split(FINISH_OR_AREA)[0].trim();
+  // Names written all in capitals (or all lower case) are re-cased; "Meeting Room A" is kept as written.
+  const recase = name === name.toUpperCase() || name === name.toLowerCase();
+  if (recase) name = name.toLowerCase();
+  for (const [re, to] of SHORTHANDS) name = name.replace(re, to);
+  name = name.replace(/\s+/g, ' ').trim();
+  if (recase) name = name.replace(/(^|[\s,&/(-])(\p{L})/gu, (_, a, b) => a + b.toUpperCase());
+  // A shouted word in a mixed name ("Disable TOILET"): Toilet; short acronyms (WC, MEP) stay.
+  else name = name.replace(/(?<!\p{L})\p{Lu}{4,}(?!\p{L})/gu, w => w[0] + w.slice(1).toLowerCase());
+  return name || tag.trim();
+}
+
+/**
+ * A map label from a text in the drawing, or null when it isn't a place's name. Drawings
+ * are full of text that means nothing to visitors and would cover the map: grid markers
+ * ("A", "3"), door sizes ("90/210"), levels and measurements ("+3.50", "5mm", "Sc=1:50"),
+ * drawing titles ("GROUND FLOOR", "FRONT ELEVATION") and material notes ("Plastered &
+ * Painting"). Names are tidied like room names ("STORE Ceramic ff A=3.3 m²" → "Store").
+ */
+const NOT_A_NAME = [
+  /\d\s*\/\s*\d/, /%%/, /(?:^|\s)(?:sc|scale)\s*[=:]/i, /\b\d+(?:[.,]\d+)?\s*(?:mm|cm|m|m²|m2|%)(?:\b|$)/i, /^[+\-±]?\d/,
+  /\b(?:floor plan|elevation|section|detail|legend|sheet|drawing|title|north|orientation|scale|level|storey)\b/i,
+  /^(?:basement|ground|groun|first|second|third|1st|2nd|3rd|\d+th)\s+floor\b/i,
+  /\b(?:plaster(?:ed)?|paint(?:ing)?|ceramic|tiles?|glass|alumin(?:i)?um|concrete|steel|brick|hcb|gypsum|zigba|batten|perlin|chipboard|roofing|slope|thick|finish|ral\s*\d|c-\d+|cis\b)/i,
+];
+export function placeLabelFrom(text: string): string | null {
+  const raw = text.replace(/\s+/g, ' ').trim();
+  if (/\d\s*\/\s*\d|%%|(?:^|\s)(?:sc|scale)\s*[=:]/i.test(raw) && !/[a-z]{3,}/i.test(raw.split(/\s+(?:A\s*=|AREA\b)/i)[0])) return null;
+  // Judge the name once the floor finish and area are cut off ("STORE Ceramic ff A=3.3 m²" → "Store").
+  const name = roomNameFrom(raw);
+  if (NOT_A_NAME.some(re => re.test(name))) return null;
+  if (name.replace(/[^\p{L}]/gu, '').length < 3) return null;            // "A", "B1", "12", "-"
+  if (name.split(' ').length > 5) return null;                            // a note, not a name
+  if (/^(?:room|space|area|zone)$/i.test(name)) return null;              // a word, not a name ("Hall" is a name)
+  return name;
+}
+
+/** Rooms visitors look for by kind, from the name: bathrooms and toilets are restrooms. */
+const RESTROOM_NAME = /\b(?:bath|toilet|w\.?c\b|restroom|shower|lavatory|ሽንት ቤት|መጸዳጃ)/i;
 
 const ENTRANCE_TEXT = /ENTRANCE|ENTRY|EINGANG|ENTR[ÉE]E|\bGATE\b|MAIN DOOR|መግቢያ/i;
 const BENCH_BLOCK = /BENCH|SEAT/i;
@@ -55,7 +114,7 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
   const warnings: string[] = [];
   const emptyHealth: Health = {
     duplicates: 0, tiny: 0, gaps: 0, gapsFixed: 0, overlaps: 0, overlapsMerged: 0,
-    unclosedRooms: 0, roomsClosed: 0, floating: 0, floatingRemoved: 0, extentM: { w: 0, h: 0 }, unitsSuspect: false,
+    unclosedRooms: 0, roomsClosed: 0, floating: 0, floatingRemoved: 0, extentM: { w: 0, h: 0 }, unitsSuspect: false, notAPlan: false,
     doorsFromSwings: 0, roomsFromWalls: 0,
   };
   if (!d.bounds) return { walls: [], rooms: [], features: [], health: emptyHealth, warnings: ['The drawing has no geometry.'] };
@@ -184,10 +243,13 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
     const label = inside[0];
     if (label) label.used = true; else unnamed++;
     const bb = bbox(poly);
+    const name = label ? roomNameFrom(label.text) : `Room ${rooms.length + 1}`;
+    const type = o.roomTypes?.[e.layer] ?? (label && RESTROOM_NAME.test(name) ? 'restroom' : undefined);
     rooms.push({
-      name: label?.text || `Room ${rooms.length + 1}`,
+      name,
       polygon: poly.map(p => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 })),
       x: bb.minX, y: bb.minY, width: bb.maxX - bb.minX, height: bb.maxY - bb.minY,
+      ...(type ? { type } : {}),
     });
   }
 
@@ -201,6 +263,16 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
     // The closed leaf lies across the opening, ending at the far jamb: the end nearer a wall.
     const wallDist = (p: Pt) => walls.reduce((best, w) => Math.min(best, projectOnSegment(p, w).d), Infinity);
     const closed = wallDist(ends[0]) <= wallDist(ends[1]) ? ends[0] : ends[1];
+    // A door sits in a wall: carry its closed line on to the wall each side, so a wall piece
+    // drawn only as hatch (or left out) beside the door doesn't leave rooms joined.
+    const L = Math.hypot(closed.x - h.x, closed.y - h.y);
+    if (L > 0) {
+      const ux = (closed.x - h.x) / L, uy = (closed.y - h.y) / L;
+      for (const [from, dx, dy] of [[closed, ux, uy], [h, -ux, -uy]] as const) {
+        const hit = rayToWall(from, dx, dy, walls, 1.5 * m, m);
+        if (hit) seals.push({ x1: from.x, y1: from.y, x2: hit.x, y2: hit.y });
+      }
+    }
     swingDoors.push({
       kind: 'door', x: (h.x + closed.x) / 2, y: (h.y + closed.y) / 2,
       rotationDeg: (Math.atan2(closed.y - h.y, closed.x - h.x) * 180) / Math.PI, width: sw.radius * s,
@@ -210,16 +282,24 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
 
   // No room outlines in the drawing: rooms are the spaces the walls enclose.
   if (rooms.length === 0 && o.detect?.rooms !== false && walls.length) {
-    const found = detectRooms(walls, seals, { pxPerMeter: m }).slice(0, 400);
+    // Door swings seal their doorways; plain door-sized gaps in a wall line are doorways too.
+    const found = detectRooms(walls, [...seals, ...doorwaySeals(walls, m)], { pxPerMeter: m }).slice(0, 400);
+    // On a framed sheet, spaces against the frame are title-block cells.
+    const frame = sheetFrame(walls, m), edge = 0.3 * m;
+    const onFrame = (poly: Pt[]) => !!frame && poly.some(p => p.x - frame.minX < edge || frame.maxX - p.x < edge || p.y - frame.minY < edge || frame.maxY - p.y < edge);
     for (const r of found) {
+      if (onFrame(r.polygon)) continue;
       const poly = r.polygon.map(p => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }));
       const c = polygonCentroid(poly);
-      const label = texts.filter(t => !t.used && pointInPolygon(t.pos, poly)).sort((a, z) => dist(a.pos, c) - dist(z.pos, c))[0];
+      // The nearest real name inside: not a door size ("50/210"), level, grid letter or note.
+      const label = texts.filter(t => !t.used && pointInPolygon(t.pos, poly) && placeLabelFrom(t.text)).sort((a, z) => dist(a.pos, c) - dist(z.pos, c))[0];
       if (label) label.used = true; else unnamed++;
       const bb = bbox(poly);
       // tiny unnamed spaces are cubicles, stores and shafts — say so, so they're easy to spot and rename
       const fallback = r.areaM2 < 2.5 ? `Small room ${rooms.filter(x => x.name.startsWith('Small room')).length + 1}` : `Room ${rooms.length + 1}`;
-      rooms.push({ name: label?.text || fallback, polygon: poly, x: bb.minX, y: bb.minY, width: bb.maxX - bb.minX, height: bb.maxY - bb.minY });
+      const name = label ? placeLabelFrom(label.text)! : fallback;
+      rooms.push({ name, polygon: poly, x: bb.minX, y: bb.minY, width: bb.maxX - bb.minX, height: bb.maxY - bb.minY,
+        ...(label && RESTROOM_NAME.test(name) ? { type: 'restroom' } : {}) });
     }
     health.roomsFromWalls = found.length;
   }
@@ -278,7 +358,10 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
   for (const t of texts) {
     if (t.used) continue;
     if (ENTRANCE_TEXT.test(t.text)) add({ kind: 'entrance', ...t.pos, rotationDeg: 0, label: t.text });
-    else if (labelLayers.size > 0) add({ kind: 'label', ...t.pos, rotationDeg: 0, label: t.text });
+    else if (labelLayers.size > 0) {
+      const name = placeLabelFrom(t.text);
+      if (name) add({ kind: 'label', ...t.pos, rotationDeg: 0, label: name });
+    }
   }
 
   // ── Floating objects and units sanity ──────────────────────────────────────
@@ -298,6 +381,10 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
     health.unitsSuspect = longest < 3 || longest > 3000;
   }
 
+  // Every floor plan we've seen has doors or room names; maps, artwork and paving patterns have neither.
+  const named = rooms.some(r => !/^(?:Small room|Room) \d+$/.test(r.name)) || kept.some(f => f.kind === 'label');
+  health.notAPlan = walls.length > 0 && !named && !kept.some(f => f.kind === 'door' || f.kind === 'entrance');
+  if (health.notAPlan) warnings.push("This doesn't look like a floor plan: we found no doors and no room names. If it is one, check the layers (which one has the walls and doors?) — otherwise choose another file.");
   if (walls.length === 0) warnings.push('No walls were found. Map at least one layer to Walls.');
   if (Object.values(mapping).includes('rooms') && rooms.length === 0) warnings.push('No closed room outlines were found on the Rooms layers.');
   if (unnamed > 0) warnings.push(`${unnamed} room(s) had no name inside them — they're called "Room N"; rename them in the editor.`);

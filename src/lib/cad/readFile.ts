@@ -28,7 +28,7 @@ export async function readCadFile(file: File): Promise<CadDrawing> {
       });
       const json = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error([json.error || 'DWG conversion failed.', json.hint].filter(Boolean).join(' '));
-      return { ...readDxf(json.dxfText), format: 'dwg' };
+      return { ...readDxf(json.dxfText), format: 'dwg', convertedDxf: json.dxfText };
     }
     case 'svg':
       return readSvg(decodeTextSmart(buf));

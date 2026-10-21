@@ -17,7 +17,11 @@ import type { CameraMode, FloorLayer } from '@/components/venue/Venue3D';
 import type { IndoorVenue } from '@ethi/indoor-core';
 import { cn } from '@/lib/utils';
 import PlanView from './PlanView';
+import { landmarkFor } from '@/lib/landmarks/kinds';
 import { CATEGORY_COLORS, CATEGORY_ICONS, type Place } from './types';
+
+/** A visitor category in the words the landmark chooser knows. */
+const VISITOR_TO_POI_WORD: Record<string, string> = { food: 'food', gardens: 'garden', family: 'park' };
 
 const Venue3D = lazy(() => import('@/components/venue/Venue3D'));
 
@@ -84,9 +88,17 @@ export default function IndoorVenueView({
     return floor.nodes.filter(n => ids.has(n.id));
   }, [floor.nodes, placesHere]);
   const pinColors = useMemo(() => Object.fromEntries(placesHere.map(p => [p.id, CATEGORY_COLORS[p.category]])), [placesHere]);
+  const pinNames = useMemo(() => Object.fromEntries(placesHere.map(p => [p.id, p.name])), [placesHere]);
   // Each place's badge: its photo, or its category's icon.
   const pinImages = useMemo(() => Object.fromEntries(placesHere.filter(p => p.images[0]).map(p => [p.id, p.images[0]])), [placesHere]);
   const pinIcons = useMemo(() => Object.fromEntries(placesHere.map(p => [p.id, categoryIconSvg(p.category)])), [placesHere]);
+  // Each place's 3D landmark, chosen as the control center chooses it (Habesha Coffee → jebena, a gallery → throne…).
+  // Exactly as the control center chooses (its category and kind); places without those use their type, then their category.
+  const pinLandmarks = useMemo(() => Object.fromEntries(placesHere.map(p => {
+    if (p.poiCategory || p.poiSubcategory) return [p.id, landmarkFor({ name: p.name, subcategory: p.poiSubcategory, category: p.poiCategory })];
+    const own = landmarkFor({ name: p.name, subcategory: p.typeLabel ?? '', category: p.category === 'attractions' ? 'attraction' : p.category });
+    return [p.id, own !== 'pin' ? own : landmarkFor({ subcategory: VISITOR_TO_POI_WORD[p.category] ?? '' })];
+  })), [placesHere]);
   const selected = selectedNodeId ? placesHere.find(p => p.id === selectedNodeId) : null;
   const destination = route && route.length > 1 ? route[route.length - 1] : null;
 
@@ -101,7 +113,7 @@ export default function IndoorVenueView({
               <Venue3D walls={floor.walls} rooms={floor.rooms} nodes={pinNodes} edges={floor.edges} features={floor.features}
                 level={floor.level} otherFloors={otherFloors} selectedNodeId={selectedNodeId} onSelectNode={onSelect}
                 pxPerMeter={pxPerMeter} focusNonce={focusNonce} route={route && route.length > 1 ? route : null} showPaths={false}
-                theme={theme} here={here} destination={destination} chrome="minimal" pinColors={pinColors} pinSubs={pinSubs} pinImages={pinImages} pinIcons={pinIcons} onZoomOutExit={onZoomOutExit}
+                theme={theme} here={here} destination={destination} chrome="minimal" pinColors={pinColors} pinSubs={pinSubs} pinImages={pinImages} pinIcons={pinIcons} pinLandmarks={pinLandmarks} pinNames={pinNames} onZoomOutExit={onZoomOutExit}
                 model={model} routeNodeIds={routeNodeIds} floorId={floor.id} onFloorChange={onFloorChange} introNonce={introNonce}
                 wallHeight={wallHeight} layers={layers} registerControls={registerControls} cameraRequest={cameraRequest} onModeChange={onCameraModeChange} />
             </Suspense>

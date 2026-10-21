@@ -14,6 +14,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fromPlan, pathFromNodes, pathFromPoints, type IndoorVenue, type PlanRows } from '@ethi/indoor-core';
 import { IndoorViewer3DView, type PlaceTag, type Pose, type Selection, type ViewMode } from '@ethi/indoor-core/react';
 import type { IndoorViewer3D, ViewerTheme } from '@ethi/indoor-core';
+import { buildLandmark, type LandmarkKind } from '@/lib/landmarks/landmarks';
 import type { NavNode, NavEdge, Room, Wall } from '@/data/types';
 import type { MapFeature } from '@/lib/venue/features';
 import { cn } from '@/lib/utils';
@@ -64,6 +65,10 @@ export interface Venue3DProps {
   pinImages?: Record<string, string>;
   /** An icon (SVG markup) for each place's badge when it has no photo, by node id. */
   pinIcons?: Record<string, string>;
+  /** A 3D landmark for each place (lion, jebena, crown…), by node id — the control center's look. */
+  pinLandmarks?: Record<string, LandmarkKind>;
+  /** The name visitors know each place by (e.g. the café, not the room it's in), by node id. */
+  pinNames?: Record<string, string>;
   /** The visitor zoomed out past the whole floor (go to the outdoor map). */
   onZoomOutExit?: () => void;
   /** How tall walls stand, in metres (the venue's Indoor 3D map setting). */
@@ -104,7 +109,7 @@ function Venue3D(props: Venue3DProps) {
   const {
     walls, rooms, nodes, edges, features = [], level = 0, otherFloors = [], selectedNodeId, onSelectNode,
     pxPerMeter, focusNonce = 0, route, showPaths = true, initialMode = 'overview', onModeChange, className, theme, here, destination,
-    cinematic = false, chrome = 'full', pinColors, pinSubs, pinImages, pinIcons, onZoomOutExit, wallHeight = 2.8, layers, registerControls, cameraRequest,
+    cinematic = false, chrome = 'full', pinColors, pinSubs, pinImages, pinIcons, pinLandmarks, pinNames, onZoomOutExit, wallHeight = 2.8, layers, registerControls, cameraRequest,
     model, routeNodeIds, floorId, onFloorChange, introNonce = 0,
   } = props;
   const viewer = useRef<IndoorViewer3D | null>(null);
@@ -140,11 +145,15 @@ function Venue3D(props: Venue3DProps) {
     const roomByNode = new Map(rooms.map(r => [r.nodeId, r]));
     return nodes.filter(n => !n.isHallway).map(n => {
       const room = roomByNode.get(n.id);
-      return { id: n.id, floorId: curId, at: m(n), name: room?.name || n.name || '', sub: pinSubs?.[n.id] ?? null,
+      return { id: n.id, floorId: curId, at: m(n), name: pinNames?.[n.id] || room?.name || n.name || '', sub: pinSubs?.[n.id] ?? null,
         color: pinColors?.[n.id] ?? (room && PIN_COLORS[room.type]) ?? theme?.primary ?? null, priority: n.id === selectedNodeId ? 9 : 1,
         image: pinImages?.[n.id] ?? null, icon: pinIcons?.[n.id] ?? null };
     }).filter(t => t.name);
-  }, [nodes, rooms, pinColors, pinSubs, pinImages, pinIcons, theme, curId, pxPerMeter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nodes, rooms, pinColors, pinSubs, pinImages, pinIcons, pinLandmarks, pinNames, theme, curId, pxPerMeter]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Each place's landmark, built on demand by the viewer (it re-asks when the places change).
+  const landmarksRef = useRef(pinLandmarks);
+  landmarksRef.current = pinLandmarks;
+  const placeModel = useCallback((t: PlaceTag) => { const k = landmarksRef.current?.[t.id]; return k ? buildLandmark(k, t.color ?? '#16a34a') : null; }, []);
 
   const routeKey = model && routeNodeIds && routeNodeIds.length > 1 ? routeNodeIds.join('>') : (route ?? []).map(p => `${Math.round(p.x)},${Math.round(p.y)}`).join(';');
   // Across floors through the model when we have the path points; else this floor's points.
@@ -191,7 +200,7 @@ function Venue3D(props: Venue3DProps) {
       // The walk bar ("Where do you want to go?") sits below the editor's mode bar.
       style={chrome === 'full' ? ({ '--ivw-walkbar-top': '56px' } as React.CSSProperties) : undefined}>
       <IndoorViewer3DView ref={setRef} venue={venue} floorId={curId} mode={toViewMode(initialMode)} theme={vTheme} layers={viewLayers}
-        places={places} roomLabels route={path} position={herePose} destination={destPose} selectedId={selectedNodeId}
+        places={places} placeModel={pinLandmarks ? placeModel : undefined} roomLabels route={path} position={herePose} destination={destPose} selectedId={selectedNodeId}
         focusNonce={focusNonce} cinematic={cinematic} onSelect={onSelect} onFloorChange={onFloorChange} onZoomOutLimit={onZoomOutExit} />
 
       {/* Camera modes */}

@@ -291,7 +291,7 @@ export default function LandmarkMap({ items, lines = [], areas = [], walls = [],
   useEffect(() => { api.current?.select(selectedId ?? null); }, [selectedId, items]);
 
   return (
-    <div className={`relative overflow-hidden rounded-3xl ${className ?? ''}`}
+    <div className={`relative isolate overflow-hidden rounded-3xl ${className ?? ''}`}
       style={{ background: 'radial-gradient(120% 90% at 50% 10%, #f8fbf4 0%, #e6f0df 55%, #d7e6cf 100%)' }}>
       <style>{`
         .lm-tag{position:absolute;left:0;top:0;display:flex;flex-direction:column;align-items:center;gap:1px;padding:4px 10px;border:0;border-radius:999px;
@@ -303,7 +303,7 @@ export default function LandmarkMap({ items, lines = [], areas = [], walls = [],
         .lm-tag.on{background:#0f3d26;color:#fff}.lm-tag.on small{color:rgba(255,255,255,.75)}
       `}</style>
       <div ref={host} className="absolute inset-0" />
-      <div ref={labels} className="pointer-events-none absolute inset-0" />
+      <div ref={labels} className="pointer-events-none absolute inset-0 z-[1]" />
       {!items.length && !lines.length && emptyText && (
         <div className="pointer-events-none absolute inset-x-0 bottom-6 text-center text-sm font-medium text-[#3f5a45]">{emptyText}</div>
       )}

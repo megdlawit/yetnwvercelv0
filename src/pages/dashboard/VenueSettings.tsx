@@ -1,7 +1,8 @@
 // Venue settings: name, description, building vs outdoor site, theme, and the
 // institution's profile (name, kind, logo).
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Building2, Trees, Loader2, ImagePlus, Trash2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -28,6 +29,13 @@ import { PageHeader, Panel } from './ui';
 export default function VenueSettings() {
   const ws = useWorkspace();
   const { data, reload, places, editorUrl } = useDashboard();
+  // Coming from "Place on the world map" (the dashboard's next step, or the editor): go straight there.
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!hash) return;
+    const t = setTimeout(() => document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+    return () => clearTimeout(t);
+  }, [hash]);
   const b = data.building;
   const [name, setName] = useState(b.name);
   const [description, setDescription] = useState(b.description ?? '');

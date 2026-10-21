@@ -29,7 +29,7 @@ import MapControls from '@/components/MapControls';
 import MapLayersPanel, { MAP_LAYERS } from '@/components/MapLayersPanel';
 import type { CustomImageLayer } from '@/components/MapTypeSwitcher';
 import type { VenueBuildingFootprint } from '@/lib/geo/MapSurfaceLayers';
-import { DEFAULT_CUSTOM_LAYERS, ADMIN_LAYERS_STORAGE_KEY } from '@/lib/customLayers';
+import { usePublishedLayers } from '@/hooks/useAdminLayers';
 import type { CustomLayer } from '@/lib/customLayers';
 import { DEFAULT_MAP_STYLE_ID, MAP_STYLE_STORAGE_KEY, type MapStyleId } from '@/lib/mapStyles';
 import FloatingTopCard from '@/components/FloatingTopCard';
@@ -202,19 +202,9 @@ export const ExploreMap = ({
     catch { /* ignore */ }
   }, [activeLayers]);
 
-  // Load the layer set: prefer whatever the Admin Layers Dashboard has
-  // saved (created/edited by an admin), falling back to the built-in
-  // defaults if nothing has been configured yet.
-  const loadBaseLayers = useCallback((): CustomLayer[] => {
-    try {
-      const saved = localStorage.getItem(ADMIN_LAYERS_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as CustomLayer[];
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch { /* ignore */ }
-    return DEFAULT_CUSTOM_LAYERS;
-  }, []);
+  // The map layers the Yet New team draws in the control center (buildings,
+  // parking, routes, events…), from the database and cached for offline.
+  const publishedLayers = usePublishedLayers();
 
   const applyVisibilityOverrides = useCallback((layers: CustomLayer[], overrides: Record<string, boolean>): CustomLayer[] =>
     layers.map(l => (l.id in overrides ? { ...l, visible: overrides[l.id] } : l))
@@ -229,10 +219,9 @@ export const ExploreMap = ({
   }, []);
 
   // Overrides only ever get an entry when a visitor explicitly flips a layer
-  // themselves (see handleToggleCustomLayer below). Anything a visitor hasn't
-  // touched keeps following whatever the Admin Layers Dashboard has set, so a
-  // newly-published "on" layer actually shows up instead of getting masked
-  // by a stale snapshot.
+  // themselves (see handleToggleCustomLayer below). Anything a visitor has not
+  // touched follows what the control center has set, so a newly switched-on
+  // layer actually shows up.
   const [visibilityOverrides, setVisibilityOverrides] = useState<Record<string, boolean>>(loadVisibilityOverrides);
 
   useEffect(() => {
@@ -240,27 +229,10 @@ export const ExploreMap = ({
     catch { /* ignore */ }
   }, [visibilityOverrides]);
 
-  const [customLayers, setCustomLayers] = useState<CustomLayer[]>(() =>
-    applyVisibilityOverrides(loadBaseLayers(), visibilityOverrides)
+  const customLayers = useMemo(
+    () => applyVisibilityOverrides(publishedLayers ?? [], visibilityOverrides),
+    [publishedLayers, visibilityOverrides, applyVisibilityOverrides],
   );
-
-  // Keep in sync with the Admin Layers Dashboard — picks up layers added,
-  // edited, or removed in another tab (or after returning from /admin),
-  // including newly-toggled "on" layers registered by an admin.
-  useEffect(() => {
-    const refresh = () => setCustomLayers(applyVisibilityOverrides(loadBaseLayers(), visibilityOverrides));
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === ADMIN_LAYERS_STORAGE_KEY || e.key === null) refresh();
-    };
-    window.addEventListener('storage', handleStorage);
-    window.addEventListener('focus', refresh);
-    document.addEventListener('visibilitychange', refresh);
-    return () => {
-      window.removeEventListener('storage', handleStorage);
-      window.removeEventListener('focus', refresh);
-      document.removeEventListener('visibilitychange', refresh);
-    };
-  }, [loadBaseLayers, applyVisibilityOverrides, visibilityOverrides]);
 
   const [mapStyleId, setMapStyleId] = useState<MapStyleId>(() => {
     try { return (localStorage.getItem(MAP_STYLE_STORAGE_KEY) as MapStyleId) || DEFAULT_MAP_STYLE_ID; }
@@ -1118,9 +1090,6 @@ export const ExploreMap = ({
   const handleToggleCustomLayer = (id: string) => {
     const current = customLayers.find(l => l.id === id);
     const newVisible = current ? !current.visible : true;
-    setCustomLayers(prev =>
-      prev.map(l => l.id === id ? { ...l, visible: newVisible } : l)
-    );
     setVisibilityOverrides(prev => ({ ...prev, [id]: newVisible }));
   };
 

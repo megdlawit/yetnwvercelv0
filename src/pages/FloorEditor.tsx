@@ -15,7 +15,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-  ArrowLeft, MousePointer2, MapPin, Route, Eraser, QrCode, Download, Pencil,
+  ArrowLeft, MousePointer2, MapPin, Check, Route, Eraser, QrCode, Download, Pencil,
   Loader2, UploadCloud, Undo2, Redo2, ZoomIn, ZoomOut, Maximize, Trash2,
   SquarePlus, Ruler, PenLine, Square, Box, Columns2, Grid3x3, Magnet, AlertTriangle,
   CheckCircle2, Layers3, Crosshair, Hand, DoorOpen, Pentagon, Shapes, Type, LandPlot,
@@ -41,6 +41,7 @@ import { roomTypeFromName } from '@/lib/cad/commitVenue';
 import CadImportDialog from '@/components/venue/CadImportDialog';
 import EditorTour, { type EditorState } from '@/components/venue/EditorTour';
 import AddFloorsDialog from '@/components/venue/AddFloorsDialog';
+import type { LayerMapping } from '@/lib/cad/types';
 import PlaceDetailsEditor from '@/components/venue/PlaceDetailsEditor';
 import FeatureGlyph from '@/components/venue/FeatureGlyph';
 import type { FloorLayer } from '@/components/venue/Venue3D';
@@ -204,7 +205,7 @@ const FloorEditor = () => {
 
   const [floorMeta, setFloorMeta] = useState<{ name: string; level: number } | null>(null);
   const [floors, setFloors] = useState<{ id: string; name: string; level: number }[]>([]);
-  const [building, setBuilding] = useState<{ name: string; isPublished: boolean; theme: string | null; institutionId: string | null } | null>(null);
+  const [building, setBuilding] = useState<{ name: string; isPublished: boolean; theme: string | null; institutionId: string | null; placed: boolean } | null>(null);
   const [nodes, setNodes] = useState<NavNode[]>([]);
   const [edges, setEdges] = useState<NavEdge[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -247,7 +248,7 @@ const FloorEditor = () => {
   const [searchParams] = useSearchParams();
   const [importOpen, setImportOpen] = useState(() => searchParams.get('import') === '1');
   const [tour, setTour] = useState<{ open: boolean; justBuilt: boolean }>({ open: false, justBuilt: false });
-  const [addFloors, setAddFloors] = useState<{ open: boolean; file: File | null }>({ open: false, file: null });
+  const [addFloors, setAddFloors] = useState<{ open: boolean; file: File | null; mapping?: LayerMapping }>({ open: false, file: null });
   const closeTour = () => { setTour({ open: false, justBuilt: false }); try { localStorage.setItem(TOUR_SEEN_KEY, '1'); } catch { /* private mode */ } };
   const [publishAsk, setPublishAsk] = useState(false);
   const [xform, setXform] = useState({ dx: 1, dy: 0, deg: 90, f: 1.5 });
@@ -314,7 +315,7 @@ const FloorEditor = () => {
         supabase.from('walls').select('*').eq('building_id', buildingId),
         supabase.from('map_features').select('*').eq('building_id', buildingId),
       ]);
-      if (bRes.data) setBuilding({ name: bRes.data.name, isPublished: bRes.data.is_published, theme: bRes.data.theme ?? null, institutionId: bRes.data.institution_id ?? null });
+      if (bRes.data) setBuilding({ name: bRes.data.name, isPublished: bRes.data.is_published, theme: bRes.data.theme ?? null, institutionId: bRes.data.institution_id ?? null, placed: bRes.data.origin_lat != null && bRes.data.origin_lng != null });
       if (fRes.data) setFloorMeta({ name: fRes.data.name, level: fRes.data.level });
       const floorList = allFloors.data || [];
       setFloors(floorList);
@@ -805,6 +806,33 @@ const FloorEditor = () => {
     catch (err) { toast.error(err instanceof Error ? err.message : 'Could not save'); }
   };
 
+  /** The same 3D change on many rows (e.g. every wall's height) — one write, one undo. */
+  const editExtraMany = async (table: 'walls' | 'map_features' | 'rooms' | 'floors', ids: string[], patch: Extra, label: string): Promise<boolean> => {
+    if (!ids.length) return true;
+    const keys = Object.keys(patch);
+    const rowOf = (id: string): Record<string, unknown> | undefined => {
+      const rows = modelRef.current?.rows;
+      const list = table === 'map_features' ? rows?.map_features : rows?.[table];
+      return (list as Record<string, unknown>[] | undefined)?.find(r => r.id === id);
+    };
+    const before = new Map(ids.map(id => [id, Object.fromEntries(keys.map(k => [k, extras[id]?.[k] ?? rowOf(id)?.[k] ?? null]))] as const));
+    const fail = (message: string) => new Error(/column|schema cache/i.test(message) ? 'Run the indoor 3D migration (20261006090000) to save 3D details.' : message);
+    const forward = async () => {
+      const { error } = await supabase.from(table).update(patch as never).in('id', ids);
+      if (error) throw fail(error.message);
+      setExtras(p => ({ ...p, ...Object.fromEntries(ids.map(id => [id, { ...p[id], ...patch }])) }));
+    };
+    const back = async () => {
+      await eachLimited(ids, async id => {
+        const { error } = await supabase.from(table).update(before.get(id) as never).eq('id', id);
+        if (error) throw fail(error.message);
+      });
+      setExtras(p => ({ ...p, ...Object.fromEntries(ids.map(id => [id, { ...p[id], ...before.get(id) }])) }));
+    };
+    try { await forward(); history.push({ label: ids.length > 1 ? `${label} (${ids.length})` : label, undo: back, redo: forward }); return true; }
+    catch (err) { toast.error(err instanceof Error ? err.message : 'Could not save'); return false; }
+  };
+
   const addPlaceToRoom = async (room: Room) => {
     const c = roundPt(polygonCentroid(roomOutline(room)));
     const node = { id: crypto.randomUUID(), ...newRowBase(), ...stamp(), name: room.name, x: c.x, y: c.y, is_hallway: false, type: 'room' } as NodeRow;
@@ -831,8 +859,9 @@ const FloorEditor = () => {
     const add: Rows = {
       nodes: c.nodes.filter(n => n.floor_id === floorId).map(nodeRow),
       edges: c.edges.map(e => ({ id: e.id, building_id: buildingId, from_node: e.from_node, to_node: e.to_node, weight: e.weight, source: 'manual', ...stamp(), ...(e.connection ? { connection: e.connection, accessible: !!e.accessible } : {}) } as EdgeRow)),
-      features: c.features.map(f => ({ id: f.id, ...newRowBase(), floor_id: f.floor_id, ...stamp(), kind: f.kind, x: f.x, y: f.y, rotation_deg: 0, width: null, depth: null, label: f.label } as FeatureRow)),
-      rooms: [], walls: [],
+      features: c.features.map(f => ({ id: f.id, ...newRowBase(), floor_id: f.floor_id, ...stamp(), kind: f.kind, x: f.x, y: f.y, rotation_deg: f.rotation_deg ?? 0, width: f.width ?? null, depth: null, label: f.label } as FeatureRow)),
+      rooms: (c.rooms ?? []).map(r => ({ id: r.id, ...newRowBase(), floor_id: r.floor_id, ...stamp(), name: r.name, type: r.type, x: r.x, y: r.y, width: r.width, height: r.height, node_id: r.node_id, polygon: null } as RoomRow)),
+      walls: [],
     };
     // Places on other floors (the far end of a floor link) aren't drawn here.
     const elsewhere = c.nodes.filter(n => n.floor_id !== floorId).map(nodeRow);
@@ -914,6 +943,75 @@ const FloorEditor = () => {
           }
           return true;
         case 'remove': await deleteSelection(selOf(e.thing)); return true;
+        case 'redo': await history.redo(); return true;
+        case 'view': setView(e.mode); return true;
+        case 'fit': fitToContent(); return true;
+        case 'floor': navigate(`/admin/floors/${buildingId}/${e.floorId}/editor`); return true;
+        case 'setting':
+          (e.setting === 'grid' ? setGridOn : setSnapOn)(v => (e.on == null ? !v : e.on));
+          return true;
+        case 'tool': if (ALL_TOOLS.some(t => t.id === e.tool)) chooseTool(e.tool as Tool); return true;
+        case 'select_all':
+          setSel({ nodes: nodesRef.current.map(n => n.id), walls: wallsRef.current.map(w => w.id), features: featuresRef.current.map(f => f.id), rooms: roomsRef.current.map(r => r.id) });
+          return true;
+        case 'select_none': setSel(NO_SEL); return true;
+        case 'open':
+          if (e.panel === 'import') setImportOpen(true);
+          else if (e.panel === 'add_floor') setAddFloors({ open: true, file: null });
+          else if (e.panel === 'tour') setTour({ open: true, justBuilt: false });
+          else if (e.panel === 'world_map') navigate(`/dashboard/settings?venue=${buildingId}#location`);
+          else setSel(NO_SEL); // shortcuts are listed in the side panel when nothing is selected
+          return true;
+        case 'publish': await togglePublish(); return true;
+        case 'set_type':
+          if (e.thing.kind === 'room') await editRoom(e.thing.id, { type: e.kind as Room['type'] }, `Make ${e.thing.name} a ${e.kind}`);
+          else if (e.thing.kind === 'object') await editFeature(e.thing.id, { kind: e.kind as FeatureKind }, `Make ${e.thing.name} ${e.kind}`);
+          return true;
+        case 'resize': {
+          if (e.size) {
+            const f = featuresRef.current.find(x => x.id === e.thing.id);
+            if (!f) return false;
+            await editFeature(f.id, { width: e.size.width ?? f.width, depth: e.size.depth ?? f.depth }, `Resize ${e.thing.name}`);
+            return true;
+          }
+          if (e.scale) {
+            const before = takeSnap(selOf(e.thing));
+            await commitTransform(before, transformSnap(before, { kind: 'scale', c: selectionCenter(before), f: e.scale }), `Resize ${e.thing.name}`);
+            setSel(selOf(e.thing));
+            return true;
+          }
+          const room = roomsRef.current.find(r => r.id === e.thing.id);
+          if (!room || !e.rect) return false;
+          type Box = { x: number; y: number; width: number; height: number; polygon?: Pt[] };
+          const write = (b: Box) => async () => {
+            await run(supabase.from('rooms').update({ x: b.x, y: b.y, width: b.width, height: b.height, polygon: polyJson(b.polygon) }).eq('id', room.id));
+            setRooms(p => p.map(r => (r.id === room.id ? { ...r, ...b } : r)));
+          };
+          const before: Box = { x: room.x, y: room.y, width: room.width, height: room.height, polygon: room.polygon };
+          const after: Box = { ...e.rect, polygon: undefined };
+          await write(after)();
+          history.push({ label: `Resize ${e.thing.name}`, undo: write(before), redo: write(after) });
+          setSel(selOf(e.thing));
+          return true;
+        }
+        case 'rotate': {
+          if (e.thing.kind === 'object') {
+            const f = featuresRef.current.find(x => x.id === e.thing.id);
+            if (!f) return false;
+            await editFeature(f.id, { rotationDeg: (((f.rotationDeg ?? 0) + e.deg) % 360 + 360) % 360 }, `Rotate ${e.thing.name}`);
+            return true;
+          }
+          const before = takeSnap(selOf(e.thing));
+          await commitTransform(before, transformSnap(before, { kind: 'rotate', c: selectionCenter(before), deg: e.deg }), `Rotate ${e.thing.name}`);
+          setSel(selOf(e.thing));
+          return true;
+        }
+        case 'duplicate':
+          selRef.current = selOf(e.thing);
+          setSel(selRef.current);
+          duplicateSelection();
+          return true;
+        case 'set_3d': return await editExtraMany(e.table, e.ids, e.patch, e.what);
       }
     } catch (err) {
       console.error('Assistant edit failed:', err);
@@ -1369,7 +1467,7 @@ const FloorEditor = () => {
     const m = modelRef.current;
     if (!m || !floorId) return null;
     const v = viewRef.current;
-    return { floorId, rows: m.rows, selection: { nodes: selRef.current.nodes, rooms: selRef.current.rooms, features: selRef.current.features }, click: lastClick.current, view: { x: v.x + v.w / 2, y: v.y + v.h / 2 } };
+    return { floorId, rows: m.rows, selection: { nodes: selRef.current.nodes, rooms: selRef.current.rooms, features: selRef.current.features, walls: selRef.current.walls }, click: lastClick.current, view: { x: v.x + v.w / 2, y: v.y + v.h / 2 } };
   }, [floorId]);
   const mapHealth = useMemo(() => {
     if (!editorModel || !floorId) return [];
@@ -1513,6 +1611,21 @@ const FloorEditor = () => {
           <Button variant="outline" size="sm" className="h-8 rounded-lg" onClick={() => setImportOpen(true)} data-tour="editor-import">
             <UploadCloud className="h-4 w-4 mr-1.5" /> Import
           </Button>
+          {/* The step after editing: line the plan up with the real site. */}
+          {building && !isEmpty && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant={building.placed ? 'outline' : 'default'} size="sm" asChild data-tour="editor-world"
+                  className={cn('h-8 rounded-lg', !building.placed && 'bg-lime text-ink hover:bg-lime/90')}>
+                  <Link to={`/dashboard/settings?venue=${buildingId}#location`}>
+                    {building.placed ? <Check className="h-4 w-4 mr-1.5 text-emerald-600" /> : <MapPin className="h-4 w-4 mr-1.5" />}
+                    {building.placed ? 'On the world map' : <><span className="hidden md:inline">Next:&nbsp;</span>Place on world map</>}
+                  </Link>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{building.placed ? 'Adjust where your venue sits on the real map' : 'Line your plan up with the real site, so GPS and outdoor directions lead visitors to your door'}</TooltipContent>
+            </Tooltip>
+          )}
           <Button variant="outline" size="sm" className="h-8 rounded-lg" asChild>
             <a href={`/venue/${buildingId}?preview=1`} target="_blank" rel="noreferrer"><Globe className="h-4 w-4 mr-1.5" /> Preview</a>
           </Button>
@@ -2519,13 +2632,13 @@ const FloorEditor = () => {
           }}
           onViewIn3D={() => setView('split')}
           onStartTour={() => setTour({ open: true, justBuilt: true })}
-          onImportAsFloors={file => setAddFloors({ open: true, file })}
+          onImportAsFloors={(file, mapping) => setAddFloors({ open: true, file, mapping })}
         />
       )}
 
       {buildingId && (
-        <AddFloorsDialog open={addFloors.open} onOpenChange={o => setAddFloors(s => ({ open: o, file: o ? s.file : null }))}
-          buildingId={buildingId} initialFile={addFloors.file} pxPerMeter={PX_PER_METER}
+        <AddFloorsDialog open={addFloors.open} onOpenChange={o => setAddFloors(s => ({ open: o, file: o ? s.file : null, mapping: o ? s.mapping : undefined }))}
+          buildingId={buildingId} initialFile={addFloors.file} initialMapping={addFloors.mapping} pxPerMeter={PX_PER_METER}
           floors={floors.map(f => ({ ...f, hasMap: f.id === floorId ? !isEmpty : true }))}
           onDone={async made => {
             history.clear();

@@ -95,7 +95,7 @@ export async function commitVenue(
   graph.nodes.forEach((n, i) => { if (!n.isHallway && n.roomIndex !== null && nodeIds[i]) roomNode.set(n.roomIndex, nodeIds[i]); });
   await chunked(venue.rooms.map((r, i) => ({
     ...base, node_id: roomNode.get(i) ?? null, name: r.name,
-    x: r.x, y: r.y, width: r.width, height: r.height, type: roomTypeFromName(r.name),
+    x: r.x, y: r.y, width: r.width, height: r.height, type: r.type ?? roomTypeFromName(r.name),
     ...(hasPolygons ? { polygon: r.polygon.map(p => [p.x, p.y]) } : {}),
   })), part => supabase.from('rooms').insert(part));
 

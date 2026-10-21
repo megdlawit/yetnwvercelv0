@@ -22,6 +22,8 @@ export interface CadDrawing extends ParsedDxf {
   levels?: { name: string; elevation: number }[];
   level?: number;
   atLevel?: (index: number) => CadDrawing;
+  /** DWG only: the DXF text the server converted it to (sent to the layer labeler and kept as the source). */
+  convertedDxf?: string;
 }
 
 /** What a CAD layer becomes in the venue. */

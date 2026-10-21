@@ -7,6 +7,12 @@
 // see each other). Passages are the drawn doors, plus anywhere two rooms
 // meet without a wall between them (open doorways, arches, gaps).
 //
+// Halls and corridors that aren't drawn as rooms (often: a hall open to the
+// entrance never closes into a room) are walkable too: open space INSIDE the
+// building that no room owns becomes a hallway. Inside = not reachable from
+// the edge of the drawing once gaps in the walls up to ~1.6 m (doorways,
+// the entrance) are closed. Paths never go round the outside of the building.
+//
 // Everything is found on a fine grid that keeps a little clearance from
 // walls; paths are then straightened, so they never cut through a wall.
 // Coordinates are editor px. Output has the same shape as the older
@@ -33,7 +39,8 @@ export function buildRouteGraph({ walls, rooms, doors, pxPerMeter }: RouteGraphI
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const p of pts) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
   const cell = Math.max(0.1 * pxPerMeter, Math.max(maxX - minX, maxY - minY) / 1200);
-  const pad = 4;
+  // The margin must be wider than the gap-closing for the outside (outsideOf) to reach round the building.
+  const pad = Math.max(4, Math.round((0.8 * pxPerMeter) / cell) + 3);
   const W = Math.ceil((maxX - minX) / cell) + pad * 2 + 1, H = Math.ceil((maxY - minY) / cell) + pad * 2 + 1;
   const ox = minX - pad * cell, oy = minY - pad * cell;
   const N = W * H;
@@ -58,7 +65,10 @@ export function buildRouteGraph({ walls, rooms, doors, pxPerMeter }: RouteGraphI
     }
   }
   const doorCells = doors.map(cellOf);
-  for (const c of doorCells) for (const n of [c, c - 1, c + 1, c - W, c + W]) if (n >= 0 && n < N) blocked[n] = 0;
+  // A door opens the whole wall, not one cell: walls are often drawn as two lines ~20 cm apart,
+  // which with the clearance on both sides is ~0.5 m of blocked cells.
+  const doorR = Math.max(1, Math.round((0.35 * pxPerMeter) / cell));
+  for (const c of doorCells) for (const n of disk(c, doorR, W, H)) if (Math.hypot(n % W - c % W, Math.floor(n / W) - Math.floor(c / W)) <= doorR) blocked[n] = 0;
   // The bare walls, one cell thin: for the last-resort bridging, which only
   // asks whether a gap is physically passable at all.
   const thin = new Uint8Array(N);
@@ -68,7 +78,7 @@ export function buildRouteGraph({ walls, rooms, doors, pxPerMeter }: RouteGraphI
     const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) * 2));
     for (let i = 0; i <= n; i++) thin[idx(Math.round(ax + ((bx - ax) * i) / n), Math.round(ay + ((by - ay) * i) / n))] = 1;
   }
-  for (const c of doorCells) thin[c] = 0;
+  for (const c of doorCells) for (const n of disk(c, doorR, W, H)) if (Math.hypot(n % W - c % W, Math.floor(n / W) - Math.floor(c / W)) <= doorR) thin[n] = 0;
 
   // Distance to the nearest obstacle — a room's place goes where it is most open.
   const clear = chamfer(blocked, W, H);
@@ -88,6 +98,36 @@ export function buildRouteGraph({ walls, rooms, doors, pxPerMeter }: RouteGraphI
       if (!blocked[c] && pointInPolygon(toPt(c), poly)) owner[c] = i;
     }
   }
+  // Outside the building: reachable from the drawing's edge with every gap up to ~1.6 m closed.
+  // Rooms are inside by definition, so they bound it too: windows and glazing are not walls,
+  // and a glazed front would otherwise let "outside" into the living room.
+  const barrier = new Uint8Array(N);
+  for (let c = 0; c < N; c++) barrier[c] = thin[c] || owner[c] >= 0 ? 1 : 0;
+  const outside = outsideOf(barrier, W, H, Math.max(1, Math.round((0.8 * pxPerMeter) / cell)));
+  for (let c = 0; c < N; c++) if (owner[c] >= 0) outside[c] = 0;
+
+  // Open space inside the building that no room owns: hallways (pieces of at least ~1.5 m²).
+  const minHall = Math.max(4, Math.round((1.5 * pxPerMeter * pxPerMeter) / (cell * cell)));
+  const wide = Math.max(2, Math.round((0.3 * pxPerMeter) / cell));   // clearance from the walls' clearance band
+  let halls = 0;
+  for (let c0 = 0; c0 < N; c0++) {
+    if (blocked[c0] || outside[c0] || owner[c0] !== -1) continue;
+    const id = rooms.length + halls;
+    const cells = [c0];
+    owner[c0] = id;
+    for (let q = 0; q < cells.length; q++) {
+      const c = cells[q], x = c % W;
+      for (const n of [x > 0 ? c - 1 : -1, x < W - 1 ? c + 1 : -1, c - W, c + W]) {
+        if (n >= 0 && n < N && !blocked[n] && !outside[n] && owner[n] === -1) { owner[n] = id; cells.push(n); }
+      }
+    }
+    // Big enough, and somewhere at least ~0.6 m wide (a strip between a room outline and a wall isn't a corridor).
+    if (cells.length >= minHall && cells.some(c => clear[c] >= wide)) halls++;
+    else for (const c of cells) owner[c] = -2;
+  }
+  for (let c = 0; c < N; c++) if (owner[c] === -2) owner[c] = -1;
+  const spaces = rooms.length + halls;
+
   const reach = Math.max(2, Math.round((0.6 * pxPerMeter) / cell));
   const step = new Int32Array(N).fill(-1);
   let frontier: number[] = [];
@@ -154,12 +194,16 @@ export function buildRouteGraph({ walls, rooms, doors, pxPerMeter }: RouteGraphI
   const passageNode = passages.map(p => addNode(toPt(p.cell), true, null));
 
   const allowed = new Uint8Array(N);
-  const dist = new Float32Array(N).fill(Infinity), prev = new Int32Array(N).fill(-1);
+  // 64-bit: with 32-bit distances rounding made Dijkstra re-relax the same cells millions of times.
+  const dist = new Float64Array(N).fill(Infinity), prev = new Int32Array(N).fill(-1);
   let isolated = 0;
-  for (let ri = 0; ri < rooms.length; ri++) {
+  // Each space's cells, collected once (not a scan of the whole grid per space).
+  const cellsOf: number[][] = Array.from({ length: spaces }, () => []);
+  for (let c = 0; c < N; c++) if (owner[c] >= 0) cellsOf[owner[c]].push(c);
+  for (let ri = 0; ri < spaces; ri++) {
+    const hall = ri >= rooms.length;
     // this room's cells (its claim), plus a little room around its passages
-    const mine: number[] = [];
-    for (let c = 0; c < N; c++) if (owner[c] === ri) mine.push(c);
+    const mine = cellsOf[ri];
     if (!mine.length) continue;
     const myPassages = passages.map((p, i) => ({ p, i })).filter(({ p }) => p.rooms.has(ri));
     for (const c of mine) allowed[c] = 1;
@@ -187,8 +231,8 @@ export function buildRouteGraph({ walls, rooms, doors, pxPerMeter }: RouteGraphI
       if (score > bestReach) { bestReach = score; anchor = best; }
     }
 
-    const anchorNode = addNode(toPt(anchor), false, ri);
-    if (!myPassages.length) isolated++;
+    const anchorNode = addNode(toPt(anchor), hall, hall ? null : ri);
+    if (!myPassages.length) { if (!hall) isolated++; }
     else {
       dijkstra(anchor, allowed, W, N, dist, prev);
       const visible = (a: number, b: number) => lineOfSight(a, b, allowed, W);
@@ -198,13 +242,7 @@ export function buildRouteGraph({ walls, rooms, doors, pxPerMeter }: RouteGraphI
         for (let k = p.cell; k >= 0; k = prev[k]) raw.push(k);
         raw.reverse(); // place → passage
         // straighten: keep only the turns the walls force
-        const turns = [raw[0]];
-        for (let i0 = 0; i0 < raw.length - 1;) {
-          let j = raw.length - 1;
-          while (j > i0 + 1 && !visible(raw[i0], raw[j])) j--;
-          turns.push(raw[j]);
-          i0 = j;
-        }
+        const turns = straighten(raw, visible);
         let last = anchorNode;
         for (let t = 1; t < turns.length - 1; t++) { const bend = addNode(toPt(turns[t]), true, null); addEdge(last, bend); last = bend; }
         addEdge(last, passageNode[i]);
@@ -220,7 +258,10 @@ export function buildRouteGraph({ walls, rooms, doors, pxPerMeter }: RouteGraphI
     for (const { p } of myPassages) for (const n of disk(p.cell, 2, W, H)) allowed[n] = 0;
   }
 
-  bridgeNetworks(nodes, edges, addNode, addEdge, thin, W, H, cellOf, toPt);
+  // Bridges go through the building only: outside is as closed as a wall.
+  const inside = new Uint8Array(N);
+  for (let c = 0; c < N; c++) inside[c] = thin[c] || outside[c] ? 1 : 0;
+  bridgeNetworks(nodes, edges, addNode, addEdge, inside, W, H, cellOf, toPt);
 
   // Drop passage points nothing reached.
   const used = new Set(edges.flatMap(e => [e.from, e.to]));
@@ -233,6 +274,52 @@ export function buildRouteGraph({ walls, rooms, doors, pxPerMeter }: RouteGraphI
   const parts = components(outNodes.length, outEdges);
   if (parts > 1) warnings.push(`The paths form ${parts} separate networks — a door or opening may be missing from the drawing.`);
   return { nodes: outNodes, edges: outEdges, warnings };
+}
+
+/**
+ * Cells outside the building: flood from the grid's edge over cells that aren't wall,
+ * with the walls thickened by `close` cells so doorways and gaps up to 2 × close are shut.
+ */
+function outsideOf(walls: Uint8Array, W: number, H: number, close: number): Uint8Array {
+  const N = W * H;
+  // Thickened walls from the distance to the nearest wall (one pass each way, not a disk per cell).
+  const d = chamfer(walls, W, H);
+  const out = new Uint8Array(N);
+  const q: number[] = [];
+  const seed = (c: number) => { if (d[c] > close && !out[c]) { out[c] = 1; q.push(c); } };
+  for (let x = 0; x < W; x++) { seed(x); seed((H - 1) * W + x); }
+  for (let y = 0; y < H; y++) { seed(y * W); seed(y * W + W - 1); }
+  for (let i = 0; i < q.length; i++) {
+    const c = q[i], x = c % W;
+    for (const n of [x > 0 ? c - 1 : -1, x < W - 1 ? c + 1 : -1, c - W, c + W]) if (n >= 0 && n < N && d[n] > close && !out[n]) { out[n] = 1; q.push(n); }
+  }
+  // The band along the outer walls' outside face is outside too: grow up to `close` steps, stopping at walls.
+  let front = q;
+  for (let step = 0; step < close && front.length; step++) {
+    const next: number[] = [];
+    for (const c of front) {
+      const x = c % W;
+      for (const n of [x > 0 ? c - 1 : -1, x < W - 1 ? c + 1 : -1, c - W, c + W]) if (n >= 0 && n < N && !walls[n] && !out[n]) { out[n] = 1; next.push(n); }
+    }
+    front = next;
+  }
+  return out;
+}
+
+/**
+ * The turns of a grid path: from each turn, go as far along the path as stays in sight
+ * (scanning forward — linear in practice, where searching back from the end was cubic
+ * on long winding paths).
+ */
+function straighten(path: number[], visible: (a: number, b: number) => boolean): number[] {
+  const turns = [path[0]];
+  for (let i = 0; i < path.length - 1;) {
+    let j = i + 1;
+    while (j + 1 < path.length && visible(path[i], path[j + 1])) j++;
+    turns.push(path[j]);
+    i = j;
+  }
+  return turns;
 }
 
 function area(p: Pt[]) { let s = 0; for (let i = 0, j = p.length - 1; i < p.length; j = i++) s += p[j].x * p[i].y - p[i].x * p[j].y; return s / 2; }
@@ -263,7 +350,7 @@ function chamfer(blocked: Uint8Array, W: number, H: number): Float32Array {
 }
 
 /** Grid Dijkstra (8 neighbours) from `src`, limited to `allowed` cells. */
-function dijkstra(src: number, allowed: Uint8Array, W: number, N: number, dist: Float32Array, prev: Int32Array) {
+function dijkstra(src: number, allowed: Uint8Array, W: number, N: number, dist: Float64Array, prev: Int32Array) {
   const heap: [number, number][] = [[0, src]];
   dist[src] = 0;
   const steps = [[-1, 0, 1], [1, 0, 1], [0, -1, 1], [0, 1, 1], [-1, -1, 1.414], [1, -1, 1.414], [-1, 1, 1.414], [1, 1, 1.414]];
@@ -365,8 +452,7 @@ function bridgeNetworks(
       for (let i = 0; i <= n; i++) if (blocked[Math.round(ay + ((by - ay) * i) / n) * W + Math.round(ax + ((bx - ax) * i) / n)]) return false;
       return true;
     };
-    const turns = [path[0]];
-    for (let i = 0; i < path.length - 1;) { let j = path.length - 1; while (j > i + 1 && !free(path[i], path[j])) j--; turns.push(path[j]); i = j; }
+    const turns = straighten(path, free);
     const startNode = target.get(path[0])!;
     const endNode = nodes.findIndex((n, i) => find(i) === main && cellOf(n) === path[path.length - 1]);
     let last = startNode;

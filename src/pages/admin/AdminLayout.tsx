@@ -5,7 +5,7 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, ShieldCheck, Building, Map as MapIcon, Users, History, Building2, Sparkles, Route, Layers, Wallet, Code2,
+  LayoutDashboard, ShieldCheck, Building, Map as MapIcon, Users, History, Building2, Sparkles, Route, Layers, Code2,
   ChevronsLeft, ChevronsRight, Menu, LogOut, LayoutGrid, AlertTriangle, ExternalLink, Search,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -42,7 +42,6 @@ const NAV: { title: string; items: NavItem[] }[] = [
     { to: '/admin/tools/pois', label: 'Points of interest', icon: Sparkles },
     { to: '/admin/tools/paths', label: 'Outdoor paths', icon: Route },
     { to: '/admin/tools/layers', label: 'Map layers', icon: Layers },
-    { to: '/admin/tools/commerce', label: 'Commerce', icon: Wallet },
     { to: '/admin/tools/embed', label: 'Embed codes', icon: Code2 },
   ] },
 ];

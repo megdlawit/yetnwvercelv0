@@ -16,6 +16,8 @@ interface Input<P extends PlaceLike> {
   content: { kind: string; is_published: boolean; ends_at: string | null; starts_at: string | null }[];
   published: boolean;
   publishedAt: string | null;
+  /** Lined up with the real site on the world map (it has a location). */
+  placed?: boolean;
 }
 
 export interface SetupStep { id: string; label: string; done: boolean; hint: string }
@@ -37,6 +39,7 @@ export function venueHealth<P extends PlaceLike>(d: Input<P>, now = new Date()) 
   const steps: SetupStep[] = [
     { id: 'map', label: 'Upload map', done: hasMap, hint: 'CAD, PDF or an image of your plan' },
     { id: '3d', label: 'Generate 3D world', done: hasMap && d.counts.rooms > 0, hint: 'Areas are detected from your plan' },
+    { id: 'location', label: 'Place on the world map', done: !!d.placed, hint: 'Line your plan up with the real site, so GPS and outdoor directions lead visitors to your door' },
     { id: 'entrance', label: 'Add main entrance', done: entryPoints.length > 0, hint: 'Visitors start here; it gets a QR code' },
     { id: 'places', label: 'Add places', done: d.places.filter(p => p.poi).length >= 3, hint: 'Describe at least 3 places' },
     { id: 'content', label: 'Add visitor content', done: d.content.some(c => c.is_published), hint: 'A story, guide or event' },

@@ -36,7 +36,7 @@ export default function Home() {
   const unreachable = useMemo(() => unreachablePlaces(data).length, [data]);
   const h = useMemo(() => venueHealth({
     counts: data.counts, rooms: data.rooms, edges: data.edges, places, unreachable,
-    content: data.content, published: b.is_published, publishedAt: b.published_at ?? null,
+    content: data.content, published: b.is_published, publishedAt: b.published_at ?? null, placed: !!anchorOf(b),
   }), [data, places, unreachable, b]);
   const editor = editorUrl();
   const welcome = params.get('welcome') === '1';
@@ -80,6 +80,7 @@ function NextStep({ h, editor, onPublish, onDismiss }: { h: Health; editor: stri
   if (!next) return null;
   const go = () => {
     if (next.id === 'map' || next.id === '3d') { if (editor) navigate(`${editor}${next.id === 'map' ? '?import=1' : ''}`); }
+    else if (next.id === 'location') navigate('/dashboard/settings#location');
     else if (next.id === 'entrance') navigate('/dashboard/entry-points');
     else if (next.id === 'places') navigate('/dashboard/places');
     else if (next.id === 'content') navigate('/dashboard/stories?new=1');
@@ -95,7 +96,7 @@ function NextStep({ h, editor, onPublish, onDismiss }: { h: Health; editor: stri
         <div className="mt-3 h-1.5 max-w-sm overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary transition-all" style={{ width: `${h.setupPct}%` }} /></div>
       </div>
       <Button size="lg" onClick={go} className="rounded-full">
-        {next.id === 'map' ? <><Upload className="mr-1.5 h-4 w-4" /> Upload your map</> : next.id === 'publish' ? <><Globe className="mr-1.5 h-4 w-4" /> Publish</> : <>Let's do it <ArrowRight className="ml-1.5 h-4 w-4" /></>}
+        {next.id === 'map' ? <><Upload className="mr-1.5 h-4 w-4" /> Upload your map</> : next.id === 'location' ? <><MapPin className="mr-1.5 h-4 w-4" /> Place it on the map</> : next.id === 'publish' ? <><Globe className="mr-1.5 h-4 w-4" /> Publish</> : <>Let's do it <ArrowRight className="ml-1.5 h-4 w-4" /></>}
       </Button>
     </section>
   );

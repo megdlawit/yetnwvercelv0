@@ -56,3 +56,15 @@ describe('understanding what someone wants done to their map', () => {
     expect(parseIntent('what a lovely day')).toBeNull();
   });
 });
+
+describe('the phrases the docs promise', () => {
+  it('understands every example in the institution guide', () => {
+    for (const s of ['Connect Room 1 and Room 2', 'Fix everything', 'Add a 6 by 4 m meeting room called Board Room next to reception',
+      'Add a restroom here', 'Put an elevator next to the lobby', 'Make room 3 a restroom', 'Rename it to Gallery 2', 'Make room 2 bigger',
+      'Make it 10 x 5 m', 'Rotate this 90 degrees', 'Make the walls 3.2 m high', 'Make all walls glass', 'Set the ceiling to 3.5 m',
+      'Connect floor 1 to floor 2 via the elevator', 'Check accessibility', 'Place it on the world map', 'How far from the entrance to the café?', 'How many restrooms?',
+      "What's on this floor?", 'Show it in 3D', 'Go upstairs', 'Turn off the grid', 'I want to draw walls', 'Import a DWG', 'Add another floor', 'Publish']) {
+      expect(parseIntent(s), s).not.toBeNull();
+    }
+  });
+});

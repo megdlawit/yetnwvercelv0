@@ -1,6 +1,6 @@
 /**
  * AdminDashboard — unified admin shell with sidebar navigation.
- * Tabs: Buildings · POIs · Paths · Layers · Commerce
+ * Tabs: Buildings · POIs · Paths · Layers · Embed
  * Route: /admin
  *
  * Layout direction: a persistent Notion-style sidebar for navigation, with
@@ -11,7 +11,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  Building2, Sparkles, Wallet, Layers, Route, ChevronDown, LogOut, ArrowLeft, Code2,
+  Building2, Sparkles, Layers, Route, ChevronDown, LogOut, ArrowLeft, Code2,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -22,18 +22,16 @@ import { admin } from '@/components/admin/adminTheme';
 import AdminBuildings from './AdminBuildings';
 import AdminPOIs from './AdminPOIs';
 import AdminVenuePaths from './AdminVenuePaths';
-import MerchantDashboard from './MerchantDashboard';
 import AdminLayersDashboard from './Adminlayersdashboard';
 import AdminEmbed from './AdminEmbed';
 
-type AdminTab = 'buildings' | 'pois' | 'paths' | 'layers' | 'commerce' | 'embed';
+type AdminTab = 'buildings' | 'pois' | 'paths' | 'layers' | 'embed';
 
 const TABS: { id: AdminTab; label: string; icon: typeof Building2 }[] = [
   { id: 'buildings', label: 'Buildings', icon: Building2 },
   { id: 'pois',      label: 'POIs',      icon: Sparkles  },
   { id: 'paths',     label: 'Paths',     icon: Route     },
   { id: 'layers',    label: 'Layers',    icon: Layers    },
-  { id: 'commerce',  label: 'Commerce',  icon: Wallet    },
   { id: 'embed',     label: 'Embed',     icon: Code2     },
 ];
 
@@ -42,7 +40,6 @@ const TAB_META: Record<AdminTab, string> = {
   pois: 'Points of interest & promotions',
   paths: 'Curated outdoor walking paths',
   layers: 'Map layers & live overlays',
-  commerce: 'Merchant performance',
   embed: 'Partner embed codes',
 };
 
@@ -201,7 +198,6 @@ const AdminDashboard: React.FC = () => {
           {tab === 'pois'      && <AdminPOIs onNavigateToBuildings={() => setTab('buildings')} embedded />}
           {tab === 'paths'     && <AdminVenuePaths embedded />}
           {tab === 'layers'    && <AdminLayersDashboard embedded />}
-          {tab === 'commerce'  && <MerchantDashboard embedded />}
           {tab === 'embed'     && <div className="p-6"><AdminEmbed /></div>}
         </main>
       </div>

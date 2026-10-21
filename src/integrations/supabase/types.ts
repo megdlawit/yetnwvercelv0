@@ -261,6 +261,93 @@ export type Database = {
         }
         Relationships: []
       }
+      layer_labels: {
+        Row: {
+          id: string
+          building_id: string
+          import_id: string
+          file_name: string
+          source_path: string | null
+          layer_name: string
+          layer_summary: Json
+          summarizer_version: number
+          prompt_version: number | null
+          ai_model: string | null
+          ai_label: string
+          ai_confidence: number | null
+          final_label: string | null
+          was_corrected: boolean
+          human_verified: boolean
+          confirmed_via: string | null
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          building_id: string
+          import_id: string
+          file_name: string
+          source_path?: string | null
+          layer_name: string
+          layer_summary: Json
+          summarizer_version: number
+          prompt_version?: number | null
+          ai_model?: string | null
+          ai_label: string
+          ai_confidence?: number | null
+          final_label?: string | null
+          was_corrected?: boolean
+          human_verified?: boolean
+          confirmed_via?: string | null
+          created_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          final_label?: string | null
+          human_verified?: boolean
+          confirmed_via?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "layer_labels_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "buildings"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      layer_training_consents: {
+        Row: {
+          id: string
+          seq: number
+          building_id: string
+          decided_by: string | null
+          notice_version: number
+          accepted: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          building_id: string
+          decided_by?: string | null
+          notice_version: number
+          accepted: boolean
+          created_at?: string
+        }
+        Update: {
+          [_ in never]: never
+        }
+        Relationships: [
+          {
+            foreignKeyName: "layer_training_consents_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "buildings"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       user_accounts: {
         Row: {
           user_id: string
@@ -1171,6 +1258,8 @@ export type Database = {
       user_can_edit_building: { Args: { b: string }; Returns: boolean }
       user_can_edit_institution: { Args: { inst: string }; Returns: boolean }
       user_is_platform_admin: { Args: Record<PropertyKey, never>; Returns: boolean }
+      user_can_consent_for_building: { Args: { b: string }; Returns: boolean }
+      layer_training_consent_current: { Args: { b: string }; Returns: boolean }
       publish_venue: { Args: { b: string }; Returns: string }
       unpublish_venue: { Args: { b: string }; Returns: undefined }
     }

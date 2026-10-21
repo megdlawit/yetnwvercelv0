@@ -19,6 +19,8 @@ import FloorEditor from "./pages/FloorEditor";
 import DocsIntro from "./pages/docs/DocsIntro";
 import DocsAdmin from "./pages/docs/DocsAdmin";
 import DocsApi from "./pages/docs/DocsApi";
+import DocsInstitutions from "./pages/docs/DocsInstitutions";
+import DocsVisitors from "./pages/docs/DocsVisitors";
 import Embed from "./pages/Embed";
 import VenueMap from "./pages/VenueMap";
 import { WorkspaceProvider } from "@/contexts/WorkspaceContext";
@@ -105,10 +107,13 @@ const App = () => (
               <Route path="/admin/venue-paths" element={<Navigate to="/admin/tools/paths" replace />} />
               <Route path="/AdminLayersDashboard" element={<Navigate to="/admin/tools/layers" replace />} />
               <Route path="/admin/floors/:buildingId/:floorId/editor" element={<RequireAdminAuth><RequireVenueEditor><FloorEditor /></RequireVenueEditor></RequireAdminAuth>} />
-              <Route path="/merchant" element={<Navigate to="/admin/tools/commerce" replace />} />
+              <Route path="/merchant" element={<Navigate to="/admin" replace />} />
               <Route path="/doc" element={<DocsIntro />} />
               <Route path="/doc/admin" element={<DocsAdmin />} />
               <Route path="/doc/api" element={<DocsApi />} />
+              <Route path="/doc/institutions" element={<DocsInstitutions />} />
+              <Route path="/doc/visitors" element={<DocsVisitors />} />
+              <Route path="/docs/*" element={<Navigate to="/doc" replace />} />
               <Route path="/embed" element={<Embed />} />
               {/* The venue map: the /explore map and navigation, scoped to one published venue. */}
               <Route path="/venue/:buildingId" element={<VenueMap />} />

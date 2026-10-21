@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { pathsThroughWalls, type PlanRows } from '@ethi/indoor-core';
-import { MapView, healthOf, importSummary, plan, resolve, withChange, type MapState } from './engine';
+import { MapView, brief, healthOf, importSummary, plan, resolve, withChange, type MapState } from './engine';
 import { parseIntent } from './intent';
 
 const P = 40;
@@ -125,5 +125,75 @@ describe('the map assistant', () => {
     const g = importSummary(state());
     expect(g.reply).toMatch(/^Your floor plan is ready\. I found 3 rooms/);
     expect(g.chips.map(c => c.label)).toContain('Fix everything');
+  });
+});
+
+describe('the rest of the editor', () => {
+  it('understands views, floors, tools, settings and panels', () => {
+    expect(parseIntent('Show it in 3D')).toEqual([{ op: 'view', mode: '3d' }]);
+    expect(parseIntent('switch to split view')).toEqual([{ op: 'view', mode: 'split' }]);
+    expect(parseIntent('show me the whole plan')).toEqual([{ op: 'fit' }]);
+    expect(parseIntent('go upstairs')).toEqual([{ op: 'go_floor', floor: 'up' }]);
+    expect(parseIntent('turn off the grid')).toEqual([{ op: 'setting', setting: 'grid', on: false }]);
+    expect(parseIntent('I want to draw walls')).toEqual([{ op: 'tool', tool: 'wall' }]);
+    expect(parseIntent('import a DWG file')).toEqual([{ op: 'open', panel: 'import' }]);
+    expect(parseIntent('add another floor')).toEqual([{ op: 'open', panel: 'add_floor' }]);
+    expect(parseIntent('publish the map')).toEqual([{ op: 'publish' }]);
+    expect(parseIntent('redo')).toEqual([{ op: 'redo' }]);
+  });
+
+  it('understands sizes, rotation, kinds and 3D details', () => {
+    expect(parseIntent('Add a 6 by 4 m meeting room called Board Room next to Room 1')).toEqual([{ op: 'add_room', width: 6, depth: 4, kind: 'meeting', name: 'Board Room', near: 'Room 1', side: null }]);
+    expect(parseIntent('make Room 2 10 x 5 m')).toEqual([{ op: 'resize', target: 'Room 2', width: 10, depth: 5 }]);
+    expect(parseIntent('make room 2 bigger')).toEqual([{ op: 'resize', target: 'room 2', scale: 1.25 }]);
+    expect(parseIntent('rotate this 90 degrees')).toEqual([{ op: 'rotate', target: 'this', degrees: 90 }]);
+    expect(parseIntent('make Room 2 a restroom')).toEqual([{ op: 'set_type', target: 'Room 2', kind: 'restroom' }]);
+    expect(parseIntent('make the walls 3.2 m high')).toEqual([{ op: 'set_3d', target: 'walls', field: 'height', value: '3.2' }]);
+    expect(parseIntent('make all walls glass')).toEqual([{ op: 'set_3d', target: 'walls', field: 'material', value: 'glass' }]);
+    expect(parseIntent('how far is Room 1 from Room 2')).toEqual([{ op: 'measure', from: 'Room 2', to: 'Room 1' }]);
+    expect(parseIntent('how far from Room 1 to Room 2')).toEqual([{ op: 'measure', from: 'Room 1', to: 'Room 2' }]);
+    expect(parseIntent('how many rooms are there')).toEqual([{ op: 'list', what: 'rooms' }]);
+    // The older phrases still win.
+    expect(parseIntent('make Room 2 walkable')).toEqual([{ op: 'walkable', target: 'Room 2' }]);
+  });
+
+  it('adds a sized room that visitors can walk to', () => {
+    const s = state(rows(), { click: { x: 4 * P, y: 10 * P } });
+    const p = say('Add a 6 by 4 m office called Archive here', s);
+    expect(p.change!.rooms).toHaveLength(1);
+    const r = p.change!.rooms![0];
+    expect([r.name, r.type, r.width, r.height]).toEqual(['Archive', 'office', 6 * P, 4 * P]);
+    expect(p.change!.nodes.find(n => n.id === r.node_id)?.name).toBe('Archive');
+    expect(p.reply).toMatch(/6\.0 × 4\.0 m/);
+  });
+
+  it('resizes, retypes and rotates through editor edits', () => {
+    const s = state();
+    const big = say('make Room 2 10 x 5 m', s);
+    expect(big.edit).toMatchObject({ op: 'resize', rect: { width: 10 * P, height: 5 * P } });
+    expect(say('make Room 2 a restroom', s).edit).toMatchObject({ op: 'set_type', kind: 'restroom' });
+    expect(say('rotate Room 1 by 45', s).edit).toMatchObject({ op: 'rotate', deg: 45 });
+  });
+
+  it('sets 3D details on every wall in one go', () => {
+    const p = say('make the walls 3.2 m high', state());
+    expect(p.edit).toMatchObject({ op: 'set_3d', table: 'walls', patch: { height_m: 3.2 } });
+    expect((p.edit as { ids: string[] }).ids).toHaveLength(7);
+  });
+
+  it('answers questions about the map', () => {
+    const s = state();
+    expect(say('how many rooms are there', s).reply).toMatch(/^3 rooms on Floor 1: Room 1, Room 2, Room 12/);
+    expect(say('how far from Room 1 to Room 2', s).reply).toMatch(/Room 1 → Room 2: 8\.0 m in a straight line/);
+    expect(say("what's on this floor", s).reply).toMatch(/Floor 1: 3 rooms/);
+    expect(say('tell me about Room 1', s).reply).toMatch(/Room 1 is an office on Floor 1, about 8\.0 × 6\.0 m/);
+  });
+
+  it('gives the AI a detailed brief of the map', () => {
+    const b = brief(state());
+    expect(b).toMatch(/Rooms on this floor \(3\)/);
+    expect(b).toMatch(/- Room 1 \| office \| 8\.0×6\.0 \| 4\.0,3\.0 \| yes/);
+    expect(b).toMatch(/Walls: 7/);
+    expect(b).toMatch(/Health: /);
   });
 });

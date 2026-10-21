@@ -406,7 +406,7 @@ const AdminPOIs: React.FC<AdminPOIsProps> = ({ onNavigateToBuildings, embedded =
                 emptyText={loading ? 'Loading…' : 'Add a place and it rises here as its landmark'} />
             </Suspense>
             {selected && (
-              <div className="pointer-events-auto absolute bottom-3 left-3 right-3 flex items-center gap-3 rounded-2xl border bg-card/95 p-3 shadow-lg backdrop-blur sm:right-auto sm:w-[380px]">
+              <div className="pointer-events-auto absolute bottom-3 left-3 right-3 z-10 flex items-center gap-3 rounded-2xl border bg-card/95 p-3 shadow-lg backdrop-blur sm:right-auto sm:w-[380px]">
                 {selected.image_url
                   ? <img src={selected.image_url} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
                   : <span className="grid h-14 w-14 shrink-0 place-items-center rounded-xl text-white" style={{ background: toneHex(POI_CATEGORY_META[(selected.category as POICategory) || 'attraction'].tone) }}><Sparkles className="h-6 w-6" /></span>}

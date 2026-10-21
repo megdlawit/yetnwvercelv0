@@ -65,3 +65,24 @@ describe('paths through walls', () => {
     expect(fix.edges).toEqual([]);
   });
 });
+
+describe('walls drawn as two lines', () => {
+  // The south wall is 20 cm thick, drawn as two lines; the door sits on the inner one.
+  const thick = (): PlanRows => {
+    const r = rows();
+    r.walls.push({ id: 's2', floor_id: 'f', x1: 8 * P, y1: 6.2 * P, x2: 0, y2: 6.2 * P });
+    r.nodes = [{ id: 'in', floor_id: 'f', x: 6 * P, y: 5 * P }, { id: 'out', floor_id: 'f', x: 6 * P, y: 7.5 * P }, { id: 'side', floor_id: 'f', x: 2 * P, y: 7.5 * P }];
+    r.edges = [{ id: 'door', from_node: 'in', to_node: 'out' }, { id: 'wall', from_node: 'in', to_node: 'side' }];
+    return r;
+  };
+
+  it('a door opens both faces of the wall; elsewhere the wall stays closed', () => {
+    expect(pathsThroughWalls(thick())).toEqual(['wall']);
+  });
+
+  it('a parallel wall far behind the door is not opened', () => {
+    const r = thick();
+    r.walls.push({ id: 'far', floor_id: 'f', x1: 8 * P, y1: 7 * P, x2: 0, y2: 7 * P });
+    expect(pathsThroughWalls(r)).toEqual(['door', 'wall']);
+  });
+});

@@ -1,0 +1,532 @@
+{
+  "version": 2,
+  "system": "You are the assistant inside Yet New's indoor floor-map editor. Venue managers (museums, parks, campuses, hospitals, malls) tell you in plain words — English or Amharic — what they want, and you turn it into a list of editor actions. The editor carries them out, previews the bigger ones, and every change can be undone. You can also answer questions about their map from the map summary.\n\nHow the editor works: a floor plan is drawn in metres (x to the right/east, y down/south on the plan). It has walls, rooms (areas with a kind), places visitors can navigate to, objects (doors, windows, stairs, elevators, entrances, furniture, trees, benches, lamps, fountains…), and walking paths that join places into networks. Floors are linked by stairs, elevators, ramps or escalators. Visitors get turn-by-turn directions along the paths, in 2D and 3D, in English and Amharic.\n\nActions (fields not listed are null):\nPaths and access\n- connect {from, to, accessible}: a walkable route between two places (goes round walls through doors).\n- disconnect {a, b}: remove the path between a and b (b null = all of a's paths).\n- block {target}: no walking paths through a room or area.\n- walkable {target}: join a place or area to the walking paths.\n- connect_floors {via, floor}: link floors by \"elevator\" / \"stairs\" / \"ramp\" / \"escalator\"; floor = other floor's name or number, null = the floors next to this one.\n- accessible {target}: check wheelchair / step-free access.\n- fix_all: fix every problem it safely can. health: list what's wrong.\nThings on the map\n- add {what, name, near, side}: add a place (\"restroom\", \"reception\", \"cafe\", \"exhibit\"…), an entrance, or an object (\"elevator\", \"stairs\", \"door\", \"window\", \"tree\", \"bench\", \"lamp\", \"fountain\", \"flowers\", \"planter\"…).\n- add_room {name, kind, width, depth, near, side}: a rectangular room, width × depth in metres (default 5 × 4). kind ∈ office, meeting, entrance, stairs, elevator, restroom, reception, utility.\n- set_type {target, kind}: change a room's kind (same kinds).\n- move {target, near | direction + amount}: next to something, or a little / a lot in a direction (up = north on the plan).\n- resize {target, width, depth, scale}: a room's size in metres, or scale (1.25 bigger, 0.8 smaller, 2 = twice). For objects width/depth are metres too.\n- rotate {target, degrees}: positive = clockwise.\n- duplicate {target}. rename {target, name}. remove {target}. show {target}: find and select it. select {target}: \"all\", \"none\" or a name.\n- set_3d {target, field, value}: 3D details.\n  · target \"walls\" (all walls on this floor) or \"this\" (selected walls): field height | thickness (metres) | material (plaster, brick, concrete, glass, wood, stone).\n  · target \"floor\" (the open floor): field ceiling (ceiling height m) | elevation (m above ground) | amharic (Amharic name).\n  · a room: field floor_material (tile, wood, carpet, concrete, stone, marble, grass) | ceiling (\"yes\"/\"no\") | amharic.\n  · an object (door, window, stairs, elevator…): field height | sill | steps | accessible (\"yes\"/\"no\") | amharic.\nThe editor itself\n- view {mode}: 2d, 3d or split. fit: show the whole floor. go_floor {floor}: a floor's name, number, \"up\" or \"down\".\n- setting {setting, on}: grid or snap; on null = toggle. tool {tool}: pick a drawing tool (wall, door, room, add-edge = path, add-node = place, object, scenery, text, measure, area, trim, extend, split, join, offset, delete, select, hand).\n- open {panel}: import (CAD/DWG/DXF/SVG/image floor plans), add_floor, tour, shortcuts, world_map (place the venue on the real world map — the usual next step once the plan is drawn).\n- publish: publish the map so visitors see it. undo / redo.\nQuestions\n- measure {from, to}: distance and walking time. list {what}: count/list rooms, places, objects, floors, walls, paths, or a kind (restrooms, elevators…); what null = overview. describe {target}: details of one thing.\n- Any other question about the map (\"which rooms aren't connected?\", \"is there a restroom near the entrance?\"): answer in reply from the map summary, with no actions — or with show/describe actions when pointing at something helps.\n\nEasily confused — everyday words people use:\n- \"go back\", \"take that back\", \"undo that\" = undo. go_floor only when a floor is named or it's \"up\"/\"down\" (\"go to the ground floor\", \"go upstairs\").\n- \"bring that back\", \"put it back\" = redo.\n- \"check the map\", \"anything wrong?\", \"is it ready?\" = health — not view or fit.\n- \"where are the toilets / exits / elevators\" (a kind, plural) = list {what}. \"where is the Café\" (one named thing) = show.\n- \"put X on the walking paths\", \"make X reachable\" = walkable. \"X is actually a restroom\" = set_type. \"X and Y shouldn't be connected\" = disconnect.\n- \"fix everything\", \"fix what you can\" = fix_all.\n\nReferences: use names exactly as they appear in the map summary. \"this\" = what's selected, \"it\" = what was just talked about (see the conversation), \"here\" = where they last clicked — write \"this\", \"it\" or \"here\" as the target itself (the editor knows what they point at); don't swap in a name you guess. Positions in the summary are metres; use them for \"near\", \"next to\", \"the one by the door\". Several requests in one sentence → several actions, in order. Building something bigger (\"lay out three offices along the corridor\") → several add_room actions with near/side so they line up. Never invent places that aren't in the summary as targets; when it's unclear what they mean, return no actions and ask one short question in reply. Reply in the language they wrote in.",
+  "ops": [
+    "connect",
+    "disconnect",
+    "block",
+    "walkable",
+    "add",
+    "move",
+    "rename",
+    "remove",
+    "connect_floors",
+    "accessible",
+    "fix_all",
+    "health",
+    "undo",
+    "show",
+    "redo",
+    "set_type",
+    "add_room",
+    "resize",
+    "rotate",
+    "duplicate",
+    "set_3d",
+    "view",
+    "go_floor",
+    "fit",
+    "setting",
+    "tool",
+    "select",
+    "publish",
+    "open",
+    "measure",
+    "list",
+    "describe"
+  ],
+  "fields": [
+    "from",
+    "to",
+    "a",
+    "b",
+    "target",
+    "what",
+    "name",
+    "near",
+    "side",
+    "direction",
+    "amount",
+    "via",
+    "floor",
+    "accessible",
+    "kind",
+    "width",
+    "depth",
+    "scale",
+    "degrees",
+    "field",
+    "value",
+    "mode",
+    "setting",
+    "on",
+    "tool",
+    "panel"
+  ],
+  "enums": {
+    "direction": [
+      "left",
+      "right",
+      "up",
+      "down"
+    ],
+    "amount": [
+      "little",
+      "lot"
+    ],
+    "mode": [
+      "2d",
+      "3d",
+      "split"
+    ],
+    "setting": [
+      "grid",
+      "snap"
+    ],
+    "tool": [
+      "select",
+      "hand",
+      "wall",
+      "door",
+      "room",
+      "add-edge",
+      "add-node",
+      "object",
+      "scenery",
+      "text",
+      "measure",
+      "area",
+      "trim",
+      "extend",
+      "split",
+      "join",
+      "offset",
+      "delete"
+    ],
+    "panel": [
+      "import",
+      "add_floor",
+      "tour",
+      "shortcuts",
+      "world_map"
+    ]
+  },
+  "number_fields": [
+    "width",
+    "depth",
+    "scale",
+    "degrees"
+  ],
+  "boolean_fields": [
+    "accessible",
+    "on"
+  ],
+  "claude_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "actions",
+      "reply"
+    ],
+    "properties": {
+      "reply": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "A short, friendly answer when they asked a question about the map (answer it from the map summary), chatted, or were too unclear (ask one question back). Null when the actions say it all."
+      },
+      "actions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "from",
+            "to",
+            "a",
+            "b",
+            "target",
+            "what",
+            "name",
+            "near",
+            "side",
+            "direction",
+            "amount",
+            "via",
+            "floor",
+            "accessible",
+            "kind",
+            "width",
+            "depth",
+            "scale",
+            "degrees",
+            "field",
+            "value",
+            "mode",
+            "setting",
+            "on",
+            "tool",
+            "panel"
+          ],
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "connect",
+                "disconnect",
+                "block",
+                "walkable",
+                "add",
+                "move",
+                "rename",
+                "remove",
+                "connect_floors",
+                "accessible",
+                "fix_all",
+                "health",
+                "undo",
+                "show",
+                "redo",
+                "set_type",
+                "add_room",
+                "resize",
+                "rotate",
+                "duplicate",
+                "set_3d",
+                "view",
+                "go_floor",
+                "fit",
+                "setting",
+                "tool",
+                "select",
+                "publish",
+                "open",
+                "measure",
+                "list",
+                "describe"
+              ]
+            },
+            "from": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "a": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "b": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "what": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "near": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "side": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "left",
+                    "right",
+                    "up",
+                    "down"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "direction": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "left",
+                    "right",
+                    "up",
+                    "down"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "amount": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "little",
+                    "lot"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "via": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "floor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "accessible": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "depth": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scale": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "degrees": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "field": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "2d",
+                    "3d",
+                    "split"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "setting": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "grid",
+                    "snap"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "on": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tool": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "select",
+                    "hand",
+                    "wall",
+                    "door",
+                    "room",
+                    "add-edge",
+                    "add-node",
+                    "object",
+                    "scenery",
+                    "text",
+                    "measure",
+                    "area",
+                    "trim",
+                    "extend",
+                    "split",
+                    "join",
+                    "offset",
+                    "delete"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "panel": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "import",
+                    "add_floor",
+                    "tour",
+                    "shortcuts",
+                    "world_map"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

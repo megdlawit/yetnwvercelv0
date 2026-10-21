@@ -71,8 +71,30 @@ export default function PlanView({ floorId, data, selected, start, route, onSele
   useEffect(() => { if (follow && here && size.w > 0 && !drag) centerOn(here.x, here.y, 0, inset); }, [follow, here?.x, here?.y]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (focus && focus.nonce > 0 && size.w > 0) centerOn(focus.x, focus.y, 1.1, inset); }, [focus?.nonce, size.w > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const placesHere = places.filter(p => p.floorId === floorId);
+  const placesHere = useMemo(() => places.filter(p => p.floorId === floorId), [places, floorId]);
   const nodeById = useMemo(() => new Map(data.nodes.map(n => [n.id, n] as const)), [data.nodes]);
+  // Place names that don't collide: the picked and hovered place first, then the rest in order.
+  const nameTags = useMemo(() => {
+    const wantAll = show.labels && viewport.scale > 0.45;
+    const order = [...placesHere].sort((a, b) => Number(b.id === selected) * 2 + Number(b.id === hover) - (Number(a.id === selected) * 2 + Number(a.id === hover)));
+    const boxes: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    const out: { id: string; name: string; x: number; y: number; fs: number; strong: boolean }[] = [];
+    for (const p of order) {
+      const strong = p.id === selected || p.id === hover;
+      if (!wantAll && !strong) continue;
+      const r = (p.id === selected ? 15 : p.id === hover ? 12.5 : 11) * k;
+      const fs = (strong ? 13 : 11) * k, y = p.y - r - 6 * k;
+      const w = p.name.length * fs * 0.56 + 6 * k, h = fs * 1.25;
+      const b = { x0: p.x - w / 2, y0: y - h, x1: p.x + w / 2, y1: y + fs * 0.3 };
+      // Names keep clear of each other and of other places' pins.
+      const hitsName = boxes.some(o => b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0);
+      const hitsPin = placesHere.some(q => q.id !== p.id && q.x + 11 * k > b.x0 && q.x - 11 * k < b.x1 && q.y + 11 * k > b.y0 && q.y - 11 * k < b.y1);
+      if (!strong && (hitsName || hitsPin)) continue;
+      boxes.push(b);
+      out.push({ id: p.id, name: p.name, x: p.x, y, fs, strong });
+    }
+    return out;
+  }, [placesHere, show.labels, viewport.scale, selected, hover, k]);
   const routeColor = theme?.route ?? '#0ea5e9';
   const vb = viewport.viewBox;
   return (
@@ -130,13 +152,14 @@ export default function PlanView({ floorId, data, selected, start, route, onSele
               <circle cx={p.x} cy={p.y + 1.5 * k} r={r} fill="#000" opacity={0.18} />
               <circle cx={p.x} cy={p.y} r={r} fill={color} stroke="#fff" strokeWidth={2.5} vectorEffect="non-scaling-stroke" />
               <Icon x={p.x - r * 0.55} y={p.y - r * 0.55} width={r * 1.1} height={r * 1.1} color="#fff" strokeWidth={2.4} className="pointer-events-none" />
-              {((show.labels && viewport.scale > 0.45) || isSel || isHover) && (
-                <text x={p.x} y={p.y - r - 6 * k} textAnchor="middle" fontSize={(isSel || isHover ? 13 : 11) * k} stroke="hsl(var(--background))" strokeWidth={3.5 * k}
-                  paintOrder="stroke" className={cn('pointer-events-none fill-foreground', (isSel || isHover) && 'font-semibold')}>{p.name}</text>
-              )}
             </g>
           );
         })}
+        {/* Names above every pin, and only where they fit (the picked and hovered place first). */}
+        {nameTags.map(t => (
+          <text key={t.id} x={t.x} y={t.y} textAnchor="middle" fontSize={t.fs} stroke="hsl(var(--background))" strokeWidth={3.5 * k}
+            paintOrder="stroke" className={cn('pointer-events-none fill-foreground', t.strong && 'font-semibold')}>{t.name}</text>
+        ))}
         {here && (
           <g className="pointer-events-none" aria-label="You are here">
             <circle cx={here.x} cy={here.y} r={22 * k} fill="#0ea5e9" opacity={0.18}>

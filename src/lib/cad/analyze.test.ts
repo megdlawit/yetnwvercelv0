@@ -4,7 +4,7 @@ import { readDxf } from './readers/dxf';
 import { classifyLayers } from './classify';
 import { buildVenue } from './buildVenue';
 import { inferUnits, findDrawings, withinArea, quarterArcs, leafedArcs, polylineAsArc } from './analyze';
-import { detectRooms } from './detectRooms';
+import { detectRooms, doorwaySeals, rayToWall, sheetFrame } from './detectRooms';
 
 const pair = (c: number | string, v: string | number) => `${c}\n${v}\n`;
 let k = 1; // drawing scale applied by the helpers below
@@ -149,5 +149,35 @@ describe('walkable paths', () => {
     expect(g.edges.some(e => v.walls.some(w => cross(g.nodes[e.from], g.nodes[e.to], w)))).toBe(false);
     // the importer keeps the better-connected of the two methods
     expect(connectivity(walkableGraph(v, 40))).toBeGreaterThanOrEqual(connectivity(g));
+  });
+});
+
+describe('doorways that leave rooms joined', () => {
+  const W = (x1: number, y1: number, x2: number, y2: number) => ({ x1, y1, x2, y2 });
+  it('a wall stopping short of a crossing wall is a doorway (L-shaped)', () => {
+    // A 1 m gap between a wall end and the side of a crossing wall, at 40 px/m.
+    const seals = doorwaySeals([W(0, 0, 200, 0), W(240, -100, 240, 100)], 40);
+    expect(seals).toEqual([{ x1: 200, y1: 0, x2: 240, y2: 0 }]);
+  });
+  it('a wall that meets another is not a doorway', () => {
+    expect(doorwaySeals([W(0, 0, 240, 0), W(240, -100, 240, 100)], 40)).toEqual([]);
+  });
+  it('finds the end of a wall in line ahead (a centre line it would run along)', () => {
+    expect(rayToWall({ x: 0, y: 0 }, 1, 0, [W(30, 2, 200, 2)], 60, 40)).toEqual({ x: 30, y: 2 });
+    expect(rayToWall({ x: 0, y: 0 }, 1, 0, [W(70, 0, 200, 0)], 60, 40)).toBeNull(); // further than asked
+  });
+});
+
+describe('sheet frame (title block cells are not rooms)', () => {
+  const W = (x1: number, y1: number, x2: number, y2: number) => ({ x1, y1, x2, y2 });
+  const box = (x0: number, y0: number, x1: number, y1: number) => [W(x0, y0, x1, y0), W(x1, y0, x1, y1), W(x1, y1, x0, y1), W(x0, y1, x0, y0)];
+  it('a frame with the building floating inside it is a frame', () => {
+    const walls = [...box(0, 0, 2000, 1400), W(0, 1200, 2000, 1200), W(800, 1200, 800, 1400), // frame + title block row
+      ...box(300, 200, 900, 700), W(600, 200, 600, 700), ...box(1000, 300, 1500, 900), W(1000, 600, 1500, 600)]; // the building
+    expect(sheetFrame(walls, 40)).toEqual({ minX: 0, minY: 0, maxX: 2000, maxY: 1400 });
+  });
+  it("a rectangular building's outer walls are not a frame", () => {
+    const walls = [...box(0, 0, 800, 600), W(400, 0, 400, 600), W(0, 300, 400, 300), W(400, 200, 800, 200)];
+    expect(sheetFrame(walls, 40)).toBeNull();
   });
 });

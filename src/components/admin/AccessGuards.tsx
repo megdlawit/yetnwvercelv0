@@ -1,5 +1,5 @@
 // Who may open what, on top of being signed in (RequireAdminAuth):
-//  - the platform console (/admin, venue lists, POIs, layers, merchants) is
+//  - the platform console (/admin, venue lists, POIs, layers, embeds) is
 //    for the Yet New team only — institutions are sent to their dashboard;
 //  - a venue's map editor is for that venue's own team (or the Yet New team).
 // The database enforces the same rules (RLS); these keep people out of

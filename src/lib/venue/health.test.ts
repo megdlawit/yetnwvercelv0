@@ -8,7 +8,8 @@ describe('venue health', () => {
     const h = venueHealth(empty);
     expect(h.hasMap).toBe(false);
     expect(h.setupPct).toBe(0);
-    expect(h.steps.map(s => s.done)).toEqual([false, false, false, false, false, false]);
+    expect(h.steps.map(s => s.id)).toEqual(['map', '3d', 'location', 'entrance', 'places', 'content', 'publish']);
+    expect(h.steps.map(s => s.done)).toEqual([false, false, false, false, false, false, false]);
   });
 
   it('counts entrances, attractions, events, completeness and problems', () => {
@@ -28,7 +29,7 @@ describe('venue health', () => {
         { kind: 'event', is_published: true, starts_at: null, ends_at: '2026-10-10T00:00:00Z' },
         { kind: 'event', is_published: true, starts_at: null, ends_at: '2026-09-01T00:00:00Z' },
       ],
-      published: true, publishedAt: '2026-10-01T00:00:00Z',
+      published: true, publishedAt: '2026-10-01T00:00:00Z', placed: true,
     }, new Date('2026-10-02T00:00:00Z'));
     expect(h.entryPoints).toHaveLength(1);       // parking isn't on the map
     expect(h.attractions).toHaveLength(1);

@@ -18,6 +18,8 @@ export interface IndoorViewer3DProps {
   layers?: Partial<Layers>;
   places?: PlaceTag[] | null;
   roomLabels?: boolean;
+  /** A 3D landmark per place (read when the viewer starts; it re-asks when places change). */
+  placeModel?: (tag: PlaceTag) => import('three').Object3D | null;
   route?: Path3D | null;
   /** Metres of the route already walked. */
   progress?: number;
@@ -61,7 +63,7 @@ export const IndoorViewer3DView = forwardRef<IndoorViewer3D | null, IndoorViewer
   useEffect(() => {
     const v = new IndoorViewer3D(host.current!, {
       venue: props.venue, floorId: props.floorId, mode: props.mode, theme: props.theme, lang: props.lang, layers: props.layers,
-      places: props.places, roomLabels: props.roomLabels, cinematic: props.cinematic, reducedMotion: props.reducedMotion, shadows: props.shadows,
+      places: props.places, roomLabels: props.roomLabels, placeModel: props.placeModel, cinematic: props.cinematic, reducedMotion: props.reducedMotion, shadows: props.shadows,
       onSelect: props.onSelect, onFloorChange: props.onFloorChange, onModeChange: props.onModeChange, onZoomOutLimit: props.onZoomOutLimit,
     });
     viewer.current = v;

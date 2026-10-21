@@ -212,3 +212,172 @@ function offsetBy(poly: Pt[], d: number, s: number): Pt[] {
   });
 }
 const normal = (a: Pt, b: Pt) => { const l = Math.hypot(b.x - a.x, b.y - a.y) || 1; return { x: (b.y - a.y) / l, y: -(b.x - a.x) / l }; };
+
+/**
+ * Doorways drawn as plain gaps (no door swing): two wall ends 0.6–1.3 m apart, in line with
+ * both walls — the gap a door would fill. Sealed for finding rooms only (so a bedroom and the
+ * lobby aren't one room); the walking paths still pass through. Wide openings stay open.
+ */
+export function doorwaySeals(walls: Seg[], pxPerMeter: number): Seg[] {
+  const lo = 0.6 * pxPerMeter, hi = 1.3 * pxPerMeter;
+  type End = { x: number; y: number; dx: number; dy: number; w: number };
+  const ends: End[] = [];
+  walls.forEach((w, i) => {
+    const L = Math.hypot(w.x2 - w.x1, w.y2 - w.y1);
+    if (L < 0.2 * pxPerMeter) return;
+    const ux = (w.x2 - w.x1) / L, uy = (w.y2 - w.y1) / L;
+    ends.push({ x: w.x1, y: w.y1, dx: -ux, dy: -uy, w: i }, { x: w.x2, y: w.y2, dx: ux, dy: uy, w: i });   // pointing out of the wall
+  });
+  // Bucket the ends so the pair search stays fast on big plans.
+  const cellSize = hi, grid = new Map<string, number[]>();
+  const key = (x: number, y: number) => `${Math.floor(x / cellSize)},${Math.floor(y / cellSize)}`;
+  ends.forEach((e, i) => { const k = key(e.x, e.y); (grid.get(k) ?? grid.set(k, []).get(k)!).push(i); });
+  const out: Seg[] = [];
+  const used = new Set<number>();
+  ends.forEach((a, i) => {
+    if (used.has(i)) return;
+    const cx = Math.floor(a.x / cellSize), cy = Math.floor(a.y / cellSize);
+    let best: { j: number; d: number } | null = null;
+    for (let gx = cx - 1; gx <= cx + 1; gx++) for (let gy = cy - 1; gy <= cy + 1; gy++) for (const j of grid.get(`${gx},${gy}`) ?? []) {
+      if (j === i || used.has(j)) continue;
+      const b = ends[j];
+      if (b.w === a.w) continue;
+      const vx = b.x - a.x, vy = b.y - a.y, d = Math.hypot(vx, vy);
+      if (d < lo || d > hi) continue;
+      // The gap continues both walls: a points towards b, b towards a, and they face each other.
+      if ((a.dx * vx + a.dy * vy) / d < 0.97 || -(b.dx * vx + b.dy * vy) / d < 0.97) continue;
+      if (!best || d < best.d) best = { j, d };
+    }
+    if (best) {
+      const b = ends[best.j];
+      used.add(i); used.add(best.j);
+      out.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+    }
+  });
+
+  // A wall that stops short of a crossing wall (an L-shaped doorway): carry its free end
+  // straight on; meeting a wall 0.6–1.3 m ahead, roughly square on, is a doorway too.
+  const near = 0.1 * pxPerMeter, cap = 0.4 * pxPerMeter;
+  const segGrid = new Map<string, number[]>();
+  walls.forEach((w, i) => {
+    for (let gx = Math.floor(Math.min(w.x1, w.x2) / cellSize); gx <= Math.floor(Math.max(w.x1, w.x2) / cellSize); gx++)
+      for (let gy = Math.floor(Math.min(w.y1, w.y2) / cellSize); gy <= Math.floor(Math.max(w.y1, w.y2) / cellSize); gy++)
+        (segGrid.get(`${gx},${gy}`) ?? segGrid.set(`${gx},${gy}`, []).get(`${gx},${gy}`)!).push(i);
+  });
+  const around = (x: number, y: number) => {
+    const cx = Math.floor(x / cellSize), cy = Math.floor(y / cellSize), found = new Set<number>();
+    for (let gx = cx - 1; gx <= cx + 1; gx++) for (let gy = cy - 1; gy <= cy + 1; gy++) for (const j of segGrid.get(`${gx},${gy}`) ?? []) found.add(j);
+    return found;
+  };
+  ends.forEach((a, i) => {
+    if (used.has(i)) return;
+    const others = around(a.x, a.y);
+    // Free end: no other real wall touches it (short jamb caps of a double-line wall don't count).
+    for (const j of others) {
+      if (j === a.w) continue;
+      const w = walls[j];
+      if (Math.hypot(w.x2 - w.x1, w.y2 - w.y1) >= cap && distToSeg(a, w) <= near) return;
+    }
+    let hit: { d: number; x: number; y: number } | null = null;
+    for (const j of others) {
+      if (j === a.w) continue;
+      const w = walls[j], ex = w.x2 - w.x1, ey = w.y2 - w.y1, L = Math.hypot(ex, ey);
+      if (L < cap || Math.abs((a.dx * ex + a.dy * ey) / L) > 0.5) continue;
+      // Ray a + t·dir against the segment.
+      const den = a.dx * ey - a.dy * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      const t = ((w.x1 - a.x) * ey - (w.y1 - a.y) * ex) / den, u = ((w.x1 - a.x) * a.dy - (w.y1 - a.y) * a.dx) / den;
+      if (t <= 0 || u < 0 || u > 1) continue;
+      if (!hit || t < hit.d) hit = { d: t, x: a.x + a.dx * t, y: a.y + a.dy * t };
+    }
+    if (hit && hit.d >= lo && hit.d <= hi) out.push({ x1: a.x, y1: a.y, x2: hit.x, y2: hit.y });
+  });
+  return out;
+}
+
+function distToSeg(p: { x: number; y: number }, w: Seg): number {
+  const ex = w.x2 - w.x1, ey = w.y2 - w.y1, L2 = ex * ex + ey * ey || 1;
+  const t = Math.max(0, Math.min(1, ((p.x - w.x1) * ex + (p.y - w.y1) * ey) / L2));
+  return Math.hypot(p.x - (w.x1 + ex * t), p.y - (w.y1 + ey * t));
+}
+
+/**
+ * The first wall straight ahead of p along unit direction (dx, dy), within maxDist: a wall it
+ * crosses, or the end of a wall lying in line with it (a wall centre line it would run along).
+ */
+export function rayToWall(p: Pt, dx: number, dy: number, walls: Seg[], maxDist: number, pxPerMeter: number): Pt | null {
+  const side = 0.25 * pxPerMeter, skip = 0.05 * pxPerMeter;
+  let best: { t: number; at: Pt } | null = null;
+  const take = (t: number, at: Pt) => { if (t > skip && t <= maxDist && (!best || t < best.t)) best = { t, at }; };
+  for (const w of walls) {
+    const ex = w.x2 - w.x1, ey = w.y2 - w.y1, den = dx * ey - dy * ex;
+    if (Math.abs(den) > 1e-9) {
+      const t = ((w.x1 - p.x) * ey - (w.y1 - p.y) * ex) / den, u = ((w.x1 - p.x) * dy - (w.y1 - p.y) * dx) / den;
+      if (u >= 0 && u <= 1) take(t, { x: p.x + dx * t, y: p.y + dy * t });
+    }
+    for (const q of [{ x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }]) {
+      const along = (q.x - p.x) * dx + (q.y - p.y) * dy, across = Math.abs((q.x - p.x) * dy - (q.y - p.y) * dx);
+      if (across <= side) take(along, q);
+    }
+  }
+  return best ? (best as { t: number; at: Pt }).at : null;
+}
+
+/**
+ * The sheet's frame, when the drawing has one: lines along all four sides of the drawing's
+ * outer box (≥ 80 % of each side). Returns that box, or null. Rooms touching it are the
+ * title block's cells, not rooms — a building never sits right against the paper's border.
+ */
+export function sheetFrame(walls: Seg[], pxPerMeter: number): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  if (walls.length < 4) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const w of walls) {
+    minX = Math.min(minX, w.x1, w.x2); maxX = Math.max(maxX, w.x1, w.x2);
+    minY = Math.min(minY, w.y1, w.y2); maxY = Math.max(maxY, w.y1, w.y2);
+  }
+  const tol = 0.15 * pxPerMeter;
+  const along = (horizontal: boolean, at: number) => {
+    let len = 0;
+    for (const w of walls) {
+      const [a1, a2, b1, b2] = horizontal ? [w.y1, w.y2, w.x1, w.x2] : [w.x1, w.x2, w.y1, w.y2];
+      if (Math.abs(a1 - at) <= tol && Math.abs(a2 - at) <= tol) len += Math.abs(b2 - b1);
+    }
+    return len;
+  };
+  const W = maxX - minX, H = maxY - minY;
+  const framed = along(true, minY) >= 0.8 * W && along(true, maxY) >= 0.8 * W && along(false, minX) >= 0.8 * H && along(false, maxX) >= 0.8 * H;
+  if (!framed) return null;
+  // A building's outer walls look the same, but its inside walls join them. A sheet's frame
+  // holds only the title block: the building floats inside it, joined to nothing.
+  const parent = walls.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const size = Math.max(W, H) / 64 || 1, grid = new Map<string, number[]>();
+  walls.forEach((w, i) => {
+    for (let gx = Math.floor(Math.min(w.x1, w.x2) / size); gx <= Math.floor(Math.max(w.x1, w.x2) / size); gx++)
+      for (let gy = Math.floor(Math.min(w.y1, w.y2) / size); gy <= Math.floor(Math.max(w.y1, w.y2) / size); gy++)
+        (grid.get(`${gx},${gy}`) ?? grid.set(`${gx},${gy}`, []).get(`${gx},${gy}`)!).push(i);
+  });
+  walls.forEach((w, i) => {
+    for (const q of [{ x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }]) {
+      const gx = Math.floor(q.x / size), gy = Math.floor(q.y / size);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const j of grid.get(`${gx + dx},${gy + dy}`) ?? [])
+        if (j !== i && distToSeg(q, walls[j]) <= tol) parent[find(i)] = find(j);
+    }
+  });
+  const onEdge = walls.findIndex(w => Math.abs(w.y1 - minY) <= tol && Math.abs(w.y2 - minY) <= tol);
+  const frameSet = find(onEdge);
+  // A big structure (≥ 40 % of the sheet across) joined to nothing on the frame:
+  // the building. Furniture, fixtures and a free-standing stair are separate too, but smaller.
+  const boxes = new Map<number, { x0: number; y0: number; x1: number; y1: number }>();
+  walls.forEach((w, i) => {
+    const k = find(i); if (k === frameSet) return;
+    const b = boxes.get(k) ?? { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+    boxes.set(k, { x0: Math.min(b.x0, w.x1, w.x2), y0: Math.min(b.y0, w.y1, w.y2), x1: Math.max(b.x1, w.x1, w.x2), y1: Math.max(b.y1, w.y1, w.y2) });
+  });
+  // …and it keeps clear of the frame on at least three sides, the way a drawing sits on a sheet
+  // (a hatch inside a building's room, like a car park, runs up against the walls).
+  const margins = (b: { x0: number; y0: number; x1: number; y1: number }) =>
+    [(b.x0 - minX) / W, (maxX - b.x1) / W, (b.y0 - minY) / H, (maxY - b.y1) / H].filter(m => m >= 0.04).length;
+  const floating = [...boxes.values()].some(b => (b.x1 - b.x0 >= 0.4 * W || b.y1 - b.y0 >= 0.4 * H) && margins(b) >= 3);
+  return floating ? { minX, minY, maxX, maxY } : null;
+}

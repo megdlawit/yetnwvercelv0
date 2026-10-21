@@ -71,6 +71,12 @@ export interface ViewerOptions {
   places?: PlaceTag[] | null;
   /** Show room names too. */
   roomLabels?: boolean;
+  /**
+   * A 3D landmark for a place (about any size — it's scaled to fit), drawn
+   * floating over a pulsing ring in its colour, with its name above — the
+   * control center's look. Null keeps the round badge for that place.
+   */
+  placeModel?: (tag: PlaceTag) => THREE.Object3D | null;
   /** Home-page style entrance: a slow glide in, then a gentle turn until touched. */
   cinematic?: boolean;
   onSelect?: (sel: Selection | null) => void;
@@ -85,6 +91,9 @@ interface FloorState { built: BuiltFloor | null; opacity: number; target: number
 /** The follow camera looks this far ahead along the route and trails this far behind (the prototype's 3.4 / 4.2 m). */
 const LOOK_AHEAD = 3.4;
 const TRAIL = 4.2;
+/** Places' 3D landmarks: how high they float over the floor, and how big they are (metres). */
+const LM_BASE = 2.2;
+const LM_SIZE = 1.25;
 
 export class IndoorViewer3D {
   readonly root: HTMLDivElement;
@@ -97,6 +106,9 @@ export class IndoorViewer3D {
   private you: YouMarker;
   private dest: DestinationMarker;
   private stems: THREE.InstancedMesh | null = null;
+  /** Places' 3D landmarks on the floor in view. */
+  private marks: { group: THREE.Group; items: { id: string; float: THREE.Group; halo: THREE.Mesh; i: number; k: number }[]; pickables: THREE.Object3D[] } | null = null;
+  private modelCache = new Map<string, THREE.Object3D | null>();
   private highlight: THREE.Mesh | null = null;
   /** The see-through window's current radius (eases open and shut). */
   private xrayR = 0;
@@ -247,7 +259,7 @@ export class IndoorViewer3D {
 
   setLang(lang: Lang) { this.lang = lang; this.refreshLabels(); this.renderWalkBar(); }
 
-  setPlaces(places: PlaceTag[] | null) { this.places = places; this.refreshLabels(); }
+  setPlaces(places: PlaceTag[] | null) { this.places = places; this.clearMarks(); this.dropModels(); this.refreshLabels(); }
 
   setRoomLabels(on: boolean) { this.roomLabels = on; this.refreshLabels(); }
 
@@ -653,6 +665,8 @@ export class IndoorViewer3D {
     this.floors.clear();
     this.ribbon.dispose(); this.you.dispose(); this.dest.dispose();
     if (this.stems) { this.stems.geometry.dispose(); (this.stems.material as THREE.Material).dispose(); }
+    this.clearMarks();
+    this.dropModels();
     if (this.highlight) { this.highlight.geometry.dispose(); (this.highlight.material as THREE.Material).dispose(); }
     this.walkBar?.remove();
     this.textures.dispose();
@@ -784,7 +798,11 @@ export class IndoorViewer3D {
     // Places always get their badge; the Names layer adds names (and room names).
     const tags = this.tags();
     const names = !!this.layers.labels;
-    for (const t of tags) specs.push({ id: t.id, text: t.name, sub: t.sub, color: t.color, kind: 'place', floorId: t.floorId, at: new THREE.Vector3(t.at.x, (elev.get(t.floorId) ?? 0) + 2.1, t.at.z), priority: t.priority ?? 1, image: t.image, icon: t.icon, showName: names });
+    for (const t of tags) {
+      // A place with a 3D landmark gets its name pill over the model; the others keep their badge.
+      const lm = !!this.modelFor(t);
+      specs.push({ id: t.id, text: t.name, sub: t.sub, color: t.color, kind: 'place', floorId: t.floorId, at: new THREE.Vector3(t.at.x, (elev.get(t.floorId) ?? 0) + (lm ? LM_BASE + LM_SIZE * 0.75 : 2.1), t.at.z), priority: t.priority ?? 1, image: t.image, icon: t.icon, showName: names || lm, pill: lm });
+    }
     if (this.layers.labels && this.roomLabels) {
       const tagged = new Set(tags.map(t => t.id));
       for (const r of this.venue.rooms) {
@@ -805,7 +823,10 @@ export class IndoorViewer3D {
   /** A thin stem in each place's colour from the floor up to its tag, and a dot where it stands. */
   private buildStems() {
     if (this.stems) { this.scene.remove(this.stems); this.stems.geometry.dispose(); (this.stems.material as THREE.Material).dispose(); this.stems = null; }
-    const tags = this.tags().filter(t => t.floorId === this.floorId);
+    this.clearMarks();
+    const all = this.tags().filter(t => t.floorId === this.floorId);
+    this.buildMarks(all.filter(t => this.modelFor(t)));
+    const tags = all.filter(t => !this.modelFor(t));
     if (!tags.length) return;
     const geo = new THREE.CylinderGeometry(0.035, 0.035, 1, 6).translate(0, 0.5, 0);
     const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ roughness: 0.6 }), tags.length);
@@ -819,6 +840,104 @@ export class IndoorViewer3D {
     mesh.castShadow = true;
     this.stems = mesh;
     this.scene.add(mesh);
+  }
+
+  /** The app's 3D landmark for a place (asked once per place). */
+  private modelFor(t: PlaceTag): THREE.Object3D | null {
+    if (!this.opts.placeModel) return null;
+    if (!this.modelCache.has(t.id)) {
+      let m: THREE.Object3D | null = null;
+      try { m = this.opts.placeModel(t); } catch { m = null; }
+      this.modelCache.set(t.id, m);
+    }
+    return this.modelCache.get(t.id) ?? null;
+  }
+
+  /** Frees the cached landmark models (geometry the app marks userData.shared is left alone). */
+  private dropModels() {
+    for (const m of this.modelCache.values()) m?.traverse(o => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      if (!mesh.geometry.userData.shared) mesh.geometry.dispose();
+      (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach(x => { if (!x.userData?.shared) x.dispose(); });
+    });
+    this.modelCache.clear();
+  }
+
+  private clearMarks() {
+    if (!this.marks) return;
+    this.scene.remove(this.marks.group);
+    // Ring, dot and stem are ours; the models belong to the cache (reused on the next build).
+    for (const it of this.marks.items) {
+      for (const o of [...it.float.children]) it.float.remove(o);
+    }
+    this.marks.group.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && !m.geometry.userData.shared) { m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
+    });
+    this.marks = null;
+  }
+
+  /** Each place as a floating toon landmark over a pulsing ring in its colour, on a thin stem. */
+  private buildMarks(tags: PlaceTag[]) {
+    if (!tags.length) return;
+    const group = new THREE.Group();
+    const elev = this.venue.floors.find(f => f.id === this.floorId)?.elevation ?? 0;
+    const items: NonNullable<IndoorViewer3D['marks']>['items'] = [];
+    const pickables: THREE.Object3D[] = [];
+    tags.forEach((t, i) => {
+      const model = this.modelFor(t)!;
+      const color = new THREE.Color(t.color ?? this.theme.ink);
+      const root = new THREE.Group();
+      root.position.set(t.at.x, elev, t.at.z);
+      // Fit the model to LM_SIZE metres, standing on its own centre.
+      model.scale.setScalar(1);
+      model.position.set(0, 0, 0);
+      const box = new THREE.Box3().setFromObject(model), size = box.getSize(new THREE.Vector3());
+      const k = LM_SIZE / Math.max(size.x, size.y, size.z, 0.01);
+      model.scale.setScalar(k);
+      // Centre it on its stem, whatever its own origin.
+      const mid = box.getCenter(new THREE.Vector3()).multiplyScalar(k);
+      model.position.set(-mid.x, -mid.y, -mid.z);
+      const float = new THREE.Group();
+      float.position.y = LM_BASE;
+      float.add(model);
+      const halo = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.45, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+      halo.position.y = 0.05;
+      const dot = new THREE.Mesh(new THREE.CircleGeometry(0.16, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color }));
+      dot.position.y = 0.045;
+      const stemLen = LM_BASE - LM_SIZE * 0.45;
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, stemLen, 6), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6 }));
+      stem.position.y = stemLen / 2;
+      root.add(float, halo, dot, stem);
+      model.traverse(o => { o.userData.placeId = t.id; if ((o as THREE.Mesh).isMesh) { o.castShadow = true; pickables.push(o); } });
+      group.add(root);
+      items.push({ id: t.id, float, halo, i, k: 1 });
+    });
+    this.marks = { group, items, pickables };
+    this.scene.add(group);
+    this.dirty = true;
+  }
+
+  /** Bob, sway and pulse the landmarks; the selected one grows. True while they move. */
+  private animateMarks(): boolean {
+    const m = this.marks;
+    if (!m) return false;
+    const show = this.mode !== 'follow' && this.mode !== 'walk';
+    m.group.visible = show;
+    if (!show) return false;
+    const t = this.time;
+    for (const it of m.items) {
+      const on = it.id === this.selected;
+      it.k += ((on ? 1.3 : 1) - it.k) * 0.15;
+      it.float.scale.setScalar(it.k);
+      it.float.position.y = LM_BASE + (this.reduced ? 0 : Math.sin(t * 1.6 + it.i * 0.9) * 0.08);
+      it.float.rotation.y = this.reduced ? 0 : Math.sin(t * 0.5 + it.i) * 0.35;
+      const ph = this.reduced ? 0.4 : (t * 0.6 + it.i * 0.13) % 1;
+      it.halo.scale.setScalar((1 + ph * 1.6) * (on ? 1.3 : 1));
+      (it.halo.material as THREE.MeshBasicMaterial).opacity = (1 - ph) * (on ? 0.95 : 0.6);
+    }
+    return !this.reduced;
   }
 
   private bindPointer(el: HTMLCanvasElement) {
@@ -843,6 +962,9 @@ export class IndoorViewer3D {
         }
         return;
       }
+      // A place's landmark first: it floats above everything else.
+      const mark = this.marks?.group.visible ? ray.intersectObjects(this.marks.pickables, false)[0] : undefined;
+      if (mark?.object.userData.placeId) { this.pick(mark.object.userData.placeId as string); return; }
       const hit = cur ? ray.intersectObjects(cur.pickables, false)[0] : undefined;
       if (!hit) { this.opts.onSelect?.(null); return; }
       const room = pickRoom(this.venue, this.floorId, { x: hit.point.x, z: hit.point.z });
@@ -952,7 +1074,8 @@ export class IndoorViewer3D {
     if (this.mode === 'follow') this.updateSubject();
     const moving = this.director.update(dt, this.floors.get(this.floorId)?.built?.solid ?? []);
     const seeing = this.updateSeeThrough(dt);
-    const animating = this.ribbon.mesh.visible || this.you.group.visible || this.dest.group.visible || this.spin || !!this.director.guiding;
+    const marking = this.animateMarks();
+    const animating = marking || this.ribbon.mesh.visible || this.you.group.visible || this.dest.group.visible || this.spin || !!this.director.guiding;
     if (!(moving || fading || animating || seeing || this.dirty)) return;
     this.dirty = false;
 

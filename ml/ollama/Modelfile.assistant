@@ -1,0 +1,38 @@
+# Yet New map-editor assistant: Qwen2.5-3B-Instruct + LoRA (merged), GGUF q4_k_m.
+#
+# Put yetnew-assistant.Q4_K_M.gguf (downloaded from the Colab notebook) next to
+# this file, then from ml/:
+#     ollama create yetnew-assistant -f ollama/Modelfile.assistant
+#
+# Which chat template Ollama uses: Ollama 0.40.2 (checked 2026-10-10) renders
+# chats with the template EMBEDDED in the GGUF and ignores this TEMPLATE (a
+# garbage TEMPLATE gave the identical prompt). Unsloth's GGUF export embeds the
+# tokenizer's template — the training format — and the notebook checks that
+# before you download the file. The TEMPLATE below renders the same text, for
+# Ollama versions that do use it.
+#
+# The format, as tokenizer.apply_chat_template produces it (no tools):
+#     <|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n
+# The training answer is "{label}<|im_end|>", so generation stops at <|im_end|>.
+#
+# Checks: tests/test_modelfile.py (this TEMPLATE vs the vendored Hugging Face
+# template) and, after `ollama create`, the real thing through Ollama:
+#     python scripts/check_template.py --model yetnew-assistant
+FROM ./yetnew-assistant.Q4_K_M.gguf
+
+TEMPLATE """{{- if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}<|im_start|>user
+{{ .Content }}<|im_end|>
+{{ else if eq .Role "assistant" }}<|im_start|>assistant
+{{ .Content }}<|im_end|>
+{{ end }}
+{{- end }}<|im_start|>assistant
+"""
+
+PARAMETER temperature 0
+PARAMETER num_ctx 8192
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|endoftext|>"

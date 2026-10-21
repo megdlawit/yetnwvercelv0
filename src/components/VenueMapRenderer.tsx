@@ -10,7 +10,9 @@ import { haversineMeters } from '@/lib/geo/GeoMath';
 import type { VenueGraph } from '@/hooks/useVenueGraph';
 import type { POIWithDistance } from '@/hooks/usePOIProximity';
 import BlueDot, { type BlueDotViewport } from './BlueDot';
-import CustomLayerRenderer from './CustomLayerRenderer';
+import { useWorldLayers } from '@/lib/layers/worldLayers';
+
+const NO_LAYERS: CustomLayer[] = [];
 import type { CustomLayer } from '@/lib/customLayers';
 import BaseMap from './BaseMap';
 import type { MapStyleId } from '@/lib/mapStyles';
@@ -100,7 +102,7 @@ const VenueMapRenderer: React.FC<VenueMapRendererProps> = ({
   onNavigateToPOI,
   registerControls,
   onBearingChange,
-  customLayers = [],
+  customLayers = NO_LAYERS,
   center,
   mapStyleId = 'standard',
   pitch = 0,
@@ -114,6 +116,8 @@ const VenueMapRenderer: React.FC<VenueMapRendererProps> = ({
 }) => {
   const [cardPoi, setCardPoi] = useState<POI | null>(null);
   const [map, setMap] = useState<MLMap | null>(null);
+  // Admin-drawn layers (buildings, parking, routes, events…) drawn in the map itself: 3D, tappable.
+  useWorldLayers(map, customLayers);
   const [containerSize, setContainerSize] = useState({ width: 600, height: 600 });
   const containerRef = useRef<HTMLDivElement>(null);
   const hasAutoFitRef = useRef(false);
@@ -561,11 +565,6 @@ const VenueMapRenderer: React.FC<VenueMapRendererProps> = ({
                 );
               })}
             </g>
-
-            {/* ── Custom overlay layers ── */}
-            {customLayers.length > 0 && (
-              <CustomLayerRenderer layers={customLayers} projector={{ project }} />
-            )}
 
             {/* ── Blue Dot user position ── */}
             {position && (

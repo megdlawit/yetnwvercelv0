@@ -2,9 +2,13 @@
 // health check, units) → create the venue.
 //
 // Reading, classifying, cleaning and building all run in the browser, so
-// every format goes through the same steps and nothing large is uploaded.
-// Saving uses the signed-in user's Supabase session (RLS applies). The
-// original file is only read, never changed.
+// every format goes through the same steps. Saving uses the signed-in user's
+// Supabase session (RLS applies). The original file is only read, never changed.
+//
+// DXF and DWG drawings are also sent to the local AI layer labeler
+// (ml/server): its suggestions are reviewed in the Layers tab, and "Create
+// venue" waits until every layer is confirmed (LayerReviewPanel). The
+// confirmed labels and the drawing are then stored for this venue.
 
 import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
@@ -13,17 +17,22 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { UploadCloud, FileCheck2, Check, Loader2, AlertTriangle, Box, X, Wand2, Info, Sparkles, PenTool, CheckCircle2 } from 'lucide-react';
+import { UploadCloud, FileCheck2, Check, Loader2, AlertTriangle, Box, X, Wand2, Info, Sparkles, PenTool, CheckCircle2, RotateCcw } from 'lucide-react';
 import { celebrateBuild } from '@/lib/celebrate';
 import { cn } from '@/lib/utils';
 
 import { readCadFile, extOf } from '@/lib/cad/readFile';
 import { classifyLayers, type LayerInfo } from '@/lib/cad/classify';
 import { buildVenue, type BuiltVenue } from '@/lib/cad/buildVenue';
-import { inferUnits, findDrawings, withinArea, quarterArcs, type DrawingArea } from '@/lib/cad/analyze';
+import { inferUnits, findDrawings, findFloorPlans, withinArea, quarterArcs, type DrawingArea } from '@/lib/cad/analyze';
 import { commitVenue, walkableGraph, type CommitResult } from '@/lib/cad/commitVenue';
+import { buildPart, partsFromDrawing } from '@/lib/cad/floorParts';
 import type { PathGraphResult } from '@/lib/dxf/generatePathGraph';
 import { CATEGORY_LABELS, type CadDrawing, type Category, type LayerMapping } from '@/lib/cad/types';
+import LayerReviewPanel from '@/components/venue/LayerReviewPanel';
+import { useLayerLabeling, type LabelSource } from '@/lib/cad/layerLabels/useLayerLabeling';
+import { aiContribution, blocking } from '@/lib/cad/layerLabels/review';
+import { prepareLayerLabels, savePendingLabels, type PendingLabels } from '@/lib/cad/layerLabels/save';
 
 export interface ImportSummary extends CommitResult { format: string; health: BuiltVenue['health'] }
 
@@ -38,7 +47,8 @@ interface Props {
   /** "Show me how to edit it" after the venue is created. */
   onStartTour?: () => void;
   /** The file holds several floors — import each as its own floor instead. */
-  onImportAsFloors?: (file: File) => void;
+  /** The file holds several floors: import each as its own floor, with the reviewed layer mapping. */
+  onImportAsFloors?: (file: File, mapping?: LayerMapping) => void;
 }
 
 const FORMATS: { ext: string; kind: 'cad' | 'ref' | 'export'; tip: string }[] = [
@@ -111,10 +121,71 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
   // The walkable paths being built (drawn by the build animation, then saved).
   const [paths, setPaths] = useState<PathGraphResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // The DXF sent to the AI layer labeler (DXF as dropped; DWG as converted).
+  const [labelSource, setLabelSource] = useState<LabelSource | null>(null);
+  const labeling = useLayerLabeling(labelSource);
+  const aiWaiting = labeling.phase === 'starting' || labeling.phase === 'queued' || labeling.phase === 'running';
+  const aiStuck = labeling.phase === 'unavailable' || labeling.phase === 'failed';
+  const aiReview = labeling.phase === 'done';
+  const aiLeft = useMemo(() => (aiReview ? blocking(labeling.rows, labeling.policy).length : 0), [aiReview, labeling.rows, labeling.policy]);
+  // Reviewed labels decide what their layers become; other layers keep the quick suggestion.
+  // Null unless the AI review finished: skipped/failed runs contribute nothing.
+  const ai = useMemo(() => aiContribution(labeling.phase, labeling.rows), [labeling.phase, labeling.rows]);
+  // Saving the reviewed labels after the venue exists; a failure stays on screen with Retry.
+  const [labelSave, setLabelSave] = useState<{ status: 'idle' | 'saving' | 'saved' | 'failed'; error: string | null; pending: PendingLabels | null; saved: number }>(
+    { status: 'idle', error: null, pending: null, saved: 0 });
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const labelsAtRisk = labelSave.status === 'failed' || labelSave.status === 'saving';
+  const effectiveMapping = useMemo(() => (ai ? { ...mapping, ...ai.mapping } : mapping), [mapping, ai]);
+  const roomTypes = ai?.roomTypes;
+  // Floor plans on the sheet, found by the walls of the reviewed mapping (elevations, sections and
+  // the site plan are not floors). Two or more: the sheet is a building, imported floor by floor.
+  const floorPlans = useMemo(() => (sheet && !['ifc', 'obj', 'glb', 'gltf'].includes(sheet.format)
+    ? findFloorPlans(sheet, layer => effectiveMapping[layer] === 'walls', units.perMeter) : []), [sheet, effectiveMapping, units.perMeter]);
+  // The floors this file will become — the same finder every upload uses (floorParts).
+  const floors = useMemo(() => (sheet && file && (floorPlans.length > 1 || (sheet.levels?.length ?? 0) > 1)
+    ? partsFromDrawing(file.name, sheet, effectiveMapping) : []), [sheet, file, floorPlans.length, effectiveMapping]);
+  const floorsOn = floors.filter(f => f.include !== false);
+  // Several floors: imported floor by floor, unless they choose just one plan.
+  const [onePlan, setOnePlan] = useState(false);
+  const multiFloor = !!onImportAsFloors && !!file && !onePlan && floorsOn.length > 1;
+  const firstFloorPreview = useMemo(() => (multiFloor ? buildPart(floorsOn[0], pxPerMeter, effectiveMapping) : null),
+    [multiFloor, floorsOn, pxPerMeter, effectiveMapping]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [floorsBusy, setFloorsBusy] = useState(false);
+  /** Save the reviewed layer labels (as Create does), then hand the file to the floor-by-floor import. */
+  const importFloors = async (withoutLabels = false) => {
+    if (!file || !onImportAsFloors) return;
+    if (!withoutLabels && ai && labeling.result && labelSource) {
+      setFloorsBusy(true);
+      const out = await savePendingLabels(supabase, prepareLayerLabels({ buildingId, fileName: labelSource.fileName, source: labelSource.blob, rows: ai.rows, result: labeling.result }));
+      setFloorsBusy(false);
+      if (!out.ok) { setError(`The reviewed layer labels couldn't be saved: ${out.error}`); return; }
+    }
+    const f = file;
+    if (close(false)) onImportAsFloors(f, effectiveMapping);
+  };
 
-  const reset = () => { setStage('pick'); setDone(0); setError(null); setSheet(null); setAreas([]); setAreaIdx(0); setSummary(null); setJustFixed(false); setBuildStep(0); setPaths(null); };
+  const reset = () => { setOnePlan(false); setStage('pick'); setDone(0); setError(null); setSheet(null); setAreas([]); setAreaIdx(0); setSummary(null); setJustFixed(false); setBuildStep(0); setPaths(null); setLabelSource(null); };
   const drawing = useMemo(() => (sheet ? withinArea(sheet, areas.length > 1 ? areas[areaIdx] ?? null : null) : null), [sheet, areas, areaIdx]);
-  const close = (v: boolean) => { onOpenChange(v); if (!v) { reset(); setFile(null); } };
+  const closeNow = (v: boolean) => {
+    onOpenChange(v);
+    if (!v) { reset(); setFile(null); setLabelSave({ status: 'idle', error: null, pending: null, saved: 0 }); setConfirmDiscard(false); }
+  };
+  /** Closes the dialog — unless reviewed labels aren't saved yet: then ask first. Returns whether it closed. */
+  const close = (v: boolean) => {
+    if (!v && labelsAtRisk) { setConfirmDiscard(true); return false; }
+    closeNow(v);
+    return true;
+  };
+
+  const saveLabels = async (pending: PendingLabels) => {
+    setLabelSave(s => ({ ...s, status: 'saving', error: null, pending }));
+    const out = await savePendingLabels(supabase, pending);
+    setLabelSave(out.ok
+      ? { status: 'saved', error: null, pending: null, saved: out.saved }
+      : { status: 'failed', error: out.error, pending: out.pending, saved: 0 });
+    if (out.ok) setConfirmDiscard(false);
+  };
 
   const pick = (f: File | null) => {
     setError(null);
@@ -145,6 +216,12 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
       buildVenue(area, m, { unitsPerMeter: u.perMeter, pxPerMeter, flipY: d.flipY, fix }); // walls, rooms, doors…
       setDone(7); await tick(); setDone(8); await tick();
       setSheet(d); setAreas(found); setAreaIdx(0); setLayers(ls); setMapping(m);
+      // The AI labels the whole file, so the rules' second opinion is for the whole file too.
+      const hints = Object.fromEntries(classifyLayers(d).map(l => [l.name, { category: l.suggested, confidence: l.confidence, reason: l.reason }]));
+      if (d.format === 'dxf') setLabelSource({ blob: f, fileName: f.name, hints });
+      else if (d.format === 'dwg' && d.convertedDxf) {
+        setLabelSource({ blob: new Blob([d.convertedDxf], { type: 'application/dxf' }), fileName: f.name.replace(/\.dwg$/i, '.dxf'), hints });
+      }
       setStage('review');
     } catch (err) {
       console.error('CAD analysis failed:', err);
@@ -169,9 +246,9 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
   };
 
   // Live preview of what will be created; deferred so typing a scale stays smooth.
-  const deferred = useDeferredValue({ drawing, mapping, units, fix });
+  const deferred = useDeferredValue({ drawing, mapping: effectiveMapping, roomTypes, units, fix });
   const built = useMemo(() => deferred.drawing
-    ? buildVenue(deferred.drawing, deferred.mapping, { unitsPerMeter: deferred.units.perMeter, pxPerMeter, flipY: deferred.drawing.flipY, fix: deferred.fix })
+    ? buildVenue(deferred.drawing, deferred.mapping, { unitsPerMeter: deferred.units.perMeter, pxPerMeter, flipY: deferred.drawing.flipY, fix: deferred.fix, roomTypes: deferred.roomTypes })
     : null, [deferred, pxPerMeter]);
   // The same build with every fix off: what's wrong with the drawing as it is.
   const raw = useMemo(() => deferred.drawing
@@ -198,6 +275,11 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
       ]);
       setBuildStep(BUILD_STEPS.length);
       await new Promise(r => setTimeout(r, 450));
+      // The reviewed AI labels and the drawing, for this venue. Only after a
+      // finished AI review; a failure is shown with Retry on the done screen.
+      if (ai && labeling.result && labelSource) {
+        await saveLabels(prepareLayerLabels({ buildingId, fileName: labelSource.fileName, source: labelSource.blob, rows: ai.rows, result: labeling.result }));
+      }
       celebrateBuild();
       const s: ImportSummary = { ...result, format: drawing.format.toUpperCase(), health: built.health, warnings: [...built.warnings, ...result.warnings] };
       setSummary(s);
@@ -313,10 +395,14 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
 
         {stage === 'review' && drawing && built && raw && (
           <div className="grid md:grid-cols-[1fr_300px] gap-4">
-            <Tabs defaultValue="health" className="min-w-0">
+            <Tabs defaultValue={labelSource ? 'layers' : 'health'} className="min-w-0">
               <TabsList>
                 <TabsTrigger value="health">Health check {issueCount > 0 && <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 text-[10px] text-amber-700 dark:text-amber-400">{issueCount}</span>}</TabsTrigger>
-                <TabsTrigger value="layers">Layers ({layers.length})</TabsTrigger>
+                <TabsTrigger value="layers">
+                  {aiReview || aiWaiting || aiStuck ? 'Review layers' : `Layers (${layers.length})`}
+                  {aiWaiting && <Loader2 className="ml-1.5 h-3 w-3 animate-spin" />}
+                  {aiReview && aiLeft > 0 && <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 text-[10px] text-amber-700 dark:text-amber-400">{aiLeft}</span>}
+                </TabsTrigger>
               </TabsList>
 
               <TabsContent value="health" className="space-y-3">
@@ -398,6 +484,7 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
               </TabsContent>
 
               <TabsContent value="layers">
+                {(aiReview || aiWaiting || aiStuck) ? <LayerReviewPanel labeling={labeling} buildingId={buildingId} /> : <>
                 <div className="rounded-xl border overflow-hidden">
                   <table className="w-full text-xs">
                     <thead className="bg-muted/50 text-muted-foreground">
@@ -437,11 +524,30 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
                   </table>
                 </div>
                 <p className="mt-2 text-[11px] text-muted-foreground">Hover a suggestion to see why it was chosen. Layers set to Ignore aren't imported.</p>
+                </>}
               </TabsContent>
             </Tabs>
 
             <aside className="space-y-3">
-              <ImportPreview venue={built} />
+              {built?.health.notAPlan && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+                  <p className="flex items-center gap-1.5 font-medium text-amber-800 dark:text-amber-300"><AlertTriangle className="h-4 w-4" /> This doesn&apos;t look like a floor plan</p>
+                  <p className="mt-1 text-xs text-muted-foreground">We found no doors and no room names. If it is a floor plan, check which layers hold the walls and doors. Otherwise choose another file.</p>
+                </div>
+              )}
+              {multiFloor && (
+                <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm">
+                  <p className="font-medium">We found {floorsOn.length} floors</p>
+                  <ul className="mt-1.5 space-y-0.5 text-xs">
+                    {floorsOn.map(f => <li key={f.key} className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-primary" /> {f.name}</li>)}
+                  </ul>
+                  {floors.length > floorsOn.length && (
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">Left out: a small separate plan (another building on the site?) — you can add it in the next step.</p>
+                  )}
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">Elevations, sections and the site plan are not floors and are left out. Below: the {floorsOn[0].name.toLowerCase()}.</p>
+                </div>
+              )}
+              <ImportPreview venue={multiFloor && firstFloorPreview ? firstFloorPreview : built} />
               <div className="space-y-2 rounded-xl border p-3">
                 {drawing.format === 'pdf' ? (
                   <label className="block text-xs">
@@ -470,13 +576,17 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
                   </label>
                 )}
                 <p className="text-[11px] text-muted-foreground">Plan size: {built.health.extentM.w.toFixed(1)} × {built.health.extentM.h.toFixed(1)} m</p>
-                {onImportAsFloors && file && (areas.length > 1 || (drawing.levels?.length ?? 0) > 1) && (
-                  <button type="button" onClick={() => { const f = file; close(false); onImportAsFloors(f); }}
-                    className="w-full rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2 text-left text-xs font-medium text-primary hover:bg-primary/10">
-                    This file holds {Math.max(areas.length, drawing.levels?.length ?? 0)} plans — import each as its own floor →
+                {multiFloor && (
+                  <button type="button" onClick={() => setOnePlan(true)} className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground">
+                    Import just one plan instead
                   </button>
                 )}
-                {areas.length > 1 && (
+                {!multiFloor && onePlan && floorsOn.length > 1 && (
+                  <button type="button" onClick={() => setOnePlan(false)} className="text-[11px] text-primary underline underline-offset-2">
+                    Import all {floorsOn.length} floors instead
+                  </button>
+                )}
+                {!multiFloor && areas.length > 1 && (
                   <label className="block text-xs">
                     <span className="text-muted-foreground">This file has {areas.length} drawings — import</span>
                     <select className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm" value={areaIdx}
@@ -485,7 +595,7 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
                     </select>
                   </label>
                 )}
-                {drawing.levels && drawing.levels.length > 1 && (
+                {!multiFloor && drawing.levels && drawing.levels.length > 1 && (
                   <label className="block text-xs">
                     <span className="text-muted-foreground">Level</span>
                     <select className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm" value={drawing.level ?? 0}
@@ -520,7 +630,36 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
             {summary.warnings.map((w, i) => (
               <li key={i} className="flex gap-2.5 px-3 py-2 text-xs"><AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" /> {w}</li>
             ))}
+            {labelSave.status === 'saved' && (
+              <li className="flex items-start gap-2.5 px-3 py-2">
+                <Check className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                <span className="w-32 shrink-0 text-muted-foreground">Layer labels</span><span>{labelSave.saved} reviewed labels saved</span>
+              </li>
+            )}
           </ul>
+          {labelsAtRisk && (
+            <div role="alert" className="sm:col-span-2 space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-sm">
+              <p className="flex gap-2">
+                {labelSave.status === 'saving' ? <Loader2 className="h-4 w-4 shrink-0 animate-spin mt-0.5" /> : <X className="h-4 w-4 shrink-0 text-destructive mt-0.5" />}
+                <span>
+                  {labelSave.status === 'saving' ? 'Saving the reviewed layer labels…' : 'Your venue was created, but the reviewed layer labels were not saved.'}
+                  {labelSave.error && <span className="block text-xs text-muted-foreground">{labelSave.error}</span>}
+                </span>
+              </p>
+              {confirmDiscard && labelSave.status === 'failed' && (
+                <p className="text-xs">Close anyway? The {labelSave.pending?.records.length ?? 0} labels you confirmed will be lost.</p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" disabled={labelSave.status === 'saving' || !labelSave.pending}
+                  onClick={() => labelSave.pending && saveLabels(labelSave.pending)}>
+                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Retry saving labels
+                </Button>
+                {confirmDiscard && labelSave.status === 'failed' && (
+                  <Button size="sm" variant="outline" onClick={() => closeNow(false)}>Close without saving labels</Button>
+                )}
+              </div>
+            </div>
+          )}
           </div>
         )}
 
@@ -530,17 +669,33 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
           )}
           {stage === 'review' && (
             <>
+              {(aiWaiting || aiStuck || aiLeft > 0) && (
+                <span className="mr-auto self-center text-xs text-muted-foreground">
+                  {aiWaiting ? 'Waiting for the layer labels…' : aiStuck ? 'Choose how to continue in Review layers.' : `Confirm ${aiLeft} more layer${aiLeft === 1 ? '' : 's'} to continue.`}
+                </span>
+              )}
               <Button variant="outline" onClick={reset}>Choose another file</Button>
-              <Button onClick={save} disabled={fixing || !built || built.walls.length === 0}>
-                <Sparkles className="h-4 w-4 mr-1.5" /> Create venue
-              </Button>
+              {multiFloor ? (
+                <>
+                  {error?.startsWith("The reviewed layer labels couldn't be saved") && (
+                    <Button variant="ghost" onClick={() => importFloors(true)}>Import without saving the labels</Button>
+                  )}
+                  <Button onClick={() => importFloors()} disabled={floorsBusy || aiWaiting || aiStuck || aiLeft > 0}>
+                    {floorsBusy ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1.5" />} Import {floorsOn.length} floors
+                  </Button>
+                </>
+              ) : (
+                <Button onClick={save} disabled={fixing || !built || built.walls.length === 0 || aiWaiting || aiStuck || aiLeft > 0}>
+                  <Sparkles className="h-4 w-4 mr-1.5" /> Create venue
+                </Button>
+              )}
             </>
           )}
           {stage === 'done' && (
             <>
               <Button variant="ghost" onClick={() => close(false)}>Done</Button>
-              <Button variant="outline" onClick={() => { close(false); onViewIn3D(); }}><Box className="h-4 w-4 mr-1.5" /> View in 3D</Button>
-              {onStartTour && <Button onClick={() => { close(false); onStartTour(); }}><PenTool className="h-4 w-4 mr-1.5" /> Show me how to edit it</Button>}
+              <Button variant="outline" onClick={() => { if (close(false)) onViewIn3D(); }}><Box className="h-4 w-4 mr-1.5" /> View in 3D</Button>
+              {onStartTour && <Button onClick={() => { if (close(false)) onStartTour(); }}><PenTool className="h-4 w-4 mr-1.5" /> Show me how to edit it</Button>}
             </>
           )}
         </DialogFooter>

@@ -26,12 +26,14 @@ export interface LabelSpec {
   icon?: string | null;
   /** Places: show the name under the badge (always shown when selected). */
   showName?: boolean;
+  /** Places drawn as a 3D landmark: just the name pill over it (no badge). */
+  pill?: boolean;
 }
 
 export const LABEL_CSS = `
-.ivw-root{position:relative;overflow:hidden;font-family:'Indoor Inter',Inter,'Noto Sans Ethiopic',system-ui,-apple-system,'Segoe UI',sans-serif;-webkit-tap-highlight-color:transparent}
+.ivw-root{position:relative;overflow:hidden;isolation:isolate;font-family:'Indoor Inter',Inter,'Noto Sans Ethiopic',system-ui,-apple-system,'Segoe UI',sans-serif;-webkit-tap-highlight-color:transparent}
 .ivw-root canvas{display:block;width:100%;height:100%;touch-action:none;outline:none}
-.ivw-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.ivw-labels{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden}
 .ivw-tag{position:absolute;left:0;top:0;display:flex;flex-direction:column;gap:1px;white-space:nowrap;border:0;margin:0;cursor:pointer;pointer-events:auto;
   border-radius:12px;padding:6px 12px 6px 10px;background:rgba(255,255,255,.95);color:#0f3d26;box-shadow:0 10px 24px rgba(20,40,25,.18);
   transform-origin:50% 100%;transition:opacity .2s,background .2s,color .2s;font:inherit;text-align:left;will-change:transform}
@@ -58,6 +60,10 @@ export const LABEL_CSS = `
 .ivw-pin.ivw-on .ivw-badge{width:56px;height:56px;box-shadow:0 0 0 3px var(--c,#0f3d26),0 14px 30px rgba(15,40,25,.38)}
 .ivw-pin.ivw-on b{background:#0f3d26;color:#fff}
 .ivw-pin.ivw-on small{display:block;font-size:10.5px;font-weight:600;color:#6b7168;background:rgba(255,255,255,.92);border-radius:999px;padding:1px 7px}
+.ivw-tag.ivw-lm{align-items:center;text-align:center;border-radius:999px;padding:4px 11px 5px;box-shadow:0 6px 16px rgba(15,40,25,.18)}
+.ivw-tag.ivw-lm b{font-size:11.5px}
+.ivw-tag.ivw-lm i{width:7px;height:7px}
+.ivw-tag.ivw-lm small{font-size:10px}
 @keyframes ivw-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
 @keyframes ivw-pulse{0%{opacity:.75;transform:scale(.85)}100%{opacity:0;transform:scale(1.55)}}
 @media (max-width:640px){.ivw-badge{width:40px;height:40px}.ivw-badge svg{width:19px;height:19px}.ivw-pin.ivw-on .ivw-badge{width:50px;height:50px}}
@@ -115,8 +121,8 @@ export class LabelLayer {
       }
       it.spec = spec;
       const el = it.el;
-      const pin = spec.kind === 'place';
-      el.className = `ivw-tag${pin ? ' ivw-pin' : ''}${spec.kind === 'room' ? ' ivw-room' : spec.kind === 'note' ? ' ivw-note' : ''}${this.selected === spec.id ? ' ivw-on' : ''}`;
+      const pin = spec.kind === 'place' && !spec.pill;
+      el.className = `ivw-tag${pin ? ' ivw-pin' : ''}${spec.pill ? ' ivw-lm' : ''}${spec.kind === 'room' ? ' ivw-room' : spec.kind === 'note' ? ' ivw-note' : ''}${this.selected === spec.id ? ' ivw-on' : ''}`;
       el.setAttribute('aria-label', spec.sub ? `${spec.text}, ${spec.sub}` : spec.text);
       el.tabIndex = spec.kind === 'place' ? 0 : -1;
       el.style.setProperty('--c', spec.color ?? '#0f3d26');
@@ -135,6 +141,7 @@ export class LabelLayer {
       }
       if (!pin || spec.showName || this.selected === spec.id) {
         const b = document.createElement('b');
+        if (spec.pill) b.appendChild(document.createElement('i')); // the dot in the place's colour
         b.appendChild(document.createTextNode(spec.text));
         el.appendChild(b);
       }

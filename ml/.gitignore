@@ -5,6 +5,8 @@ __pycache__/
 # Exported datasets and model files stay out of git.
 data/
 *.gguf
+# Trained adapters (LoRA zips, 100+ MB): kept on disk, too big for GitHub.
+ollama/*.zip
 # Written by scripts/evaluate.py on the machine that runs the service.
 model_choice.json
 # Written by scripts/check_template.py (per Ollama version and model digest on this machine).

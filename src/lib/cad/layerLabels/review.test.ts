@@ -74,6 +74,21 @@ describe('rules as a second opinion', () => {
     expect(withRuleHints(rows, {}, 0.7)[0]).toMatchObject({ label: 'ignore', aiLabel: 'unknown', confirmedVia: null });
   });
 
+  it("a layer the service counts as empty still takes a sure rule (the service's count can miss items)", () => {
+    const rows = rowsFromResult([layer('Furniture 1', 'unknown', 0.99, { summary: { name: 'Furniture 1', total: 0, entity_counts: {}, blocks: [], texts: [] } })]);
+    expect(withRuleHints(rows, { 'Furniture 1': hint('furniture', 0.92) }, 0.7)[0]).toMatchObject({ label: 'furniture' });
+  });
+
+  it("an untrained model's walls are a suggestion: the rules' answer stays chosen", () => {
+    const rows = rowsFromResult([layer('0', 'wall', 0.97), layer('WALL', 'wall', 0.99), layer('wood', 'wall', 0.9)]);
+    const hints = { '0': hint('ignore', 0.4), WALL: hint('walls', 0.92), wood: hint('ignore', 0.4) };
+    const labels = (rs: typeof rows) => Object.fromEntries(rs.map(r => [r.name, r.label]));
+    const general = withRuleHints(rows, hints, 0.7, null, false);
+    expect(labels(general)).toEqual({ '0': 'ignore', WALL: 'wall', wood: 'ignore' });
+    expect(general.find(r => r.name === '0')).toMatchObject({ aiLabel: 'wall', ruleLabel: 'ignore', flagged: true });   // still shown as the AI's suggestion
+    expect(labels(withRuleHints(rows, hints, 0.7))).toEqual({ '0': 'wall', WALL: 'wall', wood: 'wall' });               // a trained model is trusted
+  });
+
   it('pre-selecting never confirms: every row still needs its confirmation', () => {
     const rows = withRuleHints(sample(), { 'S-COLS': hint('stairs', 0.92), WC: hint('rooms', 0.5) }, 0.7);
     expect(rows.every(r => r.confirmedVia === null)).toBe(true);

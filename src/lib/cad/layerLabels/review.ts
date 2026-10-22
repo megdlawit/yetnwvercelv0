@@ -132,17 +132,22 @@ export function rowsFromResult(layers: AiLayer[]): ReviewRow[] {
  * the map either way; "ignore" still needs its own confirmation).
  */
 export function withRuleHints(rows: ReviewRow[], hints: Record<string, RuleHint>, threshold: number,
-                              singleLayer: string | null = null): ReviewRow[] {
+                              singleLayer: string | null = null, trainedModel = true): ReviewRow[] {
   return rows.map(r => {
-    if (r.summary.total === 0 && r.label === 'unknown') return { ...r, label: 'ignore' as LayerLabel, ruleReason: 'Layer is empty' };
     const hint = hints[r.name];
-    if (!hint) return r;
+    // "Empty" only when the editor's rules have nothing on it either: the service's count can
+    // miss what the editor reads (a 24,000-item furniture layer once came back as 0).
+    if (!hint) return r.summary.total === 0 && r.label === 'unknown' ? { ...r, label: 'ignore' as LayerLabel, ruleReason: 'Layer is empty' } : r;
     const rule = CATEGORY_TO_LABEL[hint.category];
     const aiCategory = r.aiLabel === 'unknown' ? null : LABEL_TO_CATEGORY[r.aiLabel];
     if (aiCategory === hint.category) return r;
     const aiUnsure = r.aiLabel === 'unknown' || r.confidence === null || r.confidence < threshold;
+    // An untrained (general) model calls stray layers walls ("0", "wood", a site outline), and
+    // walls make the floors, rooms and paths: it suggests walls, the rules' answer stays chosen.
+    const untrustedWall = !trainedModel && r.aiLabel === 'wall';
     const preselect = hint.confidence >= TRUSTED_RULE
       || (aiUnsure && hint.confidence >= USABLE_RULE && !RULES_CANNOT_SAY.has(r.aiLabel))
+      || untrustedWall
       || r.name === singleLayer;
     return { ...r, flagged: true, ruleLabel: rule, ruleReason: hint.reason, label: preselect ? rule : r.label };
   });

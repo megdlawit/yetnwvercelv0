@@ -237,6 +237,42 @@ export function findDrawings(d: CadDrawing, perMeter: number, arcs = quarterArcs
  * (elevations and sections show no swings). Pieces of one plan split by a wide
  * opening are joined when their boxes overlap.
  */
+/**
+ * Rectangles drawn round a plan on the sheet (a viewport or a frame), even on a wall layer:
+ * big, and nothing else on those layers touches them — the plan sits inside with a margin.
+ * A building's outer wall is never like that: its inside walls join it.
+ */
+function framesAmong(walls: DxfEntity[], perMeter: number): Set<DxfEntity> {
+  const out = new Set<DxfEntity>();
+  const tol = 0.3 * perMeter;
+  const rects = walls.filter((e): e is Extract<DxfEntity, { kind: 'POLYLINE' }> => {
+    if (e.kind !== 'POLYLINE') return false;
+    const pts = e.pts.length === 5 && Math.hypot(e.pts[4].x - e.pts[0].x, e.pts[4].y - e.pts[0].y) <= tol ? e.pts.slice(0, 4) : e.pts;
+    if (pts.length !== 4 || (!e.closed && pts === e.pts)) return false;
+    const xs = new Set(pts.map(p => Math.round(p.x / tol))), ys = new Set(pts.map(p => Math.round(p.y / tol)));
+    const w = Math.max(...pts.map(p => p.x)) - Math.min(...pts.map(p => p.x)), h = Math.max(...pts.map(p => p.y)) - Math.min(...pts.map(p => p.y));
+    return xs.size <= 2 && ys.size <= 2 && Math.min(w, h) >= 8 * perMeter;   // axis-aligned, at least 8 m a side
+  });
+  if (!rects.length) return out;
+  const ends: DxfPoint[] = [];
+  for (const e of walls) {
+    if (e.kind === 'LINE') ends.push(e.a, e.b);
+    else if (e.kind === 'POLYLINE' && !rects.includes(e)) ends.push(...e.pts);
+  }
+  for (const r of rects) {
+    const x0 = Math.min(...r.pts.map(p => p.x)), x1 = Math.max(...r.pts.map(p => p.x));
+    const y0 = Math.min(...r.pts.map(p => p.y)), y1 = Math.max(...r.pts.map(p => p.y));
+    let inside = 0, touching = 0;
+    for (const p of ends) {
+      if (p.x < x0 - tol || p.x > x1 + tol || p.y < y0 - tol || p.y > y1 + tol) continue;
+      inside++;
+      if (Math.min(p.x - x0, x1 - p.x, p.y - y0, y1 - p.y) <= tol) touching++;
+    }
+    if (inside >= 8 && touching === 0) out.add(r);
+  }
+  return out;
+}
+
 export function findFloorPlans(d: CadDrawing, isWallLayer: (layer: string) => boolean, perMeter: number,
                                arcs = quarterArcs(d.entities)): DrawingArea[] {
   const cell = 1.5 * perMeter;
@@ -249,8 +285,9 @@ export function findFloorPlans(d: CadDrawing, isWallLayer: (layer: string) => bo
       occ.set(k, (occ.get(k) ?? 0) + len / (n + 1));
     }
   };
+  const frames = framesAmong(d.entities.filter(e => isWallLayer(e.layer)), perMeter);
   for (const e of d.entities) {
-    if (!isWallLayer(e.layer)) continue;
+    if (!isWallLayer(e.layer) || frames.has(e)) continue;
     if (e.kind === 'LINE') markAlong(e.a, e.b);
     else if (e.kind === 'POLYLINE') for (let i = 1; i < e.pts.length; i++) markAlong(e.pts[i - 1], e.pts[i]);
   }

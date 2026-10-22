@@ -80,7 +80,8 @@ export function useLayerLabeling(source: LabelSource | null): LayerLabeling {
           const shape = final.result.drawing;
           const hints = source.hints ? withNameHints(final.result.layers.map(l => l.name), source.hints) : {};
           setRowsState(withRuleHints(rowsFromResult(final.result.layers), hints,
-            final.result.review?.threshold ?? DEFAULT_POLICY.threshold, shape?.single_layer ? shape.largest_layer : null));
+            final.result.review?.threshold ?? DEFAULT_POLICY.threshold, shape?.single_layer ? shape.largest_layer : null,
+            final.result.model?.kind !== 'baseline'));
           setPhase('done');
         } else if (final.status === 'cancelled') {
           setPhase('skipped');

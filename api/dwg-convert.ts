@@ -17,8 +17,9 @@
 // If CLOUDCONVERT_API_KEY is set, CloudConvert is the fallback for the rare
 // DWG that LibreDWG can't read.
 //
-// Vercel limits a request body to about 4.5 MB; bigger DWGs should be saved
-// as DXF in AutoCAD (File → Save As → AutoCAD DXF) — the client says so.
+// Vercel limits a request body (and the answer) to about 4.5 MB, so on the
+// website bigger DWGs come back 413 and the client asks for a DXF instead.
+// Run locally (`vite dev`), any DWG up to MAX_DWG_BYTES converts here.
 
 import type { IncomingMessage } from 'http';
 import { createRequire } from 'module';
@@ -81,7 +82,7 @@ async function readJsonBody(req: any): Promise<any> {
 }
 
 const CLOUDCONVERT_API = 'https://api.cloudconvert.com/v2';
-const MAX_DWG_BYTES = 20 * 1024 * 1024;
+const MAX_DWG_BYTES = 60 * 1024 * 1024;
 const POLL_INTERVAL_MS = 1500;
 const POLL_TIMEOUT_MS = 55000; // stay under typical serverless function limits
 

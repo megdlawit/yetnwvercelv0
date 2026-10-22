@@ -118,10 +118,12 @@ export async function commitVenue(
  * skeleton traced from the walls alone.
  */
 export function walkableGraph(venue: BuiltVenue, pxPerMeter: number): PathGraphResult {
-  const skeleton = generatePathGraph(venue.walls, venue.rooms.map(r => ({ name: r.name, x: r.x, y: r.y, width: r.width, height: r.height })), {});
+  // Paths keep out of glass as out of walls (doors through it still open).
+  const barriers = venue.glass?.length ? [...venue.walls, ...venue.glass] : venue.walls;
+  const skeleton = generatePathGraph(barriers, venue.rooms.map(r => ({ name: r.name, x: r.x, y: r.y, width: r.width, height: r.height })), {});
   if (!venue.rooms.length) return throughDoors(venue, skeleton, pxPerMeter);
   const doors = venue.features.filter(f => f.kind === 'door' || f.kind === 'entrance').map(f => ({ x: f.x, y: f.y }));
-  const rooms = buildRouteGraph({ walls: venue.walls, rooms: venue.rooms, doors, pxPerMeter });
+  const rooms = buildRouteGraph({ walls: barriers, rooms: venue.rooms, doors, pxPerMeter });
   // Each method fails on different drawings (sealed door panels, leaky
   // gaps, rooms cut in pieces), so keep whichever connects more of the venue.
   return throughDoors(venue, connectivity(rooms) >= connectivity(skeleton) ? rooms : skeleton, pxPerMeter);

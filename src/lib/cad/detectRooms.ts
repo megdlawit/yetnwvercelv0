@@ -295,7 +295,7 @@ export function doorwaySeals(walls: Seg[], pxPerMeter: number): Seg[] {
   return out;
 }
 
-function distToSeg(p: { x: number; y: number }, w: Seg): number {
+export function distToSeg(p: { x: number; y: number }, w: Seg): number {
   const ex = w.x2 - w.x1, ey = w.y2 - w.y1, L2 = ex * ex + ey * ey || 1;
   const t = Math.max(0, Math.min(1, ((p.x - w.x1) * ex + (p.y - w.y1) * ey) / L2));
   return Math.hypot(p.x - (w.x1 + ex * t), p.y - (w.y1 + ey * t));

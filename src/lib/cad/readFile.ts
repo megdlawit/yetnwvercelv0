@@ -17,15 +17,16 @@ export async function readCadFile(file: File): Promise<CadDrawing> {
     case 'dxf':
       return readDxf(decodeTextSmart(buf));
     case 'dwg': {
-      // Uploads go through a serverless function with a ~4.5 MB request limit.
-      if (buf.byteLength > 4.4 * 1024 * 1024) {
-        throw new Error('This DWG is too large to convert online. In AutoCAD choose File → Save As → AutoCAD DXF and import the DXF instead.');
-      }
+      // Sent whatever its size: our own server (and `vite dev`) converts up to 60 MB. The hosted
+      // functions cap a request and its answer at ~4.5 MB, so there a big DWG comes back 413.
       const resp = await fetch('/api/dwg-convert', {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) },
         body: buf,
       });
+      if (resp.status === 413 || (resp.status >= 500 && buf.byteLength > 4.4 * 1024 * 1024)) {
+        throw new Error(`This DWG (${(buf.byteLength / 1024 / 1024).toFixed(0)} MB) is too large to convert on the website. In AutoCAD choose File → Save As → AutoCAD DXF and import the DXF instead.`);
+      }
       const json = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error([json.error || 'DWG conversion failed.', json.hint].filter(Boolean).join(' '));
       return { ...readDxf(json.dxfText), format: 'dwg', convertedDxf: json.dxfText };

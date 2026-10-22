@@ -118,5 +118,6 @@ describe('map labels: names only, never drafting notes', () => {
     ['A', null], ['D', null], ['90/210', null], ['+3.50', null], ['GROUN FLOOR A= 21 M² Sc=1:50', null], ['FRONT ELEVATION', null],
     ['Plastered & Painting RAL 7044', null], ['5mm thick glass', null], ['11% Slope', null], ['ROOM', null], ['ORIENTATION', null],
     ['HALL', 'Hall'], ['PASSAGE 6FEET WIDE', 'Passage'],
+    ['Parquet', null], ['MARBLE FLOORING', null], ['Ceramic tiles', null], ['Bath room', 'Bathroom'], ['Bed room', 'Bedroom'],
   ])('%s → %s', (text, label) => expect(placeLabelFrom(text)).toBe(label));
 });

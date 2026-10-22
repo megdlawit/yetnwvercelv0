@@ -150,10 +150,13 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
     }
     const level = levels[0] ?? null;
     const clash = small && kept.some(o => o !== p && o.size >= 0.4 * biggest && o.title && levelsFromName(o.title).includes(level as number));
+    // Untitled among plans titled by floor: the roof or site plan, most likely.
+    const untitled = !p.title && kept.some(o => o.title && levelsFromName(o.title).length);
     parts.push({
       key: `${fileName}#P${i}`, file: fileName, origin, drawing, units,
       name: level != null ? ORDINAL_NAME(level) : p.title ? floorNameFrom(p.title) : kept.length === 1 ? floorNameFrom(fileName) : `Floor ${i}`, level,
-      ...(clash || (small && level == null) ? { include: false, note: 'Small separate plan — another building on the site? Tick it to import it.' } : {}),
+      ...(clash || (small && level == null) ? { include: false, note: 'Small separate plan — another building on the site? Tick it to import it.' }
+        : untitled ? { include: false, note: 'Plan without a floor title — the roof or site plan? Tick it to import it.' } : {}),
     });
   });
   return parts;

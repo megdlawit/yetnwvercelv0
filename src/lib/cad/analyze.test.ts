@@ -3,7 +3,7 @@ import { parseDxf } from '../dxf/parseDxf';
 import { readDxf } from './readers/dxf';
 import { classifyLayers } from './classify';
 import { buildVenue } from './buildVenue';
-import { inferUnits, findDrawings, withinArea, quarterArcs, leafedArcs, polylineAsArc } from './analyze';
+import { inferUnits, findDrawings, findFloorPlans, withinArea, quarterArcs, leafedArcs, polylineAsArc } from './analyze';
 import { detectRooms, doorwaySeals, rayToWall, sheetFrame } from './detectRooms';
 
 const pair = (c: number | string, v: string | number) => `${c}\n${v}\n`;
@@ -179,5 +179,45 @@ describe('sheet frame (title block cells are not rooms)', () => {
   it("a rectangular building's outer walls are not a frame", () => {
     const walls = [...box(0, 0, 800, 600), W(400, 0, 400, 600), W(0, 300, 400, 300), W(400, 200, 800, 200)];
     expect(sheetFrame(walls, 40)).toBeNull();
+  });
+});
+
+describe('floor plans on a sheet with frames drawn round them', () => {
+  // Two 12 × 10 m plans (metres), each with a door swing, inside one 40 × 20 m frame on the
+  // same wall layer: the frame is not a wall, so the plans stay two.
+  const line = (x1: number, y1: number, x2: number, y2: number) => ({ kind: 'LINE' as const, layer: 'W', a: { x: x1, y: y1 }, b: { x: x2, y: y2 } });
+  const plan = (x: number) => [line(x, 0, x + 12, 0), line(x + 12, 0, x + 12, 10), line(x + 12, 10, x, 10), line(x, 10, x, 0), line(x + 6, 0, x + 6, 10), line(x, 5, x + 6, 5)];
+  const swing = (x: number) => ({ kind: 'ARC' as const, layer: 'D', center: { x: x + 3, y: 5 }, radius: 0.9, startDeg: 0, endDeg: 90 });
+  const frame = { kind: 'POLYLINE' as const, layer: 'W', closed: true, pts: [{ x: -4, y: -5 }, { x: 36, y: -5 }, { x: 36, y: 15 }, { x: -4, y: 15 }] };
+  const sheet = (withFrame: boolean) => ({ format: 'dxf', entities: [...plan(0), ...plan(20), swing(0), swing(20), ...(withFrame ? [frame] : [])] } as unknown as Parameters<typeof findFloorPlans>[0]);
+  it('finds the same plans with or without the frame', () => {
+    const n = (withFrame: boolean) => findFloorPlans(sheet(withFrame), l => l === 'W', 1).length;
+    expect(n(false)).toBe(2);
+    expect(n(true)).toBe(2);
+  });
+});
+
+describe('glass façades', () => {
+  // A 10 × 6 m building in metres: walls on three sides and a middle wall, the south side all glass
+  // between columns. The glass closes the two rooms; without it they'd be open to the outside.
+  const L = (layer: string, x1: number, y1: number, x2: number, y2: number) => ({ kind: 'LINE' as const, layer, a: { x: x1, y: y1 }, b: { x: x2, y: y2 } });
+  const walls = [L('W', 0, 0, 0, 6), L('W', 0, 6, 10, 6), L('W', 10, 6, 10, 0), L('W', 5, 0, 5, 6),
+    L('W', 0, 0, 0.3, 0), L('W', 4.85, 0, 5.15, 0), L('W', 9.7, 0, 10, 0)];          // the columns' faces
+  const glass = [L('G', 0.3, 0, 4.85, 0), L('G', 5.15, 0, 9.7, 0)];
+  const build = (withGlass: boolean, windows: Array<ReturnType<typeof L>> = glass) => buildVenue(
+    { format: 'dxf', entities: [...walls, ...(withGlass ? windows : [])], bounds: { minX: 0, minY: 0, maxX: 10, maxY: 6 } } as unknown as Parameters<typeof buildVenue>[0],
+    { W: 'walls', G: 'windows' }, { unitsPerMeter: 1, pxPerMeter: 40, flipY: true, fix: { gaps: true, overlaps: true, rooms: true, floating: false } });
+  it('closes the rooms a glass façade bounds', () => {
+    expect(build(false).rooms).toHaveLength(0);
+    const v = build(true);
+    expect(v.rooms).toHaveLength(2);
+    expect(v.glass?.length).toBeGreaterThan(0);   // kept, so paths don't walk through it
+  });
+  it('ignores window glass that closes nothing (the walls already do)', () => {
+    const closedWalls = [L('W', 0, 0, 10, 0)];
+    const v = buildVenue(
+      { format: 'dxf', entities: [...walls, ...closedWalls, L('G', 1, 0.05, 3, 0.05)], bounds: { minX: 0, minY: 0, maxX: 10, maxY: 6 } } as unknown as Parameters<typeof buildVenue>[0],
+      { W: 'walls', G: 'windows' }, { unitsPerMeter: 1, pxPerMeter: 40, flipY: true, fix: { gaps: true, overlaps: true, rooms: true, floating: false } });
+    expect(v.glass).toBeUndefined();
   });
 });

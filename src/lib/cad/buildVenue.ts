@@ -7,7 +7,7 @@
 
 import type { DxfEntity, DxfPoint } from '../dxf/parseDxf';
 import { quarterArcs, isLeafOf, DOOR_RANGE_M } from './analyze';
-import { detectRooms, doorwaySeals, rayToWall, sheetFrame } from './detectRooms';
+import { detectRooms, distToSeg, doorwaySeals, rayToWall, sheetFrame } from './detectRooms';
 import { categoryFromBlock } from './classify';
 import type { CadDrawing, Category, LayerMapping } from './types';
 import {
@@ -52,7 +52,11 @@ export interface Health {
   notAPlan: boolean;         // no doors and no room names: a map, artwork or pattern, not a building
 }
 
-export interface BuiltVenue { walls: Seg[]; rooms: BuiltRoom[]; features: BuiltFeature[]; health: Health; warnings: string[] }
+export interface BuiltVenue {
+  walls: Seg[]; rooms: BuiltRoom[]; features: BuiltFeature[]; health: Health; warnings: string[];
+  /** Window and glazing lines (glass façades): they close rooms and block paths, but aren't saved as walls. */
+  glass?: Seg[];
+}
 
 /**
  * A room's name from the tag written in it. Tags on real sheets carry the floor finish and
@@ -60,8 +64,9 @@ export interface BuiltVenue { walls: Seg[]; rooms: BuiltRoom[]; features: BuiltF
  * "Bedroom", "Master bath". Finish and area are cut, shorthands spelled out, capitals tidied.
  */
 const FINISH_OR_AREA = /\s+(?:A\s*=|AREA\b|ceramic|ceram\b|tiles?\b|terrazzo|marble|granite|parquet|carpet|vinyl|pvc\b|screed|epoxy|wooden floor|f\.?f\.?\b|flooring|floor finish|\d+(?:[.,]\d+)?\s*(?:feet|foot|ft|metres?|meters?|m)\s+wide\b)/i;
+const FINISH_ONLY = /^(?:ceramic|ceram|tiles?|terrazzo|marble|granite|parquet|carpet|vinyl|pvc|screed|epoxy|wooden floor|flooring|floor finish|plaster(?:ed)?|paint(?:ed)?)(?:\s+(?:floor(?:ing)?|tiles?|finish|ff))?$/i;
 const SHORTHANDS: [RegExp, string][] = [
-  [/\b(?:b\.\s*room|bed\s*room|b\/r)\b/gi, 'bedroom'], [/\bm\.\s*(?=\w)/gi, 'master '], [/\bc\.\s*(?=\w)/gi, 'common '],
+  [/\b(b)(?:\.\s*room|ed\s*room|\/r)\b/gi, '$1edroom'], [/\b(b)ath\s+room\b/gi, '$1athroom'], [/\bm\.\s*(?=\w)/gi, 'master '], [/\bc\.\s*(?=\w)/gi, 'common '],
   [/\bo\.\s*(?=\w)/gi, 'open '], [/\bk\.(?=\s|$)/gi, 'kitchen'], [/\bjanitary(?:\s+room)?\b/gi, 'janitor room'], [/\bmaids\b/gi, "maid's"],
   [/,(?=\S)/g, ', '],
 ];
@@ -100,6 +105,7 @@ export function placeLabelFrom(text: string): string | null {
   if (name.replace(/[^\p{L}]/gu, '').length < 3) return null;            // "A", "B1", "12", "-"
   if (name.split(' ').length > 5) return null;                            // a note, not a name
   if (/^(?:room|space|area|zone)$/i.test(name)) return null;              // a word, not a name ("Hall" is a name)
+  if (FINISH_ONLY.test(name)) return null;                                // "Parquet": the floor finish, written apart from the name
   return name;
 }
 
@@ -109,6 +115,8 @@ const RESTROOM_NAME = /\b(?:bath|toilet|w\.?c\b|restroom|shower|lavatory|ሽን�
 const ENTRANCE_TEXT = /ENTRANCE|ENTRY|EINGANG|ENTR[ÉE]E|\bGATE\b|MAIN DOOR|መግቢያ/i;
 const BENCH_BLOCK = /BENCH|SEAT/i;
 const MAX_FEATURES_PER_KIND = 1500;
+/** Enough glass lines for any façade; a hatch on a window layer shouldn't flood the grid. */
+const MAX_GLASS = 20000;
 
 export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions): BuiltVenue {
   const warnings: string[] = [];
@@ -280,10 +288,29 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
   }
   health.doorsFromSwings = swingDoors.length;
 
+  // Glass: a façade of glass panels between columns is the building's edge, drawn on a window
+  // layer. Used only when it closes rooms the walls leave open (below): a window in a wall is
+  // already shut by the gap closing, and its lines would only bend the rooms around it.
+  const panes: Seg[] = [];
+  for (const e of d.entities) {
+    if (cat(e.layer) !== 'windows' || panes.length >= MAX_GLASS) continue;
+    const pts = e.kind === 'LINE' ? [e.a, e.b] : e.kind === 'POLYLINE' ? (e.closed ? [...e.pts, e.pts[0]] : e.pts) : [];
+    for (let i = 1; i < pts.length; i++) {
+      const a = P(pts[i - 1]), b = P(pts[i]);
+      if (dist(a, b) >= 0.1 * m) panes.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+    }
+  }
+  let glass = panes.length ? mergeCollinear(panes, 0.3 * m, 0.05 * m).segs : [];
+
   // No room outlines in the drawing: rooms are the spaces the walls enclose.
   if (rooms.length === 0 && o.detect?.rooms !== false && walls.length) {
     // Door swings seal their doorways; plain door-sized gaps in a wall line are doorways too.
-    const found = detectRooms(walls, [...seals, ...doorwaySeals(walls, m)], { pxPerMeter: m }).slice(0, 400);
+    const sealed = [...seals, ...doorwaySeals(walls, m)];
+    let found = detectRooms(walls, sealed, { pxPerMeter: m }).slice(0, 400);
+    if (glass.length) {
+      const withGlass = detectRooms(walls, [...sealed, ...glass], { pxPerMeter: m }).slice(0, 400);
+      if (withGlass.length > found.length) found = withGlass; else glass = [];
+    }
     // On a framed sheet, spaces against the frame are title-block cells.
     const frame = sheetFrame(walls, m), edge = 0.3 * m;
     const onFrame = (poly: Pt[]) => !!frame && poly.some(p => p.x - frame.minX < edge || frame.maxX - p.x < edge || p.y - frame.minY < edge || frame.maxY - p.y < edge);
@@ -392,7 +419,10 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
     warnings.push(`The plan comes out ${health.extentM.w.toFixed(1)} × ${health.extentM.h.toFixed(1)} m — the units are probably wrong. Change "Drawing units" and check again.`);
   }
 
-  return { walls, rooms, features: kept, health, warnings };
+  // A glazed door is drawn on the window layer too: glass in a doorway doesn't block it.
+  const doorways = kept.filter(f => f.kind === 'door' || f.kind === 'entrance');
+  const walkThrough = glass.filter(g => !doorways.some(f => distToSeg(f, g) < 0.6 * m));
+  return { walls, rooms, features: kept, health, warnings, ...(walkThrough.length ? { glass: walkThrough } : {}) };
 }
 
 /** Merge boxes that overlap (after growing each by `pad`) into combined boxes. */

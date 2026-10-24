@@ -1,0 +1,33 @@
+// @vitest-environment node
+import { it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { readCadFile } from '@/lib/cad/readFile';
+import { classifyLayers } from '@/lib/cad/classify';
+import { quarterArcs, findFloorPlans } from '@/lib/cad/analyze';
+import { detectUnits } from '@/lib/cad/floorParts';
+it('g2', async () => {
+  const f = 'ml/data/shared/G+2 With Terrace.from-dwg.dxf';
+  const d = await readCadFile(new File([readFileSync(f)], 'g2.dxf'));
+  const m = Object.fromEntries(classifyLayers(d).map(l => [l.name, l.suggested]));
+  const arcs = quarterArcs(d.entities); const u = detectUnits(d, arcs);
+  console.log('UNITS', JSON.stringify(u), 'file units', d.unitsName, 'arcs', arcs.length);
+  const rs = arcs.map(a => a.radius / u.perMeter).sort((a, b) => a - b);
+  console.log('ARC radii m (pctl)', [0.1, 0.25, 0.5, 0.75, 0.9].map(q => rs[Math.floor(q * rs.length)]?.toFixed(2)).join(' '));
+  const byLayer: Record<string, number> = {}; for (const a of arcs) byLayer[a.layer] = (byLayer[a.layer] ?? 0) + 1;
+  console.log('ARC layers', JSON.stringify(byLayer).slice(0, 400));
+  const w = d.entities.filter(e => m[e.layer] === 'walls'); console.log('WALL entities', w.length);
+  const plans = findFloorPlans(d, l => m[l] === 'walls', u.perMeter, arcs);
+  for (const p of plans) console.log('PLAN', Math.round(p.minX), Math.round(p.minY), ((p.maxX - p.minX) / u.perMeter).toFixed(1), 'x', ((p.maxY - p.minY) / u.perMeter).toFixed(1), 'm doors', p.doors, 'wall-m', p.entities);
+  const tt = d.entities.filter((e: any) => (e.kind === 'TEXT' || e.kind === 'MTEXT') && /floor plan|terrace|roof plan|site plan/i.test(e.text)) as any[];
+  for (const t of tt) console.log('TITLE', Math.round((t.pos ?? t.at).x), Math.round((t.pos ?? t.at).y), JSON.stringify(t.text.slice(0, 50)));
+  const fp = (await import('@/lib/cad/floorParts')).partsFromDrawing('g2.dxf', d); console.log('PARTS', fp.map(x => x.name + ':' + x.origin).join(' | '));
+  const { findDrawings, leafedArcs } = await import('@/lib/cad/analyze');
+  const areas = findDrawings(d, 1000, arcs).slice(0, 8);
+  for (const a of areas) console.log('AREA raw', Math.round(a.maxX - a.minX), 'x', Math.round(a.maxY - a.minY), 'ents', a.entities);
+  const lf = leafedArcs(d.entities, arcs); console.log('LEAFED', lf.length, lf.map(a => `${a.layer}:${a.radius.toFixed(1)}`).join(' '));
+  const dk: Record<string, number> = {}; for (const e of d.entities) if (e.layer === 'DOOR') dk[e.kind] = (dk[e.kind] ?? 0) + 1; console.log('DOOR kinds', JSON.stringify(dk));
+  const da = arcs.filter(a => /door/i.test(a.layer) || a.layer === 'wall blue').map(a => a.radius.toFixed(1)); console.log('DOOR-ish arc radii', da.join(' '));
+  const L = w.filter(e => e.kind === 'LINE').map((e: any) => Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y)).sort((a, b) => a - b);
+  console.log('WALL line length raw pctl', [0.1, 0.5, 0.9].map(q => L[Math.floor(q * L.length)]?.toFixed(1)).join(' '));
+  const b = d.bounds!; console.log('BOUNDS m', ((b.maxX - b.minX) / u.perMeter).toFixed(0), ((b.maxY - b.minY) / u.perMeter).toFixed(0));
+}, 900000);

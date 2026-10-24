@@ -56,7 +56,7 @@ from yetnew_layers.summarize import SUMMARIZER_VERSION, DxfReadError, summarize_
 from .auth import AuthError, check_bearer, is_loopback, load_auth_settings
 from .jobs import JobLimitError, JobSettings, JobStore, UserFacingError, Worker
 
-MAX_UPLOAD_BYTES = int(float(os.environ.get("YETNEW_MAX_UPLOAD_MB", "50")) * 1024 * 1024)
+MAX_UPLOAD_BYTES = int(float(os.environ.get("YETNEW_MAX_UPLOAD_MB", "300")) * 1024 * 1024)  # a converted DWG can be 100+ MB of DXF
 CHUNK = 1024 * 1024
 CORS_ORIGINS = [o.strip() for o in os.environ.get("YETNEW_CORS_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080").split(",") if o.strip()]
 

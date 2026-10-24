@@ -761,8 +761,9 @@ export class IndoorViewer3D {
       const b = this.venue.bounds;
       return { center: new THREE.Vector3((b.min.x + b.max.x) / 2, y, (b.min.z + b.max.z) / 2), radius: Math.max(8, Math.hypot(b.max.x - b.min.x, b.max.z - b.min.z) / 2) };
     }
-    const xs = pts.map(p => p.x), zs = pts.map(p => p.z);
-    const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+    // A loop, not Math.min(...xs): a big floor has more points than a call can take.
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
     return { center: new THREE.Vector3((minX + maxX) / 2, y, (minZ + maxZ) / 2), radius: Math.max(4, Math.hypot(maxX - minX, maxZ - minZ) / 2) };
   }
 

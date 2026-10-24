@@ -37,9 +37,11 @@ function gridFor(venue: IndoorVenue, floorId: string): Grid {
     ...venue.rooms.filter(r => r.floorId === floorId).flatMap(r => r.polygon),
     ...venue.nodes.filter(n => n.floorId === floorId).map(n => n.at),
   ];
-  const xs = pts.map(p => p.x), zs = pts.map(p => p.z);
-  const x0 = (pts.length ? Math.min(...xs) : 0) - MARGIN, z0 = (pts.length ? Math.min(...zs) : 0) - MARGIN;
-  const x1 = (pts.length ? Math.max(...xs) : 10) + MARGIN, z1 = (pts.length ? Math.max(...zs) : 10) + MARGIN;
+  // A loop, not Math.min(...xs): a big floor has more points than a call can take.
+  let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+  for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
+  const x0 = (pts.length ? minX : 0) - MARGIN, z0 = (pts.length ? minZ : 0) - MARGIN;
+  const x1 = (pts.length ? maxX : 10) + MARGIN, z1 = (pts.length ? maxZ : 10) + MARGIN;
   let cs = CELL;
   while (((x1 - x0) / cs) * ((z1 - z0) / cs) > MAX_CELLS) cs *= 1.25;
   const w = Math.ceil((x1 - x0) / cs) + 1, h = Math.ceil((z1 - z0) / cs) + 1;

@@ -87,3 +87,27 @@ def test_unreadable_file_raises(tmp_path: Path) -> None:
 def test_missing_file_raises(tmp_path: Path) -> None:
     with pytest.raises(DxfReadError):
         summarize_file(tmp_path / "missing.dxf")
+
+
+def test_fast_reader_matches_ezdxf(tmp_path: Path) -> None:
+    """Big drawings are read by streaming (fast_summarize_file): the summary must be exactly
+    what ezdxf gives, or the model sees different facts than it was trained on."""
+    from yetnew_layers.summarize import fast_summarize_file
+
+    doc = ezdxf.new("R2018")
+    msp = doc.modelspace()
+    doc.layers.add("A-WALL")
+    msp.add_line((0, 0), (5, 0), dxfattribs={"layer": "A-WALL"})
+    msp.add_polyline2d([(0, 0), (1, 0), (1, 1)], dxfattribs={"layer": "OLD-PLINE"})   # VERTEX … SEQEND
+    msp.add_lwpolyline([(0, 0), (2, 0), (2, 2)], dxfattribs={"layer": "A-WALL"})
+    tag = doc.blocks.new("ROOM-TAG")
+    tag.add_attdef("NAME", (0, 0))
+    msp.add_blockref("ROOM-TAG", (3, 3), dxfattribs={"layer": "TAGS"}).add_auto_attribs({"NAME": "Meeting Room 2"})
+    msp.add_blockref("ROOM-TAG", (4, 4), dxfattribs={"layer": "TAGS"})              # no attributes
+    msp.add_text("Lobby", dxfattribs={"layer": "A-TEXT"})
+    msp.add_mtext("Main \Pentrance " + "x" * 300, dxfattribs={"layer": "A-TEXT"})    # long: split into chunks
+    doc.layouts.get("Layout1").add_line((0, 0), (1, 1), dxfattribs={"layer": "SHEET"})  # paper space: left out
+    path = tmp_path / "mixed.dxf"
+    doc.saveas(path)
+
+    assert fast_summarize_file(path) == summarize_doc(ezdxf.readfile(path))

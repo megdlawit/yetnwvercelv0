@@ -6,7 +6,7 @@
 // px = 1 m), positive, starting at (0, 0), Y down.
 
 import type { DxfEntity, DxfPoint } from '../dxf/parseDxf';
-import { quarterArcs, isLeafOf, DOOR_RANGE_M } from './analyze';
+import { quarterArcs, isLeafOf, DOOR_RANGE_M, wallHatchLoops } from './analyze';
 import { detectRooms, distToSeg, doorwaySeals, rayToWall, sheetFrame } from './detectRooms';
 import { categoryFromBlock } from './classify';
 import type { CadDrawing, Category, LayerMapping } from './types';
@@ -63,11 +63,11 @@ export interface BuiltVenue {
  * area too ("B. ROOM Ceramic ff A=14.6 m²") and drafting shorthands; visitors search for
  * "Bedroom", "Master bath". Finish and area are cut, shorthands spelled out, capitals tidied.
  */
-const FINISH_OR_AREA = /\s+(?:A\s*=|AREA\b|ceramic|ceram\b|tiles?\b|terrazzo|marble|granite|parquet|carpet|vinyl|pvc\b|screed|epoxy|wooden floor|f\.?f\.?\b|flooring|floor finish|\d+(?:[.,]\d+)?\s*(?:feet|foot|ft|metres?|meters?|m)\s+wide\b)/i;
-const FINISH_ONLY = /^(?:ceramic|ceram|tiles?|terrazzo|marble|granite|parquet|carpet|vinyl|pvc|screed|epoxy|wooden floor|flooring|floor finish|plaster(?:ed)?|paint(?:ed)?)(?:\s+(?:floor(?:ing)?|tiles?|finish|ff))?$/i;
+const FINISH_OR_AREA = /\s+(?:A\s*=|AREA\b|ceramic|ceram\b|porcelain|tiles?\b|terr?azz?o|marble|granite|parquet|carpet|vinyl|pvc\b|screed|epoxy|wooden floor|f\.?f\.?\b|flooring|floor finish|\d+(?:[.,]\d+)?\s*(?:feet|foot|ft|metres?|meters?|m)\s+wide\b)/i;
+const FINISH_ONLY = /^(?:ceramic|ceram|porcelain|tiles?|terr?azz?o|marble|granite|parquet|carpet|vinyl|pvc|screed|epoxy|wooden floor|flooring|floor finish|plaster(?:ed)?|paint(?:ed)?)(?:\s+(?:floor(?:ing)?|tiles?|finish|ff))?$/i;
 const SHORTHANDS: [RegExp, string][] = [
-  [/\b(b)(?:\.\s*room|ed\s*room|\/r)\b/gi, '$1edroom'], [/\b(b)ath\s+room\b/gi, '$1athroom'], [/\bm\.\s*(?=\w)/gi, 'master '], [/\bc\.\s*(?=\w)/gi, 'common '],
-  [/\bo\.\s*(?=\w)/gi, 'open '], [/\bk\.(?=\s|$)/gi, 'kitchen'], [/\bjanitary(?:\s+room)?\b/gi, 'janitor room'], [/\bmaids\b/gi, "maid's"],
+  [/\b(b)(?:\.\s*room|ed\s*room|\/r)\b/gi, '$1edroom'], [/\b(b)ath\s+room\b/gi, '$1athroom'], [/\b(m)\.\s*(?=\w)/gi, '$1aster '], [/\b(c)\.\s*(?=\w)/gi, '$1ommon '],
+  [/\b(o)\.\s*(?=\w)/gi, '$1pen '], [/\b(k)\.(?=\s|$)/gi, '$1itchen'], [/\bjanitary(?:\s+room)?\b/gi, 'janitor room'], [/\bmaids\b/gi, "maid's"],
   [/,(?=\S)/g, ', '],
 ];
 export function roomNameFrom(tag: string): string {
@@ -98,6 +98,7 @@ const NOT_A_NAME = [
 ];
 export function placeLabelFrom(text: string): string | null {
   const raw = text.replace(/\s+/g, ' ').trim();
+  if (/^(?:A|AREA)\s*[=:]/i.test(raw)) return null;                       // "A= 7.75 m.sq": the area, not a name
   if (/\d\s*\/\s*\d|%%|(?:^|\s)(?:sc|scale)\s*[=:]/i.test(raw) && !/[a-z]{3,}/i.test(raw.split(/\s+(?:A\s*=|AREA\b)/i)[0])) return null;
   // Judge the name once the floor finish and area are cut off ("STORE Ceramic ff A=3.3 m²" → "Store").
   const name = roomNameFrom(raw);
@@ -209,6 +210,9 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
     else if (e.kind === 'ARC') addPath(arcPts(e.center, e.radius, e.startDeg, e.endDeg, 12), false);
     else if (e.kind === 'CIRCLE') addPath(arcPts(e.center, e.radius, 0, 360, 12), true); // round column
   }
+  // Walls drawn only as hatched areas (no lines), on a wall layer or one left out (a hatch or
+  // dimension layer) — never furniture, windows or doors: a hatched counter or pane isn't a wall.
+  for (const loop of wallHatchLoops(d, o.unitsPerMeter, l => cat(l) === 'walls' || cat(l) === 'ignore')) addPath(loop, true);
 
   health.overlaps = walls.length <= 6000 ? countOverlaps(walls) : null;
   if (o.fix.overlaps && walls.length) {

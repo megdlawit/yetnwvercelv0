@@ -60,6 +60,47 @@ describe('partsFromFile', () => {
     // …and a file holding all the floors gives all of them, whichever way it was uploaded.
     expect((await partsFromFile(fileOf('level-2.dxf', sheet))).map(p => p.level)).toEqual([0, 1, 2]);
   });
+
+  it("an elevation (no doors, level markers beside it) isn't a floor, even with the plans' footprint", async () => {
+    const elevation = (ox: number) =>
+      line('A-WALL', ox, 0, ox + 14000, 0) + line('A-WALL', ox + 14000, 0, ox + 14000, 9000) + line('A-WALL', ox + 14000, 9000, ox, 9000) + line('A-WALL', ox, 9000, ox, 0) +
+      line('A-WALL', ox, 3000, ox + 14000, 3000) + line('A-WALL', ox, 6000, ox + 14000, 6000) +
+      text('A-ANNO', ox - 2600, 200, 'GROUND FLOOR') + text('A-ANNO', ox - 2600, 3200, 'FIRST FLOOR') + text('A-ANNO', ox - 2600, 6200, 'SECOND FLOOR');
+    const withElevation = pair(0, 'SECTION') + pair(2, 'HEADER') + pair(9, '$INSUNITS') + pair(70, 4) + pair(0, 'ENDSEC') + pair(0, 'SECTION') + pair(2, 'ENTITIES')
+      + plan(0, 'GROUND FLOOR') + plan(22000, 'FIRST FLOOR') + elevation(44000) + pair(0, 'ENDSEC') + pair(0, 'EOF');
+    expect((await partsFromFile(fileOf('house.dxf', withElevation))).map(p => p.name)).toEqual(['Ground floor', '1st floor']);
+  });
+
+  it('two drawings of one floor: the detailed one is the floor, the simpler copy is listed unticked', async () => {
+    // A presentation copy of the ground floor, a little smaller and without door swings.
+    const copy = (ox: number) =>
+      line('A-WALL', ox, 0, ox + 12000, 0) + line('A-WALL', ox + 12000, 0, ox + 12000, 7800) + line('A-WALL', ox + 12000, 7800, ox, 7800) + line('A-WALL', ox, 7800, ox, 0) +
+      line('A-WALL', ox + 5000, 0, ox + 5000, 7800) + text('A-ANNO-TTLB', ox + 4000, -1500, 'GROUND FLOOR PLAN');
+    const sheet2 = pair(0, 'SECTION') + pair(2, 'HEADER') + pair(9, '$INSUNITS') + pair(70, 4) + pair(0, 'ENDSEC') + pair(0, 'SECTION') + pair(2, 'ENTITIES')
+      + copy(0) + plan(22000, 'GROUND FLOOR PLAN') + plan(44000, 'FIRST FLOOR') + pair(0, 'ENDSEC') + pair(0, 'EOF');
+    const parts = await partsFromFile(fileOf('house.dxf', sheet2));
+    expect(parts.filter(p => p.include !== false).map(p => [p.name, p.drawing.bounds!.minX >= 20000])).toEqual([['Ground floor', true], ['1st floor', true]]);
+    expect(parts.find(p => p.include === false)?.note).toMatch(/Another drawing of the ground floor/);
+  });
+
+  it('plans drawn about a metre apart are still separate floors', async () => {
+    // 14 m wide plans, 1.2 m apart (the usual grouping distance joins them).
+    const close = pair(0, 'SECTION') + pair(2, 'HEADER') + pair(9, '$INSUNITS') + pair(70, 4) + pair(0, 'ENDSEC') + pair(0, 'SECTION') + pair(2, 'ENTITIES')
+      + plan(0, 'GROUND FLOOR') + plan(15200, 'FIRST FLOOR') + plan(30400, 'SECOND FLOOR') + pair(0, 'ENDSEC') + pair(0, 'EOF');
+    expect((await partsFromFile(fileOf('house.dxf', close))).map(p => p.name)).toEqual(['Ground floor', '1st floor', '2nd floor']);
+    // a floor titled without a level: its name, without "floor plan"
+    const terrace = pair(0, 'SECTION') + pair(2, 'HEADER') + pair(9, '$INSUNITS') + pair(70, 4) + pair(0, 'ENDSEC') + pair(0, 'SECTION') + pair(2, 'ENTITIES')
+      + plan(0, 'GROUND FLOOR') + plan(22000, 'TERRACE FLOOR PLAN') + pair(0, 'ENDSEC') + pair(0, 'EOF');
+    expect((await partsFromFile(fileOf('house.dxf', terrace))).map(p => p.name)).toEqual(['Ground floor', 'Terrace']);
+  });
+
+  it('a sheet with no floor titles: named in order, with a note to check', async () => {
+    const untitled = pair(0, 'SECTION') + pair(2, 'HEADER') + pair(9, '$INSUNITS') + pair(70, 4) + pair(0, 'ENDSEC') + pair(0, 'SECTION') + pair(2, 'ENTITIES')
+      + plan(0, 'x') + plan(22000, 'x') + plan(44000, 'x') + pair(0, 'ENDSEC') + pair(0, 'EOF');
+    const parts = await partsFromFile(fileOf('house.dxf', untitled));
+    expect(parts.map(p => [p.name, p.level, p.include !== false])).toEqual([['Ground floor', 0, true], ['1st floor', 1, true], ['2nd floor', 2, true]]);
+    expect(parts.every(p => /no floor titles/.test(p.note ?? ''))).toBe(true);
+  });
 });
 
 describe('a real sheet: floor plans among elevations, copies and an annex', () => {
@@ -98,6 +139,7 @@ describe('names on real sheets', () => {
   it.each([
     ['BASMENT FLOOR PLAN', [-1]], ['GROUN FLOOR A= 21 M²', [0]], ['2nd -4th FLOOR', [2, 3, 4]], ['2ND -4TH FLOOR PLAN', [2, 3, 4]],
     ['Floors 2-3', [2, 3]], ['1ST FLOOR PLAN', [1]], ['FRONT ELEVATION', []],
+    ['BASEMENT 2  FLOOR PLAN', [-2]], ['BASEMENT 1 FLOOR PLAN', [-1]], ['SEMI-BASEMENT FLOOR PLAN', [-1]], ['SECOND - THIRD FLOOR PLAN', [2, 3]], ['5th,6th,7th,8th & 9th FLOOR PLAN', [5, 6, 7, 8, 9]], ['SECOND FLOOR', [2]], ['GROUND FLOOR PLAN : 43 m²', [0]],
   ])('%s → levels %j', (title, levels) => expect(levelsFromName(title)).toEqual(levels));
 });
 
@@ -119,5 +161,6 @@ describe('map labels: names only, never drafting notes', () => {
     ['Plastered & Painting RAL 7044', null], ['5mm thick glass', null], ['11% Slope', null], ['ROOM', null], ['ORIENTATION', null],
     ['HALL', 'Hall'], ['PASSAGE 6FEET WIDE', 'Passage'],
     ['Parquet', null], ['MARBLE FLOORING', null], ['Ceramic tiles', null], ['Bath room', 'Bathroom'], ['Bed room', 'Bedroom'],
+    ['Bedroom porcelain', 'Bedroom'], ['Terazzo', null], ['A= 7.75 m. sq', null], ['Area: 12 m²', null], ['M.Bedroom', 'Master Bedroom'], ['C.Bath', 'Common Bath'],
   ])('%s → %s', (text, label) => expect(placeLabelFrom(text)).toBe(label));
 });

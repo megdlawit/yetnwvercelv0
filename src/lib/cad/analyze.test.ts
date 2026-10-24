@@ -83,6 +83,18 @@ describe('analysing a drawing', () => {
     expect(u.reason).toMatch(/says inches.*2 doors/);
   });
 
+  it('is not fooled by window swings that outnumber the doors', () => {
+    // A centimetre plan declared as inches: 3 doors of 85 cm, 5 casement windows of 12.7 cm.
+    // The middle swing is a window; the unit that makes the most swings door-sized wins.
+    const swing = (x: number, r: number) => [
+      { kind: 'ARC' as const, layer: 'D', center: { x, y: 0 }, radius: r, startDeg: 0, endDeg: 90 },
+      { kind: 'LINE' as const, layer: 'D', a: { x, y: 0 }, b: { x, y: r } },
+    ];
+    const entities = [...[0, 300, 600].flatMap(x => swing(x, 85)), ...[900, 950, 1000, 1050, 1100].flatMap(x => swing(x, 12.7))];
+    const drawing = { format: 'dxf', entities, unitsPerMeter: 39.3701, bounds: { minX: 0, minY: 0, maxX: 1200, maxY: 900 } } as unknown as Parameters<typeof inferUnits>[0];
+    expect(inferUnits(drawing, quarterArcs(entities))).toMatchObject({ perMeter: 100, name: 'centimetres', source: 'inferred' });
+  });
+
   it('finds a plotted drawing\'s scale from its doors', () => {
     // the same house drawn at 1:100 on paper, in metres of paper (doors ≈ 8 mm)
     const scaled = readDxf(house(1 / 100000));

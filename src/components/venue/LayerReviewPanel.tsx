@@ -76,7 +76,13 @@ export default function LayerReviewPanel({ labeling, buildingId }: { labeling: L
     return (
       <div className="space-y-3 rounded-xl border border-amber-300/60 bg-amber-50 p-4 text-sm dark:bg-amber-950/20">
         <p className="flex gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-          <span>{phase === 'unavailable' ? 'AI layer labeling is unavailable.' : 'AI layer labeling failed.'} <span className="block text-xs text-muted-foreground">{error}</span></span>
+          {/ollama/i.test(error ?? '') ? (
+            <span>The AI that reads the layers isn&apos;t running on this computer.
+              <span className="block text-xs text-muted-foreground">Open the Ollama app (or run <code>ollama serve</code>), then Try again — or continue with the quick suggestions, sorted by the layers&apos; names.</span>
+            </span>
+          ) : (
+            <span>{phase === 'unavailable' ? 'AI layer labeling is unavailable.' : 'AI layer labeling failed.'} <span className="block text-xs text-muted-foreground">{error}</span></span>
+          )}
         </p>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={labeling.retry}><RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Try again</Button>

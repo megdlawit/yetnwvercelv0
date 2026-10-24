@@ -119,12 +119,17 @@ export function inferUnits(d: CadDrawing, arcs = quarterArcs(d.entities)): Units
   if (leafed.length >= 2) {
     const radii = leafed.map(a => a.radius).sort((a, b) => a - b);
     const median = radii[Math.floor(radii.length / 2)];
-    const fits = CANDIDATES.map(c => ({ ...c, door: median / c.perMeter }))
-      .filter(c => c.door >= 0.6 && c.door <= 1.2)
-      .sort((a, b) => Math.abs(a.door - 0.85) - Math.abs(b.door - 0.85));
-    const n = leafed.length;
+    // Window and cupboard swings have leaves too, so not the median of all swings: the unit
+    // that makes the most of them door-sized (0.6–1.2 m) wins; ties go to the declared unit,
+    // then to doors nearest 0.85 m.
+    const fits = CANDIDATES.map(c => {
+      const doors = radii.filter(r => r / c.perMeter >= 0.6 && r / c.perMeter <= 1.2);
+      return { ...c, count: doors.length, door: doors.length ? doors[Math.floor(doors.length / 2)] / c.perMeter : 0 };
+    }).filter(c => c.count >= 2)
+      .sort((a, b) => b.count - a.count || Number(b.name === declaredName) - Number(a.name === declaredName) || Math.abs(a.door - 0.85) - Math.abs(b.door - 0.85));
+    const n = fits[0]?.count ?? leafed.length;
     if (fits.length) {
-      const pick = fits.find(c => c.name === declaredName) ?? fits[0];
+      const pick = fits[0];
       if (pick.name === declaredName) return { perMeter: pick.perMeter, name: pick.name, source: 'file', reason: `the file says ${pick.name}, and its ${n} doors measure ${pick.door.toFixed(2)} m` };
       return {
         perMeter: pick.perMeter, name: pick.name, source: 'inferred',
@@ -273,63 +278,106 @@ function framesAmong(walls: DxfEntity[], perMeter: number): Set<DxfEntity> {
   return out;
 }
 
+/**
+ * Hatch outlines shaped like walls: thin (5–45 cm thick, as 2 × area ÷ perimeter, the width
+ * of a long thin shape) and at least 40 cm long. Many offices draw walls as hatched areas with
+ * no lines, often on a dimension or hatch layer; a floor, tile or grass hatch is room-wide and
+ * never passes. `keep` filters by layer (the wall builder leaves out furniture and windows).
+ */
+export function wallHatchLoops(d: CadDrawing, perMeter: number, keep: (layer: string) => boolean = () => true): DxfPoint[][] {
+  const out: DxfPoint[][] = [];
+  for (const h of d.hatches ?? []) {
+    if (!keep(h.layer)) continue;
+    for (const loop of h.loops) {
+      let area = 0, perimeter = 0;
+      for (let i = 0; i < loop.length; i++) {
+        const p = loop[i], q = loop[(i + 1) % loop.length];
+        area += p.x * q.y - q.x * p.y;
+        perimeter += Math.hypot(q.x - p.x, q.y - p.y);
+      }
+      area = Math.abs(area) / 2;
+      if (perimeter <= 0) continue;
+      const thick = (2 * area) / perimeter / perMeter, long = perimeter / 2 / perMeter;
+      if (thick >= 0.05 && thick <= 0.45 && long >= 0.4) out.push(loop);
+    }
+  }
+  return out;
+}
+
 export function findFloorPlans(d: CadDrawing, isWallLayer: (layer: string) => boolean, perMeter: number,
                                arcs = quarterArcs(d.entities)): DrawingArea[] {
-  const cell = 1.5 * perMeter;
-  const occ = new Map<string, number>();   // cell → wall length in it (drawing units)
-  const markAlong = (a: DxfPoint, b: DxfPoint) => {
-    const len = Math.hypot(b.x - a.x, b.y - a.y);
-    const n = Math.max(1, Math.ceil(len / cell));
-    for (let i = 0; i <= n; i++) {
-      const k = `${Math.floor((a.x + ((b.x - a.x) * i) / n) / cell)},${Math.floor((a.y + ((b.y - a.y) * i) / n) / cell)}`;
-      occ.set(k, (occ.get(k) ?? 0) + len / (n + 1));
-    }
-  };
+  // The wall segments once (lines, polylines, wall-shaped hatches; frames round plans left out).
+  const segs: [DxfPoint, DxfPoint][] = [];
   const frames = framesAmong(d.entities.filter(e => isWallLayer(e.layer)), perMeter);
   for (const e of d.entities) {
     if (!isWallLayer(e.layer) || frames.has(e)) continue;
-    if (e.kind === 'LINE') markAlong(e.a, e.b);
-    else if (e.kind === 'POLYLINE') for (let i = 1; i < e.pts.length; i++) markAlong(e.pts[i - 1], e.pts[i]);
+    if (e.kind === 'LINE') segs.push([e.a, e.b]);
+    else if (e.kind === 'POLYLINE') for (let i = 1; i < e.pts.length; i++) segs.push([e.pts[i - 1], e.pts[i]]);
   }
+  for (const loop of wallHatchLoops(d, perMeter)) for (let i = 0; i < loop.length; i++) segs.push([loop[i], loop[(i + 1) % loop.length]]);
+
   type Box = { minX: number; minY: number; maxX: number; maxY: number; len: number };
-  const seen = new Set<string>();
-  let boxes: Box[] = [];
-  for (const start of occ.keys()) {
-    if (seen.has(start)) continue;
-    const box: Box = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, len: 0 };
-    const stack = [start];
-    seen.add(start);
-    while (stack.length) {
-      const k = stack.pop()!;
-      const [cx, cy] = k.split(',').map(Number);
-      box.minX = Math.min(box.minX, cx * cell); box.maxX = Math.max(box.maxX, (cx + 1) * cell);
-      box.minY = Math.min(box.minY, cy * cell); box.maxY = Math.max(box.maxY, (cy + 1) * cell);
-      box.len += occ.get(k)!;
-      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
-        const nk = `${cx + dx},${cy + dy}`;
-        if (occ.has(nk) && !seen.has(nk)) { seen.add(nk); stack.push(nk); }
+  /** Groups of walls closer than about a cell, as boxes; boxes that overlap are one plan in pieces. */
+  const boxesAt = (cell: number, within?: Box): Box[] => {
+    const occ = new Map<string, number>();   // cell → wall length in it (drawing units)
+    const inside = (p: DxfPoint) => !within || (p.x >= within.minX && p.x <= within.maxX && p.y >= within.minY && p.y <= within.maxY);
+    for (const [a, b] of segs) {
+      if (!inside(a) || !inside(b)) continue;
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const n = Math.max(1, Math.ceil(len / cell));
+      for (let i = 0; i <= n; i++) {
+        const k = `${Math.floor((a.x + ((b.x - a.x) * i) / n) / cell)},${Math.floor((a.y + ((b.y - a.y) * i) / n) / cell)}`;
+        occ.set(k, (occ.get(k) ?? 0) + len / (n + 1));
       }
     }
-    boxes.push(box);
-  }
-  // One plan in pieces (a wide opening, a gap in the outer wall): join boxes that overlap.
-  const overlap = (a: Box, b: Box) => a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
-  for (let merged = true; merged;) {
-    merged = false;
-    outer: for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
-      if (!overlap(boxes[i], boxes[j])) continue;
-      const a = boxes[i], b = boxes[j];
-      boxes[i] = { minX: Math.min(a.minX, b.minX), minY: Math.min(a.minY, b.minY), maxX: Math.max(a.maxX, b.maxX), maxY: Math.max(a.maxY, b.maxY), len: a.len + b.len };
-      boxes = boxes.filter((_, k) => k !== j);
-      merged = true;
-      break outer;
+    const seen = new Set<string>();
+    let boxes: Box[] = [];
+    for (const start of occ.keys()) {
+      if (seen.has(start)) continue;
+      const box: Box = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, len: 0 };
+      const stack = [start];
+      seen.add(start);
+      while (stack.length) {
+        const k = stack.pop()!;
+        const [cx, cy] = k.split(',').map(Number);
+        box.minX = Math.min(box.minX, cx * cell); box.maxX = Math.max(box.maxX, (cx + 1) * cell);
+        box.minY = Math.min(box.minY, cy * cell); box.maxY = Math.max(box.maxY, (cy + 1) * cell);
+        box.len += occ.get(k)!;
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+          const nk = `${cx + dx},${cy + dy}`;
+          if (occ.has(nk) && !seen.has(nk)) { seen.add(nk); stack.push(nk); }
+        }
+      }
+      boxes.push(box);
     }
-  }
+    // One plan in pieces (a wide opening, a gap in the outer wall): join boxes that overlap.
+    const overlap = (a: Box, b: Box) => a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
+    for (let merged = true; merged;) {
+      merged = false;
+      outer: for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+        if (!overlap(boxes[i], boxes[j])) continue;
+        const a = boxes[i], b = boxes[j];
+        boxes[i] = { minX: Math.min(a.minX, b.minX), minY: Math.min(a.minY, b.minY), maxX: Math.max(a.maxX, b.maxX), maxY: Math.max(a.maxY, b.maxY), len: a.len + b.len };
+        boxes = boxes.filter((_, k) => k !== j);
+        merged = true;
+        break outer;
+      }
+    }
+    return boxes;
+  };
   const doorsIn = (b: Box) => arcs.filter(a => a.radius / perMeter >= DOOR_MIN_M && a.radius / perMeter <= DOOR_MAX_M
     && a.center.x >= b.minX && a.center.x <= b.maxX && a.center.y >= b.minY && a.center.y <= b.maxY).length;
-  const candidates = boxes
-    .map(b => ({ ...b, doors: doorsIn(b), w: b.maxX - b.minX, h: b.maxY - b.minY }))
-    .filter(b => b.len / perMeter >= 20 && Math.min(b.w, b.h) / perMeter >= 4);
+  const asCandidate = (b: Box) => ({ ...b, doors: doorsIn(b), w: b.maxX - b.minX, h: b.maxY - b.minY });
+  const big = (b: ReturnType<typeof asCandidate>) => b.len / perMeter >= 20 && Math.min(b.w, b.h) / perMeter >= 4;
+
+  // Plans drawn close together (about a metre apart) group as one: looked at more finely, such a
+  // group falls apart into similar plans that each have doors — then it was several plans.
+  const candidates = boxesAt(1.5 * perMeter).map(asCandidate).filter(big).flatMap(b => {
+    const pieces = boxesAt(0.75 * perMeter, b).map(asCandidate).filter(big);
+    const plans = pieces.filter(p => p.doors >= 1);
+    const largest = Math.max(0, ...plans.map(p => p.w * p.h));
+    return plans.length >= 2 && plans.every(p => p.w * p.h >= 0.4 * largest) ? pieces : [b];
+  });
   const withDoors = candidates.filter(b => b.doors >= 1);
   // A floor without door swings (a basement car park) still counts when it has the footprint
   // of a floor that has them: floors of one building share it, elevations and sections don't.
@@ -352,7 +400,8 @@ export function withinArea(d: CadDrawing, area: DrawingArea | null): CadDrawing 
   if (!area) return d;
   const inside = (p: DxfPoint) => p.x >= area.minX && p.x <= area.maxX && p.y >= area.minY && p.y <= area.maxY;
   const entities = d.entities.filter(e => inside(e.kind === 'LINE' ? e.a : e.kind === 'POLYLINE' ? e.pts[0] : e.kind === 'TEXT' || e.kind === 'INSERT' ? e.pos : e.center));
-  return { ...d, entities, layers: [...new Set(entities.map(e => e.layer))].sort(), bounds: { minX: area.minX, minY: area.minY, maxX: area.maxX, maxY: area.maxY } };
+  const hatches = d.hatches?.filter(h => inside(h.loops[0][0]));
+  return { ...d, entities, hatches, layers: [...new Set(entities.map(e => e.layer))].sort(), bounds: { minX: area.minX, minY: area.minY, maxX: area.maxX, maxY: area.maxY } };
 }
 
 export const DOOR_RANGE_M = { min: DOOR_MIN_M, max: DOOR_MAX_M };

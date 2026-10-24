@@ -25,8 +25,13 @@ export interface DxfInsert { kind: 'INSERT'; layer: string; block: string; pos: 
 
 export type DxfEntity = DxfLine | DxfPolyline | DxfCircle | DxfArc | DxfText | DxfInsert;
 
+/** A hatch's outline (its boundary loops), kept apart from the lines: see buildVenue's wall hatches. */
+export interface DxfHatch { layer: string; pattern: string; loops: DxfPoint[][] }
+
 export interface ParsedDxf {
   entities: DxfEntity[];
+  /** Top-level hatches' outlines. Many offices draw walls as hatched areas, with no lines. */
+  hatches?: DxfHatch[];
   layers: string[];
   bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
   insunits: number | null; // HEADER $INSUNITS, the drawing's declared unit (0 = unitless)
@@ -182,6 +187,61 @@ function toEntities(type: string, body: Pair[], vertices: Pair[][]): DxfEntity[]
   }
 }
 
+/**
+ * A HATCH's boundary loops from its group codes: polyline paths (vertices) and edge paths
+ * (lines, arcs; ellipses and splines by their end points). Bulges are drawn straight.
+ */
+function hatchLoops(body: Pair[]): DxfPoint[][] {
+  const loops: DxfPoint[][] = [];
+  let k = body.findIndex(b => b.code === 91);
+  if (k < 0) return loops;
+  const paths = num(body[k].value);
+  k++;
+  const at = (code: number) => (k < body.length && body[k].code === code ? num(body[k++].value) : NaN);
+  const skipTo = (code: number) => { while (k < body.length && body[k].code !== code) k++; };
+  for (let n = 0; n < paths && k < body.length; n++) {
+    skipTo(92);
+    const flags = at(92);
+    const pts: DxfPoint[] = [];
+    if (flags & 2) {
+      at(72); at(73);
+      const count = at(93);
+      for (let v = 0; v < count && k < body.length; v++) {
+        skipTo(10); const x = at(10), y = at(20);
+        if (Number.isFinite(x) && Number.isFinite(y)) pts.push({ x, y });
+        if (k < body.length && body[k].code === 42) k++;
+      }
+    } else {
+      const edges = at(93);
+      for (let ed = 0; ed < edges && k < body.length; ed++) {
+        skipTo(72);
+        const type = at(72);
+        if (type === 1) { const x1 = at(10), y1 = at(20), x2 = at(11), y2 = at(21); pts.push({ x: x1, y: y1 }, { x: x2, y: y2 }); }
+        else if (type === 2) {
+          const cx = at(10), cy = at(20), r = at(40), a0 = at(50), a1 = at(51), ccw = at(73);
+          let s0 = a0, s1 = a1;
+          if (s1 < s0) s1 += 360;
+          const steps = Math.max(2, Math.ceil((s1 - s0) / 15));
+          const arc = Array.from({ length: steps + 1 }, (_, i) => {
+            const t = ((s0 + ((s1 - s0) * i) / steps) * Math.PI) / 180;
+            return { x: cx + r * Math.cos(t), y: cy + (ccw === 0 ? -1 : 1) * r * Math.sin(t) };
+          });
+          pts.push(...arc);
+        } else if (type === 3) { const cx = at(10), cy = at(20), mx = at(11), my = at(21); pts.push({ x: cx + mx, y: cy + my }); }
+        else if (type === 4) {
+          // spline edge: its control points (code 10/20) until the next edge or path
+          while (k < body.length && ![72, 92, 97].includes(body[k].code)) {
+            if (body[k].code === 10 && body[k + 1]?.code === 20) { pts.push({ x: num(body[k].value), y: num(body[k + 1].value) }); k += 2; } else k++;
+          }
+        }
+      }
+    }
+    if (pts.length >= 3) loops.push(pts.filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)));
+    skipTo(97);
+  }
+  return loops;
+}
+
 /** Walk a run of entity pairs (ENTITIES section or one block), gathering vertices / attributes. */
 function readEntities(pairs: Pair[], from: number, until: (p: Pair) => boolean): { entities: DxfEntity[]; next: number } {
   const entities: DxfEntity[] = [];
@@ -254,6 +314,7 @@ export function parseDxf(text: string): ParsedDxf {
   const pairs = tokenize(text);
   const blocks = new Map<string, BlockDef>();
   const topLevel: DxfEntity[] = [];
+  const hatches: DxfHatch[] = [];
   const insertScales = new Map<DxfInsert, { sx: number; sy: number }>();
   let insunits: number | null = null;
 
@@ -298,7 +359,14 @@ export function parseDxf(text: string): ParsedDxf {
           if (ins) insertScales.set(ins, { sx: num(body.find(b => b.code === 41)?.value, 1) || 1, sy: num(body.find(b => b.code === 42)?.value, 1) || 1 });
         }
       }
-      topLevel.push(...entities);
+      for (const e of entities) topLevel.push(e); // not push(...entities): a big drawing overflows the call stack
+      for (let j = start; j < next; j++) {
+        if (pairs[j].code !== 0 || pairs[j].value.trim() !== 'HATCH') continue;
+        const body: Pair[] = [];
+        for (let m = j + 1; m < next && pairs[m].code !== 0; m++) body.push(pairs[m]);
+        const loops = hatchLoops(body);
+        if (loops.length) hatches.push({ layer: body.find(b => b.code === 8)?.value?.trim() || '0', pattern: body.find(b => b.code === 2)?.value?.trim() ?? '', loops });
+      }
       i = next;
     }
     i++;
@@ -326,7 +394,7 @@ export function parseDxf(text: string): ParsedDxf {
     // INSERT positions aren't geometry; their exploded contents are counted above.
   }
 
-  return { entities, layers: [...layerSet].sort(), bounds, insunits };
+  return { entities, hatches, layers: [...layerSet].sort(), bounds, insunits };
 }
 
 // ── Diagnostics ────────────────────────────────────────────────────────────

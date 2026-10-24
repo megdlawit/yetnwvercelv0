@@ -127,5 +127,162 @@ def read_dxf(path: str | Path) -> Drawing:
     return doc
 
 
+# Above this size the drawing is read by streaming its group codes (fast_summarize_file):
+# loading it whole into ezdxf takes many minutes and gigabytes for a 100+ MB converted DWG.
+FAST_READ_BYTES = 40 * 1024 * 1024
+
+
 def summarize_file(path: str | Path) -> list[dict[str, Any]]:
+    if Path(path).is_file() and Path(path).stat().st_size > FAST_READ_BYTES:
+        return fast_summarize_file(path)
     return summarize_doc(read_dxf(path))
+
+
+def _pairs(path: str | Path):
+    """(code, value) group-code pairs of a DXF, streamed line by line."""
+    with open(path, encoding="utf-8", errors="replace", newline=None) as fh:
+        while True:
+            code = fh.readline()
+            if not code:
+                return
+            value = fh.readline()
+            try:
+                yield int(code), value.rstrip("\r\n")
+            except ValueError:
+                continue
+
+
+def fast_summarize_file(path: str | Path) -> list[dict[str, Any]]:
+    """The same summary as summarize_doc, without loading the drawing: reads the LAYER table
+    and the model-space entities of the ENTITIES section (code 67 = 1 is paper space), with
+    INSERT attributes and MTEXT continuation chunks, as ezdxf would see them."""
+    from ezdxf.tools.text import fast_plain_mtext
+
+    types: dict[str, Counter[str]] = {}
+    blocks: dict[str, Counter[str]] = {}
+    texts: dict[str, Counter[str]] = {}
+
+    def layer(name: str) -> str:
+        types.setdefault(name, Counter())
+        blocks.setdefault(name, Counter())
+        texts.setdefault(name, Counter())
+        return name
+
+    section = table = None
+    current: dict[str, Any] | None = None   # the entity being read
+    parent: dict[str, Any] | None = None    # an INSERT whose ATTRIBs follow
+
+    def finish(e: dict[str, Any] | None) -> None:
+        if e is None or e.get("paper"):
+            return
+        name = layer(e.get("layer", "0"))
+        kind = e["type"]
+        types[name][kind] += 1
+        if kind == "INSERT":
+            blocks[name][e.get("block", "")] += 1
+            raws = e.get("attribs", [])
+        elif kind == "TEXT":
+            raws = [e.get("text1", "")]
+        elif kind == "MTEXT":
+            raws = [fast_plain_mtext("".join(e.get("chunks", [])) + e.get("text1", ""))]
+        else:
+            raws = []
+        for raw in raws:
+            text = clean_text(raw)
+            if text:
+                texts[name][text] += 1
+
+    def close() -> None:
+        """The entity being read is complete (an INSERT with attributes completes at SEQEND)."""
+        nonlocal current, parent
+        if parent is not None:
+            finish(parent)
+        elif current is not None and current["type"] not in ("ATTRIB", "SEQEND", "VERTEX"):
+            finish(current)
+        current = parent = None
+
+    for code, value in _pairs(path):
+        if code == 0:
+            kind = value.strip()
+            if kind == "SECTION":
+                section = None
+                continue
+            if kind == "ENDSEC":
+                if section == "ENTITIES":
+                    close()
+                section = table = None
+                continue
+            if section == "TABLES":
+                if kind == "TABLE":
+                    table = "?"
+                elif kind == "ENDTAB":
+                    table = None
+                elif table == "LAYER" and kind == "LAYER":
+                    current = {"type": "LAYER"}
+                continue
+            if section == "ENTITIES":
+                if kind == "ATTRIB" and parent is not None:
+                    parent.setdefault("attribs", []).append("")
+                    current = {"type": "ATTRIB"}
+                    continue
+                if kind in ("SEQEND", "VERTEX"):
+                    if kind == "SEQEND":
+                        close()
+                    current = {"type": kind}
+                    continue
+                close()
+                current = {"type": kind}
+                if kind == "POLYLINE":
+                    parent = current            # its VERTEXes follow, until SEQEND
+                continue
+            continue
+        if code == 2 and section is None:
+            section = value.strip()
+            continue
+        if section == "TABLES":
+            if code == 2 and table == "?":
+                table = value.strip()
+            elif code == 2 and table == "LAYER" and current is not None and current["type"] == "LAYER":
+                layer(value.strip())
+                current = None
+            continue
+        if section != "ENTITIES" or current is None:
+            continue
+        t = current["type"]
+        if t == "ATTRIB":
+            if code == 1 and parent is not None:
+                parent["attribs"][-1] = value
+            continue
+        if t in ("SEQEND", "VERTEX"):
+            continue
+        if code == 8:
+            current["layer"] = value.strip()
+        elif code == 67:
+            current["paper"] = value.strip() == "1"
+        elif code == 2 and t == "INSERT":
+            current["block"] = value.strip()
+        elif code == 66 and t == "INSERT" and value.strip() == "1":
+            parent = current
+        elif code == 1 and t in ("TEXT", "MTEXT"):
+            current["text1"] = value
+        elif code == 3 and t == "MTEXT":
+            current.setdefault("chunks", []).append(value)
+    close()
+    # ezdxf adds the standard layers a file leaves out of its table.
+    for std in ("0", "Defpoints"):
+        if not any(n.lower() == std.lower() for n in types):
+            layer(std)
+
+    summaries: list[LayerSummary] = []
+    for name, counter in types.items():
+        summaries.append(
+            LayerSummary(
+                name=name,
+                total=sum(counter.values()),
+                entity_counts=dict(_top(counter, MAX_ENTITY_TYPES)),
+                blocks=[b for b, _ in _top(blocks[name], MAX_BLOCKS) if b],
+                texts=[t for t, _ in _top(texts[name], MAX_TEXTS)],
+            )
+        )
+    summaries.sort(key=lambda s: (-s.total, s.name))
+    return [s.to_dict() for s in summaries]

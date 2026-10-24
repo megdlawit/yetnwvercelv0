@@ -53,8 +53,9 @@ const ORDINALS: Record<string, number> = { first: 1, second: 2, third: 3, fourth
 export function levelFromName(raw: string): number | null {
   const s = raw.toLowerCase().replace(/[_.-]+/g, ' ');
   // Also as typed on real sheets: "BASMENT", "GROUN FLOOR".
-  const basement = /\b(?:bas[e]?m[e]?nt|cellar|underground|b(\d+)|lower ground)\b/.exec(s);
-  if (basement) return -(Number(basement[1]) || 1);
+  // "Basement 2" is two below ground; a semi-basement is one (a plain basement under it goes lower — see sheetFloors).
+  const basement = /\b(?:bas[e]?m[e]?nt(?:\s*(\d))?|cellar|underground|b(\d+)|lower ground)\b/.exec(s);
+  if (basement) return -(Number(basement[1] ?? basement[2]) || 1);
   if (/\b(?:ground|groun\s+(?:floor|level|plan)|gf|g\/f|lobby|entrance level|street level)\b/.test(s)) return 0;
   const ord = /\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b/.exec(s);
   if (ord) return ORDINALS[ord[1]];
@@ -68,11 +69,18 @@ export function levelFromName(raw: string): number | null {
  * or "Floors 2-4" and is the plan of each of them. Otherwise its one level, or [].
  */
 export function levelsFromName(raw: string): number[] {
-  const s = raw.toLowerCase();
+  // "SECOND - THIRD FLOOR" reads as "2nd - 3rd floor".
+  const s = raw.toLowerCase().replace(/\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b/g, w => `${ORDINALS[w]}th`);
   const range = /\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:-|–|to)\s*(\d{1,2})(?:st|nd|rd|th)?\s*(?:floor|level|storey|story)?/.exec(s);
   if (range && /(floor|level|storey|story)/.test(s)) {
     const a = Number(range[1]), b = Number(range[2]);
     if (b > a && b - a <= 20) return Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  }
+  // A list: "5th, 6th, 7th, 8th & 9th FLOOR PLAN".
+  const list = /\b\d{1,2}(?:st|nd|rd|th)(?:\s*(?:,|&|and)\s*\d{1,2}(?:st|nd|rd|th))+\s*(?:floor|level|storey|story)/.exec(s);
+  if (list) {
+    const levels = [...new Set((list[0].match(/\d{1,2}(?=st|nd|rd|th)/g) ?? []).map(Number))].sort((x, y) => x - y);
+    if (levels.length > 1 && levels.length <= 20) return levels;
   }
   const one = levelFromName(raw);
   return one == null ? [] : [one];
@@ -106,8 +114,10 @@ const cleanTitle = (t: string) => t.split(/\s+(?:A\s*=|AREA\b|SC\s*=|SCALE\b)/i)
  * A floor plan's title: the floor/level text just BELOW the plan (where drawings are
  * titled), horizontally within it; the one nearest the plan's bottom edge.
  */
-function titleBelow(d: CadDrawing, a: DrawingArea): string | null {
+function titleBelow(d: CadDrawing, a: DrawingArea, perMeter: number): string | null {
   const h = a.maxY - a.minY, w = a.maxX - a.minX;
+  // A third of the plan's height below it — and at least 6 m: a small house's title sits as far off as a big one's.
+  const reach = Math.max(0.35 * h, 6 * perMeter);
   // Below on paper: smaller y when the drawing's y axis points up (CAD), larger otherwise.
   const gap = (y: number) => (d.flipY ? a.minY - y : y - a.maxY);
   let best: { t: string; g: number } | null = null;
@@ -116,7 +126,7 @@ function titleBelow(d: CadDrawing, a: DrawingArea): string | null {
     if (!levelsFromName(e.text).length && !/floor plan/i.test(e.text)) continue;
     if (e.pos.x < a.minX - 0.1 * w || e.pos.x > a.maxX + 0.1 * w) continue;
     const g = gap(e.pos.y);
-    if (g < -0.25 * h || g > 0.35 * h) continue;   // titles often overlap the plan's bottom edge
+    if (g < -0.25 * h || g > reach) continue;   // titles often overlap the plan's bottom edge
     if (!best || Math.abs(g) < Math.abs(best.g)) best = { t: cleanTitle(e.text), g };
   }
   return best?.t ?? null;
@@ -129,12 +139,31 @@ function titleBelow(d: CadDrawing, a: DrawingArea): string | null {
  * separate plan at a level a bigger plan already has (an annex on the site) is off.
  */
 function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: DrawingArea[]): FloorPart[] {
-  const found = plans.map(a => ({ a, title: titleBelow(d, a), size: (a.maxX - a.minX) * (a.maxY - a.minY) }));
+  // An elevation or section can have the plans' width, but it names three or more levels: with no
+  // doors at all, or (a door drawn in a section) with its level markers stacked up the side, each
+  // higher level higher on the page. An area table beside a plan lists levels going down the page.
+  // Each marker counts for the drawing nearest to it (a neighbour's markers can be within reach).
+  const gapTo = (p: { x: number; y: number }, a: DrawingArea) => Math.hypot(Math.max(a.minX - p.x, 0, p.x - a.maxX), Math.max(a.minY - p.y, 0, p.y - a.maxY));
+  const elevation = (a: DrawingArea) => {
+    const at = new Map<number, number[]>(), side = 6 * units.perMeter;   // markers are written beside the building, anchored at their left end
+    for (const e of d.entities) {
+      if (e.kind !== 'TEXT' || e.text.length > 40 || e.pos.x < a.minX - side || e.pos.x > a.maxX + side || e.pos.y < a.minY || e.pos.y > a.maxY) continue;
+      if (plans.some(o => o !== a && gapTo(e.pos, o) < gapTo(e.pos, a))) continue;
+      const l = levelFromName(e.text);
+      if (l != null) at.set(l, [...(at.get(l) ?? []), d.flipY ? e.pos.y : -e.pos.y]);
+    }
+    if (at.size < 3) return false;
+    if (a.doors === 0) return true;   // no doors and three levels: not a floor either way
+    const heights = [...at.entries()].sort((p, q) => p[0] - q[0]).map(([, ys]) => ys.reduce((s, y) => s + y, 0) / ys.length);
+    return heights.every((h, i) => i === 0 || h > heights[i - 1]);
+  };
+  const found = plans.filter(a => !elevation(a)).map(a => ({ a, title: titleBelow(d, a, units.perMeter), size: (a.maxX - a.minX) * (a.maxY - a.minY) }));
   const norm = (t: string | null) => (t ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const kept = found.filter(p => !found.some(o => o !== p && p.title && norm(o.title) === norm(p.title)
     && Math.abs(o.size - p.size) <= 0.2 * p.size && (o.a.doors > p.a.doors || (o.a.doors === p.a.doors && found.indexOf(o) < found.indexOf(p)))));
   const biggest = Math.max(...kept.map(p => p.size));
   const parts: FloorPart[] = [];
+  const detail = new Map<string, number>();   // part key → its plan's doors (and size), to pick between drawings of one floor
   kept.forEach((p, i) => {
     // No title on the sheet: a file with one plan is named by its file name ("level-2.dxf").
     const levels = p.title ? levelsFromName(p.title) : kept.length === 1 ? levelsFromName(fileName) : [];
@@ -142,6 +171,7 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
     const origin = `Plan ${i + 1} of ${kept.length}${p.title ? ` — “${p.title}”` : ''}`;
     const drawing = withinArea(d, p.a);
     if (levels.length > 1) {
+      levels.forEach(lv => detail.set(`${fileName}#P${i}L${lv}`, p.a.doors * 1e12 + p.size));
       levels.forEach(lv => parts.push({
         key: `${fileName}#P${i}L${lv}`, file: fileName, origin, drawing, units, name: ORDINAL_NAME(lv), level: lv,
         note: `One plan for floors ${levels[0]}–${levels[levels.length - 1]}`,
@@ -152,13 +182,34 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
     const clash = small && kept.some(o => o !== p && o.size >= 0.4 * biggest && o.title && levelsFromName(o.title).includes(level as number));
     // Untitled among plans titled by floor: the roof or site plan, most likely.
     const untitled = !p.title && kept.some(o => o.title && levelsFromName(o.title).length);
+    // No floor titles anywhere on the sheet: the plans are laid out from the ground floor up,
+    // so they're named in that order — and the note says to check.
+    const byOrder = !p.title && kept.length > 1 && !kept.some(o => o.title && levelsFromName(o.title).length);
+    detail.set(`${fileName}#P${i}`, p.a.doors * 1e12 + p.size);
     parts.push({
       key: `${fileName}#P${i}`, file: fileName, origin, drawing, units,
-      name: level != null ? ORDINAL_NAME(level) : p.title ? floorNameFrom(p.title) : kept.length === 1 ? floorNameFrom(fileName) : `Floor ${i}`, level,
+      name: level != null ? ORDINAL_NAME(level) : p.title ? (floorNameFrom(p.title).replace(/\s+(?:floor\s+)?plan\b.*$/i, '') || floorNameFrom(p.title)) : kept.length === 1 ? floorNameFrom(fileName) : byOrder ? ORDINAL_NAME(i) : `Floor ${i}`,
+      level: level ?? (byOrder ? i : null),
       ...(clash || (small && level == null) ? { include: false, note: 'Small separate plan — another building on the site? Tick it to import it.' }
-        : untitled ? { include: false, note: 'Plan without a floor title — the roof or site plan? Tick it to import it.' } : {}),
+        : untitled ? { include: false, note: 'Plan without a floor title — the roof or site plan? Tick it to import it.' }
+        : byOrder ? { note: 'The sheet has no floor titles — named in order, left to right. Check the floor.' } : {}),
     });
   });
+  // A semi-basement is the level just below ground; basements on the same sheet are under it.
+  const semi = (q: FloorPart) => /semi[\s-]*bas/i.test(q.origin);
+  if (parts.some(q => semi(q) && q.level === -1)) {
+    for (const q of parts) {
+      if (semi(q)) q.name = 'Semi-basement';
+      else if (q.level != null && q.level < 0) { q.level -= 1; q.name = ORDINAL_NAME(q.level); }
+    }
+  }
+  // Two drawings of one floor (a detailed plan and a simpler copy, a different size so not caught
+  // as a copy above): the one with more doors is the floor; the other is listed, unticked.
+  for (const q of parts) {
+    if (q.include === false || q.level == null) continue;
+    const better = parts.find(o => o !== q && o.include !== false && o.level === q.level && (detail.get(o.key) ?? 0) > (detail.get(q.key) ?? 0));
+    if (better) Object.assign(q, { include: false, note: `Another drawing of the ${better.name.toLowerCase()} (fewer doors) — tick it to use it instead.` });
+  }
   return parts;
 }
 

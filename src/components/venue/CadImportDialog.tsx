@@ -542,7 +542,12 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
                     {floorsOn.map(f => <li key={f.key} className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-primary" /> {f.name}</li>)}
                   </ul>
                   {floors.length > floorsOn.length && (
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">Left out: a small separate plan (another building on the site?) — you can add it in the next step.</p>
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      Left out: {floors.length - floorsOn.length === 1 ? 'a plan' : `${floors.length - floorsOn.length} plans`} that may not be a floor (the roof, the site or another building) — you can add {floors.length - floorsOn.length === 1 ? 'it' : 'them'} in the next step.
+                    </p>
+                  )}
+                  {floorsOn.some(f => f.note?.startsWith('The sheet has no floor titles')) && (
+                    <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-400">The sheet has no floor titles, so the floors are named in order, left to right. Check them in the next step.</p>
                   )}
                   <p className="mt-1.5 text-[11px] text-muted-foreground">Elevations, sections and the site plan are not floors and are left out. Below: the {floorsOn[0].name.toLowerCase()}.</p>
                 </div>

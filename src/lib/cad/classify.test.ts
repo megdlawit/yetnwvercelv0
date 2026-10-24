@@ -39,3 +39,15 @@ describe('layer names', () => {
     ])) expect(got, name).toBe(want);
   });
 });
+
+
+describe('names from the October 2026 architect drawings', () => {
+  it('misspellings, electrical layers, columns and a walkway are read right', () => {
+  const cases: [string, string | null][] = [['out door walk way', 'ignore'], ['FERNITURE', 'furniture'], ['FIXITURE', 'furniture'], ['SANITARY', 'furniture'], ['P-SANR-FIXT', 'furniture'],
+      ['columan', 'walls'], ['COLON', 'walls'], ['COL', 'walls'], ['col', 'walls'], ['E-LIGHT', 'ignore'], ['lighting', 'ignore'], ['socket', 'ignore'], ['E-EARTH', 'ignore'],
+      ['hidden line', 'ignore'], ['HIDD', 'ignore'], ['C-PROP-LINE', 'ignore'], ['Diamension', 'ignore'], ['ground$0$03-WIN', 'windows'], ['win', 'windows'], ['green', 'trees'],
+      ['FUR', 'furniture'], ['A-WALL', 'walls'], ['A-DOOR', 'doors'], ['WINDOW', 'windows'], ['KAPI', 'doors'], ['HID', null], ['FURNITURE', 'furniture'], ['COLOR', null], ['WINE CELLAR', null]];
+    const bad = cases.filter(([n, c]) => categoryFromName(n) !== c).map(([n, c]) => `${n}: ${categoryFromName(n)} ≠ ${c}`);
+    expect(bad).toEqual([]);
+  });
+});

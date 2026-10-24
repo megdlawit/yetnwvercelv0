@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from '@/lib/utils';
 import { celebrateBuild } from '@/lib/celebrate';
 import { extOf } from '@/lib/cad/readFile';
-import { buildPart, fillLevels, partsFromFile, type FloorPart } from '@/lib/cad/floorParts';
+import { buildPart, fillLevels, oneFloorPerFile, orderBasements, partsFromFile, type FloorPart } from '@/lib/cad/floorParts';
 import { commitVenue } from '@/lib/cad/commitVenue';
 import type { BuiltVenue } from '@/lib/cad/buildVenue';
 import type { LayerMapping } from '@/lib/cad/types';
@@ -75,13 +75,16 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
   const analyze = async (fs: File[], m: Mode) => {
     setStage('analyzing'); setError(null);
     try {
-      const found: FloorPart[] = [];
       // The reviewed mapping belongs to the file it was reviewed on.
-      for (const f of fs) found.push(...await partsFromFile(f, { mapping: f === initialFile ? initialMapping : undefined }));
+      const perFile: { name: string; parts: FloorPart[] }[] = [];
+      for (const f of fs) perFile.push({ name: f.name, parts: await partsFromFile(f, { mapping: f === initialFile ? initialMapping : undefined }) });
+      // One file per floor: each file is the floor it's named after (its other drawings listed, off).
+      const found = m === 'many' && fs.length > 1 ? oneFloorPerFile(perFile) : perFile.flatMap(x => x.parts);
       if (!found.length) throw new Error('No floor plans were found in that file.');
       const atLevel = (lvl: number) => floors.find(fl => fl.level === lvl);
       // Levels from the drawing's titles; the rest in order.
-      const levelled = fillLevels(found).sort((a, b) => Number(b.include !== false) - Number(a.include !== false) || a.level - b.level);
+      // One file per floor: basements are ordered across the files (a semi-basement above them).
+      const levelled = fillLevels(orderBasements(found)).sort((a, b) => Number(b.include !== false) - Number(a.include !== false) || a.level - b.level);
       const taken = new Set<string>();
       setRows(levelled.map(p => {
         const include = p.include ?? true;

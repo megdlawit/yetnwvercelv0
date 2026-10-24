@@ -45,9 +45,33 @@ export interface FloorPart {
   include?: boolean;
   /** Why it is off, or that it repeats another plan ("same plan as 2nd floor"). */
   note?: string;
+  /** The text the floor was named from: its title on the sheet, or the file name. */
+  named?: string;
 }
 
-const ORDINALS: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10 };
+/**
+ * A semi-basement is the level just below ground, so plain basements go under it ("Basement 1"
+ * becomes −2). Across every part of an upload — one sheet, or one file per floor.
+ */
+export function orderBasements<T extends { level: number | null; name: string; named?: string }>(parts: T[]): T[] {
+  const semi = (q: T) => /semi[\s-]*bas/i.test(q.named ?? '');
+  if (parts.some(q => semi(q) && q.level === -1)) {
+    for (const q of parts) {
+      if (semi(q)) q.name = 'Semi-basement';
+      else if (q.level != null && q.level < 0) {
+        q.level -= 1;
+        // The architect's own number stays ("Basement 1" is still Basement 1, one level lower).
+        const own = /bas[e]?m[e]?nt[\s_-]*(\d)|\bb(\d)\b/i.exec(q.named ?? '');
+        q.name = own ? `Basement ${own[1] ?? own[2]}` : ORDINAL_NAME(q.level);
+      }
+    }
+  }
+  return parts;
+}
+
+const ORDINALS: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
+  eleventh: 11, twelfth: 12, thirteenth: 13, fourteenth: 14, fifteenth: 15, sixteenth: 16, seventeenth: 17, eighteenth: 18, nineteenth: 19, twentieth: 20,
+  forth: 4 }; // "FORTH" is a common misspelling of fourth
 
 /** A floor's level from its name: "Ground floor" 0, "Level 2" 2, "B1" -1, "Second floor" 2. */
 export function levelFromName(raw: string): number | null {
@@ -57,7 +81,7 @@ export function levelFromName(raw: string): number | null {
   const basement = /\b(?:bas[e]?m[e]?nt(?:\s*(\d))?|cellar|underground|b(\d+)|lower ground)\b/.exec(s);
   if (basement) return -(Number(basement[1] ?? basement[2]) || 1);
   if (/\b(?:ground|groun\s+(?:floor|level|plan)|gf|g\/f|lobby|entrance level|street level)\b/.test(s)) return 0;
-  const ord = /\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b/.exec(s);
+  const ord = /\b(first|second|third|fourth|forth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth)\b/.exec(s);
   if (ord) return ORDINALS[ord[1]];
   const numbered = /\b(?:level|floor|storey|story|fl|lvl|l)\s*(-?\d{1,2})\b/.exec(s) ?? /\b(-?\d{1,2})(?:st|nd|rd|th)?\s*(?:floor|level|storey|story)\b/.exec(s);
   if (numbered) return Number(numbered[1]);
@@ -69,8 +93,8 @@ export function levelFromName(raw: string): number | null {
  * or "Floors 2-4" and is the plan of each of them. Otherwise its one level, or [].
  */
 export function levelsFromName(raw: string): number[] {
-  // "SECOND - THIRD FLOOR" reads as "2nd - 3rd floor".
-  const s = raw.toLowerCase().replace(/\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b/g, w => `${ORDINALS[w]}th`);
+  // "SECOND - THIRD FLOOR" reads as "2nd - 3rd floor"; "A-111_5th" as "a-111 5th" (an underscore joins words).
+  const s = raw.toLowerCase().replace(/_+/g, ' ').replace(/\b(first|second|third|fourth|forth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth)\b/g, w => `${ORDINALS[w]}th`);
   const range = /\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:-|–|to)\s*(\d{1,2})(?:st|nd|rd|th)?\s*(?:floor|level|storey|story)?/.exec(s);
   if (range && /(floor|level|storey|story)/.test(s)) {
     const a = Number(range[1]), b = Number(range[2]);
@@ -145,9 +169,12 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
   // Each marker counts for the drawing nearest to it (a neighbour's markers can be within reach).
   const gapTo = (p: { x: number; y: number }, a: DrawingArea) => Math.hypot(Math.max(a.minX - p.x, 0, p.x - a.maxX), Math.max(a.minY - p.y, 0, p.y - a.maxY));
   const elevation = (a: DrawingArea) => {
+    if (a.doors >= 8) return false;   // door swings are drawn in plans, not in elevations
     const at = new Map<number, number[]>(), side = 6 * units.perMeter;   // markers are written beside the building, anchored at their left end
     for (const e of d.entities) {
       if (e.kind !== 'TEXT' || e.text.length > 40 || e.pos.x < a.minX - side || e.pos.x > a.maxX + side || e.pos.y < a.minY || e.pos.y > a.maxY) continue;
+      // In a plan with doors, "RAMP FROM GROUND FLOOR" is a label, not a level marker.
+      if (a.doors > 0 && /\b(?:ramp|from|to|up|down|stairs?|plan|scale)\b/i.test(e.text)) continue;
       if (plans.some(o => o !== a && gapTo(e.pos, o) < gapTo(e.pos, a))) continue;
       const l = levelFromName(e.text);
       if (l != null) at.set(l, [...(at.get(l) ?? []), d.flipY ? e.pos.y : -e.pos.y]);
@@ -173,7 +200,7 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
     if (levels.length > 1) {
       levels.forEach(lv => detail.set(`${fileName}#P${i}L${lv}`, p.a.doors * 1e12 + p.size));
       levels.forEach(lv => parts.push({
-        key: `${fileName}#P${i}L${lv}`, file: fileName, origin, drawing, units, name: ORDINAL_NAME(lv), level: lv,
+        key: `${fileName}#P${i}L${lv}`, file: fileName, origin, drawing, units, name: ORDINAL_NAME(lv), level: lv, named: p.title ?? undefined,
         note: `One plan for floors ${levels[0]}–${levels[levels.length - 1]}`,
       }));
       return;
@@ -187,7 +214,7 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
     const byOrder = !p.title && kept.length > 1 && !kept.some(o => o.title && levelsFromName(o.title).length);
     detail.set(`${fileName}#P${i}`, p.a.doors * 1e12 + p.size);
     parts.push({
-      key: `${fileName}#P${i}`, file: fileName, origin, drawing, units,
+      key: `${fileName}#P${i}`, file: fileName, origin, drawing, units, named: p.title ?? (kept.length === 1 ? fileName : undefined),
       name: level != null ? ORDINAL_NAME(level) : p.title ? (floorNameFrom(p.title).replace(/\s+(?:floor\s+)?plan\b.*$/i, '') || floorNameFrom(p.title)) : kept.length === 1 ? floorNameFrom(fileName) : byOrder ? ORDINAL_NAME(i) : `Floor ${i}`,
       level: level ?? (byOrder ? i : null),
       ...(clash || (small && level == null) ? { include: false, note: 'Small separate plan — another building on the site? Tick it to import it.' }
@@ -195,14 +222,7 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
         : byOrder ? { note: 'The sheet has no floor titles — named in order, left to right. Check the floor.' } : {}),
     });
   });
-  // A semi-basement is the level just below ground; basements on the same sheet are under it.
-  const semi = (q: FloorPart) => /semi[\s-]*bas/i.test(q.origin);
-  if (parts.some(q => semi(q) && q.level === -1)) {
-    for (const q of parts) {
-      if (semi(q)) q.name = 'Semi-basement';
-      else if (q.level != null && q.level < 0) { q.level -= 1; q.name = ORDINAL_NAME(q.level); }
-    }
-  }
+  orderBasements(parts);
   // Two drawings of one floor (a detailed plan and a simpler copy, a different size so not caught
   // as a copy above): the one with more doors is the floor; the other is listed, unticked.
   for (const q of parts) {
@@ -264,7 +284,7 @@ export function partsFromDrawing(fileName: string, d: CadDrawing, reviewed?: Lay
     return ordered.map((a, i) => {
       const title = titleOf(d, a);
       return {
-        key: `${file.name}#D${i}`, file: file.name, origin: `Drawing ${i + 1} of ${ordered.length}`,
+        key: `${file.name}#D${i}`, file: file.name, origin: `Drawing ${i + 1} of ${ordered.length}`, named: title ?? undefined,
         drawing: withinArea(d, a), units,
         name: title ? floorNameFrom(title) : `Floor ${i}`, level: title ? levelFromName(title) : null,
       };
@@ -274,7 +294,71 @@ export function partsFromDrawing(fileName: string, d: CadDrawing, reviewed?: Lay
   // One plan: the whole file (or its main drawing when the sheet has extras).
   const main = areas.length > 1 ? withinArea(d, areas[0]) : d;
   const level = levelFromName(file.name);
-  return [{ key: file.name, file: file.name, origin: 'Whole file', drawing: main, units, name: level != null ? ORDINAL_NAME(level) : floorNameFrom(file.name), level }];
+  return orderBasements([{ key: file.name, file: file.name, origin: 'Whole file', drawing: main, units, name: level != null ? ORDINAL_NAME(level) : floorNameFrom(file.name), level, named: file.name }]);
+}
+
+/** A floor's name from a sheet file name: "AR_HOTEL A-105_MEZZANINE  FLOOR PLAN JAN_26.dxf" → "Mezzanine floor". */
+function floorNameFromSheet(fileName: string): string {
+  const core = fileName.replace(/\.[a-z0-9]+$/i, '')
+    .replace(/^.*?\b[A-Z]{1,2}-?\d{2,4}[_\s.-]+/i, '')            // the sheet number and what comes before it
+    .replace(/\s*(?:floor\s*)?plans?\b.*$/i, '')                   // "… FLOOR PLAN JAN_26"
+    .replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const name = floorNameFrom(core || fileName);
+  return /floor|roof|terrace|level|storey|deck/i.test(name) ? name : `${name} floor`;
+}
+
+/**
+ * "One file per floor": each file is the floor it's named after. Its biggest plan (or the one
+ * at the file's level) is that floor; the sheet's other drawings — key plans, sections, copies —
+ * are listed, unticked. Files without a level in their name (mezzanine, duct floor, roof) go
+ * between their neighbours in file order (sheets are numbered A-104, A-105, A-106…), and the
+ * floors are then numbered in that order with the ground floor at 0.
+ */
+export function oneFloorPerFile(files: { name: string; parts: FloorPart[] }[]): FloorPart[] {
+  const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+  const area = (p: FloorPart) => { const b = p.drawing.bounds; return b ? (b.maxX - b.minX) * (b.maxY - b.minY) : 0; };
+  const floors: { part: FloorPart; key: number | null }[] = [], others: FloorPart[] = [];
+  for (const f of sorted) {
+    if (!f.parts.length) continue;
+    const pool = f.parts.some(p => p.include !== false) ? f.parts.filter(p => p.include !== false) : f.parts;
+    const biggest = (ps: FloorPart[]) => ps.reduce((a, b) => (area(b) > area(a) ? b : a));
+    const levels = levelsFromName(f.name);
+    const chosen = new Set<FloorPart>();
+    if (levels.length) {
+      for (const lv of levels) {
+        const at = pool.filter(p => p.level === lv);
+        const p = at.length ? biggest(at) : biggest(pool);
+        chosen.add(p);
+        floors.push({ part: { ...p, key: `${f.name}#F${lv}`, level: lv, name: ORDINAL_NAME(lv), named: f.name, include: true, note: undefined }, key: lv });
+      }
+    } else {
+      const p = biggest(pool);
+      chosen.add(p);
+      floors.push({ part: { ...p, key: `${f.name}#F`, level: null, name: floorNameFromSheet(f.name), named: f.name, include: true, note: undefined }, key: null });
+    }
+    for (const p of f.parts) if (!chosen.has(p)) others.push({ ...p, include: false, note: 'Another drawing on this sheet — tick it to add it as a floor too.' });
+  }
+  orderBasements(floors.map(x => x.part));
+  for (const x of floors) if (x.key != null) x.key = x.part.level;
+  // Floors named without a level sit between their neighbours (in file order).
+  if (floors.some(x => x.key == null)) {
+    floors.forEach((x, i) => {
+      if (x.key != null) return;
+      const prev = floors.slice(0, i).reverse().find(o => o.key != null)?.key ?? null;
+      const next = floors.slice(i + 1).find(o => o.key != null)?.key ?? null;
+      x.key = prev != null && next != null ? (prev + next) / 2 : prev != null ? prev + 0.5 : next != null ? next - 0.5 : i;
+    });
+    // Known levels keep their numbers; each inserted floor moves the ones above it up by one.
+    let prev = -Infinity, shift = 0;
+    for (const x of [...floors].sort((a, b) => a.key! - b.key!)) {
+      let level = Number.isInteger(x.key) ? x.key! + shift : prev + 1;
+      if (!Number.isInteger(x.key)) shift += 1;
+      if (level <= prev) { shift += prev + 1 - level; level = prev + 1; }
+      x.part.level = level;
+      prev = level;
+    }
+  }
+  return [...floors.map(x => x.part), ...others];
 }
 
 /** Levels for parts that have none: after the known ones, in the order found. */

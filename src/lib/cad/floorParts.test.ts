@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPart, fillLevels, floorNameFrom, levelFromName, levelsFromName, partsFromFile } from './floorParts';
+import { buildPart, fillLevels, floorNameFrom, levelFromName, levelsFromName, oneFloorPerFile, orderBasements, partsFromFile } from './floorParts';
 import { placeLabelFrom, roomNameFrom } from './buildVenue';
 
 describe('levelFromName', () => {
@@ -139,7 +139,7 @@ describe('names on real sheets', () => {
   it.each([
     ['BASMENT FLOOR PLAN', [-1]], ['GROUN FLOOR A= 21 M²', [0]], ['2nd -4th FLOOR', [2, 3, 4]], ['2ND -4TH FLOOR PLAN', [2, 3, 4]],
     ['Floors 2-3', [2, 3]], ['1ST FLOOR PLAN', [1]], ['FRONT ELEVATION', []],
-    ['BASEMENT 2  FLOOR PLAN', [-2]], ['BASEMENT 1 FLOOR PLAN', [-1]], ['SEMI-BASEMENT FLOOR PLAN', [-1]], ['SECOND - THIRD FLOOR PLAN', [2, 3]], ['5th,6th,7th,8th & 9th FLOOR PLAN', [5, 6, 7, 8, 9]], ['SECOND FLOOR', [2]], ['GROUND FLOOR PLAN : 43 m²', [0]],
+    ['BASEMENT 2  FLOOR PLAN', [-2]], ['BASEMENT 1 FLOOR PLAN', [-1]], ['SEMI-BASEMENT FLOOR PLAN', [-1]], ['SECOND - THIRD FLOOR PLAN', [2, 3]], ['ELEVENTH FLOOR PLAN', [11]], ['AR_MARRIOTT HOTEL A-111_5th,6th,7th,8th & 9th FLOOR PLAN JAN_26.dxf', [5, 6, 7, 8, 9]], ['FORTH FLOOR PLAN', [4]], ['TWELFTH FLOOR', [12]], ['5th,6th,7th,8th & 9th FLOOR PLAN', [5, 6, 7, 8, 9]], ['SECOND FLOOR', [2]], ['GROUND FLOOR PLAN : 43 m²', [0]],
   ])('%s → levels %j', (title, levels) => expect(levelsFromName(title)).toEqual(levels));
 });
 
@@ -163,4 +163,31 @@ describe('map labels: names only, never drafting notes', () => {
     ['Parquet', null], ['MARBLE FLOORING', null], ['Ceramic tiles', null], ['Bath room', 'Bathroom'], ['Bed room', 'Bedroom'],
     ['Bedroom porcelain', 'Bedroom'], ['Terazzo', null], ['A= 7.75 m. sq', null], ['Area: 12 m²', null], ['M.Bedroom', 'Master Bedroom'], ['C.Bath', 'Common Bath'],
   ])('%s → %s', (text, label) => expect(placeLabelFrom(text)).toBe(label));
+});
+
+describe('basements across files (one file per floor)', () => {
+  it('a semi-basement sits just below ground; the basements go under it', () => {
+    const part = (named: string) => ({ named, name: '', level: levelFromName(named) });
+    const parts = orderBasements([part('A-101_BASEMENT 2 FLOOR PLAN.dxf'), part('A-102_BASEMENT 1 FLOOR PLAN.dxf'), part('A-103_SEMI-BASEMENT FLOOR PLAN.dxf'), part('A-104_GROUND FLOOR PLAN.dxf')]);
+    expect(parts.map(p => p.level)).toEqual([-3, -2, -1, 0]);
+    expect(parts[2].name).toBe('Semi-basement');
+    expect(parts.map(p => p.name).slice(0, 2)).toEqual(['Basement 2', 'Basement 1']);   // their own numbers
+  });
+});
+
+describe('one file per floor', () => {
+  const part = (file: string, name: string, level: number | null, w: number, include = true) =>
+    ({ key: `${file}#${name}`, file, origin: '', units: { perMeter: 1, source: 'file', reason: '' }, name, level, include, drawing: { bounds: { minX: 0, minY: 0, maxX: w, maxY: w } } }) as unknown as Parameters<typeof oneFloorPerFile>[0][number]['parts'][number];
+  it('each file is its floor; unnumbered floors sit between their neighbours; extra drawings are off', () => {
+    const out = oneFloorPerFile([
+      { name: 'A-106_FIRST FLOOR PLAN.dxf', parts: [part('A-106', '1st floor', 1, 40)] },
+      { name: 'A-104_GROUND FLOOR PLAN.dxf', parts: [part('A-104', 'Ground floor', 0, 40), part('A-104', 'Floor 1', null, 5, false)] },
+      { name: 'A-105_MEZZANINE  FLOOR PLAN.dxf', parts: [part('A-105', 'Ground floor', 0, 8), part('A-105', 'Ground floor', 0, 35)] },
+      { name: 'A-101_BASEMENT 2 FLOOR PLAN.dxf', parts: [part('A-101', 'Basement', -1, 40)] },
+      { name: 'A-114_ROOF PLAN.dxf', parts: [part('A-114', 'Roof plan', null, 30), part('A-114', 'Ground floor', 0, 10)] },
+    ]);
+    const on = out.filter(p => p.include !== false).sort((a, b) => a.level! - b.level!);
+    expect(on.map(p => [p.name, p.level])).toEqual([['Basement 2', -2], ['Ground floor', 0], ['Mezzanine floor', 1], ['1st floor', 2], ['Roof', 3]]);
+    expect(out.filter(p => p.include === false)).toHaveLength(3);   // the key plans and copies on those sheets
+  });
 });

@@ -118,15 +118,24 @@ export async function commitVenue(
  * skeleton traced from the walls alone.
  */
 export function walkableGraph(venue: BuiltVenue, pxPerMeter: number): PathGraphResult {
-  // Paths keep out of glass as out of walls (doors through it still open).
-  const barriers = venue.glass?.length ? [...venue.walls, ...venue.glass] : venue.walls;
+  // Glass can keep paths out of a façade, but glass drawn across a doorway or a sliding door
+  // splits the building: with and without it as a barrier, the one that connects more wins.
+  if (venue.glass?.length) {
+    const withGlass = pathsBetween(venue, [...venue.walls, ...venue.glass], pxPerMeter);
+    const without = pathsBetween(venue, venue.walls, pxPerMeter);
+    return throughDoors(venue, connectivity(withGlass) >= connectivity(without) ? withGlass : without, pxPerMeter);
+  }
+  return throughDoors(venue, pathsBetween(venue, venue.walls, pxPerMeter), pxPerMeter);
+}
+
+function pathsBetween(venue: BuiltVenue, barriers: BuiltVenue['walls'], pxPerMeter: number): PathGraphResult {
   const skeleton = generatePathGraph(barriers, venue.rooms.map(r => ({ name: r.name, x: r.x, y: r.y, width: r.width, height: r.height })), {});
-  if (!venue.rooms.length) return throughDoors(venue, skeleton, pxPerMeter);
+  if (!venue.rooms.length) return skeleton;
   const doors = venue.features.filter(f => f.kind === 'door' || f.kind === 'entrance').map(f => ({ x: f.x, y: f.y }));
   const rooms = buildRouteGraph({ walls: barriers, rooms: venue.rooms, doors, pxPerMeter });
   // Each method fails on different drawings (sealed door panels, leaky
   // gaps, rooms cut in pieces), so keep whichever connects more of the venue.
-  return throughDoors(venue, connectivity(rooms) >= connectivity(skeleton) ? rooms : skeleton, pxPerMeter);
+  return connectivity(rooms) >= connectivity(skeleton) ? rooms : skeleton;
 }
 
 /**

@@ -67,7 +67,31 @@ export function leafedArcs(entities: DxfEntity[], arcs: SwingArc[]): SwingArc[] 
     if (e.kind === 'LINE') shapes.push([e.a, e.b]);
     else if (e.kind === 'POLYLINE' && e.pts.length <= 5) shapes.push(e.pts);
   }
-  return arcs.filter(a => shapes.some(pts => isLeafOf(pts, a)));
+  if (!arcs.length) return [];
+  // A leaf starts at the hinge (within 8 % of the radius): the shapes' points sorted by x, so
+  // each swing looks only at the points beside its centre (a big sheet has 20,000 arcs ×
+  // 300,000 lines, and a few site arcs are a thousand times a door's size).
+  const xs: number[] = [], ys: number[] = [], owner: DxfPoint[][] = [];
+  const order: number[] = [];
+  for (const pts of shapes) for (const p of pts) { order.push(xs.length); xs.push(p.x); ys.push(p.y); owner.push(pts); }
+  order.sort((i, j) => xs[i] - xs[j]);
+  const sortedX = order.map(i => xs[i]);
+  const firstAtLeast = (x: number) => {
+    let lo = 0, hi = sortedX.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (sortedX[mid] < x) lo = mid + 1; else hi = mid; }
+    return lo;
+  };
+  return arcs.filter(a => {
+    const tol = a.radius * 0.08;
+    const seen = new Set<DxfPoint[]>();
+    for (let k = firstAtLeast(a.center.x - tol); k < sortedX.length && sortedX[k] <= a.center.x + tol; k++) {
+      const i = order[k];
+      if (Math.abs(ys[i] - a.center.y) > tol || seen.has(owner[i])) continue;
+      seen.add(owner[i]);
+      if (isLeafOf(owner[i], a)) return true;
+    }
+    return false;
+  });
 }
 
 /**

@@ -25,18 +25,21 @@ const NAME_RULES: [RegExp, Category][] = [
   [/ELEVATION|\bELEV?[\s_-]*\d|SECTION|\bSECT\b|\bROOF/i, 'ignore'],
   [/DIM|DAIMEN|HATCH|HTCH|HACTH|HACHE|PATT|GRID|AXIS|TITLE|BORDER|BOARDER|FRAME|DEFPOINTS|VPORT|VIEWPORT|XREF|NOPLOT|CENTER|CNTR|REVISION|SHEET/i, 'ignore'],
   [/PEOPLE|PERSON|HUMAN|\bCARS?\b|VEHICLE|PARCEL|STREET|\bPLOT\b|LEGEND|GENERAL.?NOTE|[ÖO]L[ÇC][ÜU]/i, 'ignore'],
+  // Electrical, hidden and drafting-only layers aren't part of a visitor's map; an "out door
+  // walk way" is a walkway, not doors. DIAMENSION is a common misspelling.
+  [/(^|[^A-Z])E-[A-Z]|LIGHTING|\bLAMPS?\b|SOCKET|SWITCH|EARTH|TELEPHONE|ELECTR|CALLOUT|(^|[^A-Z])HIDDEN|\bHIDD\b|PROP-?LINE|\bSYMBOL|\bARROW|DIAMEN|OUT\s*DOOR|WALK\s*WAY/i, 'ignore'],
   // TÜR / TUR only as a word (German "door"): FURNITUR, STRUCTUR are not doors.
   [/DOOR|PORTE|(^|[^A-Z])T[ÜU]R\b|TUER|IFCDOOR|KAPI|PUERTA/i, 'doors'],
-  [/WIND|GLAZ|FENSTER|FEN[EÊ]TRE|IFCWINDOW|CURTAIN|PENCERE|VENTANA/i, 'windows'],
+  [/WIND|GLAZ|FENSTER|FEN[EÊ]TRE|IFCWINDOW|CURTAIN|PENCERE|VENTANA|(^|[^A-Z])WIN($|[^A-Z])/i, 'windows'],
   [/STAIR|STRS|TREPP|ESCALIER|IFCSTAIR|MERDIVEN|ESCALERA/i, 'stairs'],
   [/ELEV|LIFT|EVTR|ASCENSEUR|AUFZUG|IFCTRANSPORT|ESCALATOR|ASCENSOR|ASANS[ÖO]R/i, 'elevators'],
   // "L-" is the landscape discipline prefix (L-PLNT) — only at a word start,
   // or "A-WALL-EXTR" would match it.
-  [/TREE|PLNT|PLANT|VEG|ARBRE|BAUM|SHRUB|LANDSCAPE|(^|[^A-Z])L-|\bCAY\b|A[GĞ]A[CÇ]|[AÁ]RBOL/i, 'trees'],
-  [/FURN|FIRNTUR|\bFRN\b|EQPM|EQUIP|CHAIR|TABLE|DESK|BENCH|SEAT|MOBIL|IFCFURN|CASEWORK|NOI.?THAT|THIET.?BI|MUEBLE/i, 'furniture'],
+  [/TREE|PLNT|PLANT|VEG|ARBRE|BAUM|SHRUB|LANDSCAPE|(^|[^A-Z])L-|\bCAY\b|A[GĞ]A[CÇ]|[AÁ]RBOL|\bGREEN/i, 'trees'],
+  [/FURN|FIRNTUR|FERNIT|FIXT|FIXIT|SANITAR|SANR|\bFUR\b|\bFRN\b|EQPM|EQUIP|CHAIR|TABLE|DESK|BENCH|SEAT|MOBIL|IFCFURN|CASEWORK|NOI.?THAT|THIET.?BI|MUEBLE/i, 'furniture'],
   [/ROOM|SPACE|AREA|ZONE|RAUM|PI[EÈ]CE|IFCSPACE|POLY.*ROOM/i, 'rooms'],
   [/TEXT|\bTEX\b|TEXET|ANNO|LABEL|NAME|TAG|TXT|IDEN|NOTE/i, 'labels'],
-  [/WALL|\bWAL\b|\bWAL\d|\bMUR|MURS|WAND|W[ÄA]NDE|PARTITION|PRTN|IFCWALL|COLUMN|COLS|STRUCT|DUVAR|PARED|MURO/i, 'walls'],
+  [/WALL|\bWAL\b|\bWAL\d|\bMUR|MURS|WAND|W[ÄA]NDE|PARTITION|PRTN|IFCWALL|COLUM|COLON|\bCOLS?\b|STRUCT|DUVAR|PARED|MURO/i, 'walls'],
 ];
 
 // Block names decide individual inserts too (a "DOOR-900" block on layer 0 is still a door).

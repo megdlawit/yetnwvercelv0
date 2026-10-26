@@ -77,7 +77,12 @@ def draft(row: dict[str, str], where: dict) -> tuple[str, bool, str]:
 
 
 def main() -> int:
-    names = [n for n in (GOLD / "where" / "list.txt").read_text(encoding="utf-8").splitlines() if n.strip()]
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--list", default="list.txt", help="File in data/gold/where/ naming the drawings to draft.")
+    parser.add_argument("--tag", default="", help="Added to the review file's name (several batches on one day).")
+    args = parser.parse_args()
+    names = [n for n in (GOLD / "where" / args.list).read_text(encoding="utf-8").splitlines() if n.strip()]
     review: list[dict[str, str]] = []
     for name in names:
         csv_path = GOLD / f"{name}.from-dwg.csv"
@@ -102,7 +107,7 @@ def main() -> int:
             writer.writeheader()
             writer.writerows(rows)
         print(f"{name}: {filled} drafted, {unsure} to check")
-    out = GOLD / f"REVIEW_drafts_{datetime.date.today():%Y-%m-%d}.csv"
+    out = GOLD / f"REVIEW_drafts_{datetime.date.today():%Y-%m-%d}{'_' + args.tag if args.tag else ''}.csv"
     with out.open("w", encoding="utf-8-sig", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=["drawing", "layer_name", "entity_count", "draft_label", "sure", "why"])
         writer.writeheader()

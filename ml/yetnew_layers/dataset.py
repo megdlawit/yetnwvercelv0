@@ -47,6 +47,9 @@ from .prompt import INCLUDE_TEXT_SAMPLES, PROMPT_VERSION, training_example
 MIN_VENUES = 3
 VAL_FRACTION = 0.2
 CONFIRMED_VIA_ALLOWED = frozenset({"individual", "group"})
+#: Labels from the gold CSVs of drawings shared with training permission (scripts/gold_rows.py);
+#: accepted only on that path (export_dataset --gold), never mixed with customer venues.
+GOLD_CONFIRMATION = "gold"
 
 #: Version of the training-consent notice shown in the editor
 #: (src/lib/cad/layerLabels/consent.ts, TRAINING_NOTICE_VERSION — a test keeps them equal).
@@ -106,7 +109,7 @@ def clean_rows(rows: list[dict[str, Any]], *, allow_synthetic: bool = False) -> 
     latest: dict[tuple[str, str], Example] = {}
     for r in rows:
         label = r.get("final_label")
-        if r.get("confirmed_via") not in CONFIRMED_VIA_ALLOWED:
+        if r.get("confirmed_via") not in CONFIRMED_VIA_ALLOWED | {GOLD_CONFIRMATION}:
             dropped["not confirmed individually or by group"] += 1
             continue
         if label not in LABELS or label == "unknown":
@@ -210,7 +213,9 @@ def augment(examples: list[Example], copies: int, generic_copies: int = 0) -> li
 def build_dataset(rows: list[dict[str, Any]], *, registry: dict[str, Any] | None = None, seed: str = "yetnew",
                   augment_copies: int = 1, generic_name_copies: int = 0, allow_synthetic: bool = False) -> Dataset:
     synthetic = any(is_synthetic(r) for r in rows)
-    if not synthetic and rows and not legal_review_confirmed():
+    # Customer venues need the legal review; gold rows (drawings shared with permission) don't.
+    customer = [r for r in rows if r.get("confirmed_via") != GOLD_CONFIRMATION]
+    if not synthetic and customer and not legal_review_confirmed():
         raise DatasetError(f"Exporting customer venues is disabled until the training-consent notice (version "
                            f"{CONSENT_NOTICE_VERSION}) has had legal review. Then set {LEGAL_REVIEW_ENV}={CONSENT_NOTICE_VERSION}.")
     examples, dropped = clean_rows(rows, allow_synthetic=allow_synthetic)

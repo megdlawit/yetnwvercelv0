@@ -72,6 +72,8 @@ def main() -> int:
     parser.add_argument("--finetuned", default=s.finetuned_model)
     parser.add_argument("--retrieval-k", type=int, default=s.retrieval_k or 3, help="Examples per layer for the retrieval option (0 = skip it).")
     parser.add_argument("--write", action="store_true", help="Write model_choice.json if every requirement is met.")
+    parser.add_argument("--baseline-only", action="store_true",
+                        help="Score only the baseline (and retrieval): the number a fine-tuned model must beat. Chooses nothing.")
     args = parser.parse_args()
 
     if "smoke" in args.finetuned.lower():
@@ -87,7 +89,7 @@ def main() -> int:
     except (OllamaUnavailable, OllamaError) as err:
         print(err, file=sys.stderr)
         return 3
-    missing = [m for m in (args.baseline, args.finetuned) if not _installed(names, m)]
+    missing = [m for m in ((args.baseline,) if args.baseline_only else (args.baseline, args.finetuned)) if not _installed(names, m)]
     if missing:
         print(f"Not installed in Ollama: {', '.join(missing)}", file=sys.stderr)
         return 3
@@ -96,7 +98,13 @@ def main() -> int:
 
     print(f"{len(rows)} held-out layers from {len(manifest['venues']['val'])} venue(s); to choose a model: "
           f">= {MIN_VAL_VENUES} venues, >= {MIN_VAL_LAYERS} layers, >= {MIN_VAL_PER_LABEL} per label")
-    reports = run(rows, s, baseline_model=args.baseline, finetuned_model=args.finetuned, bank=bank, retrieval_k=args.retrieval_k)
+    reports = run(rows, s, baseline_model=args.baseline, finetuned_model=None if args.baseline_only else args.finetuned, bank=bank, retrieval_k=args.retrieval_k)
+    if args.baseline_only:
+        print("\nThe score to beat (no fine-tuned model compared, nothing chosen)")
+        for kind, r in reports.items():
+            show(r)
+        (dataset / "baseline_report.json").write_text(json.dumps({k: v.__dict__ for k, v in reports.items()}, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+        return 0
     reference = "retrieval" if s.retrieval_k > 0 and "retrieval" in reports else "baseline"
     template = template_status(s, args.finetuned)
     decision = decide(manifest, rows, reports, reference=reference, template=template)

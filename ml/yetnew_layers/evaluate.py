@@ -126,7 +126,7 @@ def score(model: str, kind: str, rows: list[dict[str, Any]], results: list[Layer
     )
 
 
-def run(rows: list[dict[str, Any]], settings: Settings, *, baseline_model: str, finetuned_model: str,
+def run(rows: list[dict[str, Any]], settings: Settings, *, baseline_model: str, finetuned_model: str | None,
         chat_fn: ChatFn = chat, bank: ExampleBank | None = None, retrieval_k: int = 3,
         exclude_same_venue: bool = True) -> dict[str, Report]:
     """Labels the held-out layers with every option; retrieval only when a bank is given.
@@ -160,6 +160,8 @@ def run(rows: list[dict[str, Any]], settings: Settings, *, baseline_model: str, 
                        f"so this number is not comparable and is used in no comparison")
         reports[kind] = report
 
+    if finetuned_model is None:   # the score to beat, before any fine-tuned model exists
+        return reports
     t = time.perf_counter()
     baseline_fn: Callable[[list[dict[str, Any]]], list[LayerResult]] = (
         lambda ss: classify_baseline(ss, settings, model=baseline_model, chat_fn=chat_fn))

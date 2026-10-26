@@ -58,6 +58,16 @@ def test_customer_export_is_disabled_until_legal_review(monkeypatch: pytest.Monk
     build_dataset(venues(4))
 
 
+def test_gold_drawings_need_no_customer_review_but_customer_rows_still_do(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gold rows (drawings shared with training permission, scripts/gold_rows.py) aren't customer
+    venues; one customer row among them brings the legal-review requirement back."""
+    monkeypatch.delenv(LEGAL_REVIEW_ENV)
+    gold = [{**r, "confirmed_via": "gold"} for r in venues(4)]
+    assert len(build_dataset(gold).train_venues) >= 1
+    with pytest.raises(DatasetError, match="legal review"):
+        build_dataset(gold + [row("customer-1", "A-WALL", "wall")])
+
+
 def test_notice_version_matches_the_editor() -> None:
     ts = (REPO / "src" / "lib" / "cad" / "layerLabels" / "consent.ts").read_text(encoding="utf-8")
     assert int(re.search(r"TRAINING_NOTICE_VERSION = (\d+)", ts).group(1)) == CONSENT_NOTICE_VERSION  # type: ignore[union-attr]

@@ -1,0 +1,57 @@
+{
+  "note": "Frozen train/validation split per venue (opaque venue ids). Only grows; never edit by hand.",
+  "venues": {
+    "gold-0895e251a858": {
+      "first_seen": "2026-10-24",
+      "split": "train"
+    },
+    "gold-1267d28c7244": {
+      "first_seen": "2026-10-24",
+      "split": "train"
+    },
+    "gold-274d382474bb": {
+      "first_seen": "2026-10-24",
+      "split": "val"
+    },
+    "gold-2889e728258a": {
+      "first_seen": "2026-10-24",
+      "split": "train"
+    },
+    "gold-2c6a51d49681": {
+      "first_seen": "2026-10-24",
+      "split": "train"
+    },
+    "gold-31fefd901f10": {
+      "first_seen": "2026-10-24",
+      "split": "train"
+    },
+    "gold-4682f551d7c1": {
+      "first_seen": "2026-10-24",
+      "split": "train"
+    },
+    "gold-65f7f52d289f": {
+      "first_seen": "2026-10-24",
+      "split": "train"
+    },
+    "gold-93fb9a038287": {
+      "first_seen": "2026-10-24",
+      "split": "train"
+    },
+    "gold-ad4f68e2dc0a": {
+      "first_seen": "2026-10-24",
+      "split": "val"
+    },
+    "gold-b9b32d1f471d": {
+      "first_seen": "2026-10-24",
+      "split": "train"
+    },
+    "gold-c4dd7fe88f89": {
+      "first_seen": "2026-10-24",
+      "split": "train"
+    },
+    "gold-e0e9dcc21be7": {
+      "first_seen": "2026-10-24",
+      "split": "val"
+    }
+  }
+}

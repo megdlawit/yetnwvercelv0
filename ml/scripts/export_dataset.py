@@ -94,13 +94,26 @@ def main() -> int:
                         help="Copies of each training layer under a meaningless name (Layer 3, 0, New Layer) — teaches judging by "
                              "content, as uploads from non-architects need. Experimental: compare with evaluate.py.")
     parser.add_argument("--synthetic-dry-run", action="store_true", help="Allow the SYNTHETIC fixture (pipeline test only).")
+    parser.add_argument("--gold", action="store_true",
+                        help="Rows from scripts/gold_rows.py (drawings shared with training permission, not customer venues): "
+                             "every row must be confirmed_via=gold; the customer consent check does not apply.")
     args = parser.parse_args()
 
-    if not args.synthetic_dry_run and not legal_review_confirmed():
+    if args.gold and not args.from_json:
+        print("--gold needs --from-json with the rows from scripts/gold_rows.py.", file=sys.stderr)
+        return 2
+    if not args.synthetic_dry_run and not args.gold and not legal_review_confirmed():
         print(f"Not exported: customer venues can't be exported until the consent notice has had legal review "
               f"(then set {LEGAL_REVIEW_ENV}=1).", file=sys.stderr)
         return 2
     rows = json.loads(Path(args.from_json).read_text(encoding="utf-8")) if args.from_json else fetch_rows()
+    # The gold path takes only gold rows; customer rows (without legal review) never go through it.
+    if args.gold and any(r.get("confirmed_via") != "gold" for r in rows):
+        print("Not exported: --gold takes only rows from scripts/gold_rows.py (confirmed_via=gold).", file=sys.stderr)
+        return 2
+    if not args.gold and any(r.get("confirmed_via") == "gold" for r in rows):
+        print("Not exported: gold rows go through --gold, not mixed with customer rows.", file=sys.stderr)
+        return 2
     out = Path(args.out)
     if args.synthetic_dry_run and "synthetic" not in out.name.lower():
         out = out.with_name(out.name + "-SYNTHETIC")

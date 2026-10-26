@@ -467,7 +467,7 @@ export default function ViewMap() {
               route={routeOnFloor && routeOnFloor.length > 1 ? routeOnFloor : null} showPaths={false} theme={theme} here={hereOnFloor} />
           </Suspense>
         ) : (
-          <PlanView floorId={floorId} data={floorData} selected={selected} start={start} route={routeOnFloor}
+          <PlanView floorId={floorId} data={floorData} drawingLive={venue.data?.drawingLive} selected={selected} start={start} route={routeOnFloor}
             onSelect={id => selectPlace(id)} places={places} here={hereOnFloor} follow={guiding || (!!position && position.source !== 'qr')} heading={planHeading}
             focus={sel && sel.floorId === floorId ? { x: sel.x, y: sel.y, nonce: focus } : null} inset={mapInset} />
         )}

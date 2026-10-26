@@ -10,6 +10,7 @@ import { quarterArcs, isLeafOf, DOOR_RANGE_M, wallHatchLoops } from './analyze';
 import { detectRooms, distToSeg, doorwaySeals, rayToWall, sheetFrame } from './detectRooms';
 import { categoryFromBlock } from './classify';
 import type { CadDrawing, Category, LayerMapping } from './types';
+import { planDrawing, type DrawingLayer, type PlanDrawing } from './planDrawing';
 import {
   type Pt, type Seg, mergeCollinear, closeGaps, countGaps, countOverlaps,
   polygonCentroid, polygonArea, pointInPolygon, bbox, dist, projectOnSegment,
@@ -56,6 +57,8 @@ export interface BuiltVenue {
   walls: Seg[]; rooms: BuiltRoom[]; features: BuiltFeature[]; health: Health; warnings: string[];
   /** Window and glazing lines (glass façades): they close rooms and block paths, but aren't saved as walls. */
   glass?: Seg[];
+  /** The architect's drawing of the floor by kind (walls, doors, furniture…), for the visitor map. */
+  drawing?: PlanDrawing;
 }
 
 /**
@@ -166,11 +169,13 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
   // are doors, not walls — and neither are the door leaves drawn from the
   // hinge — so they are kept out of the walls and turned into doors below.
   const consumed = new Set<DxfEntity>();
+  // …and drawn as what they are on the visitor's plan.
+  const drawAs = new Map<DxfEntity, DrawingLayer | null>();
   const swings = o.detect?.doors === false ? [] : quarterArcs(d.entities).filter(a => {
     const c = cat(a.layer), rm = a.radius / o.unitsPerMeter;
     return (c === 'walls' || c === 'doors') && rm >= DOOR_RANGE_M.min && rm <= DOOR_RANGE_M.max;
   });
-  for (const sw of swings) consumed.add(sw.source);
+  for (const sw of swings) { consumed.add(sw.source); drawAs.set(sw.source, 'doors'); }
   if (swings.length) {
     for (const e of d.entities) {
       const c = cat(e.layer);
@@ -182,7 +187,7 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
       const box = bbox(pts);
       // a leaf is thin: a line, or a narrow panel
       if (pts.length > 2 && Math.min(box.maxX - box.minX, box.maxY - box.minY) > Math.max(box.maxX - box.minX, box.maxY - box.minY) * 0.2) continue;
-      if (swings.some(sw => isLeafOf(pts!, sw))) consumed.add(e);
+      if (swings.some(sw => isLeafOf(pts!, sw))) { consumed.add(e); drawAs.set(e, 'doors'); }
     }
   }
 
@@ -196,9 +201,10 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
     const pts = e.pts.map(P), box = bbox(pts);
     const w = (box.maxX - box.minX) / m, h = (box.maxY - box.minY) / m;
     const thin = Math.min(w, h) < 0.25 || Math.min(w, h) / Math.max(w, h, 1e-9) < 0.15;
-    if (Math.max(w, h) < 0.25) { consumed.add(e); continue; }
+    if (Math.max(w, h) < 0.25) { consumed.add(e); drawAs.set(e, 'furniture'); continue; }
     if ((e.closed || dist(pts[0], pts[pts.length - 1]) < 0.05 * m) && !thin && w * h < 4) {
       consumed.add(e);
+      drawAs.set(e, 'furniture');
       if (w * h > 0.25) furnitureShapes.push(pts);
     }
   }
@@ -426,7 +432,8 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
   // A glazed door is drawn on the window layer too: glass in a doorway doesn't block it.
   const doorways = kept.filter(f => f.kind === 'door' || f.kind === 'entrance');
   const walkThrough = glass.filter(g => !doorways.some(f => distToSeg(f, g) < 0.6 * m));
-  return { walls, rooms, features: kept, health, warnings, ...(walkThrough.length ? { glass: walkThrough } : {}) };
+  const drawing = planDrawing(d, cat, P, { pxPerMeter: m, unitsPerMeter: o.unitsPerMeter }, drawAs);
+  return { walls, rooms, features: kept, health, warnings, ...(walkThrough.length ? { glass: walkThrough } : {}), drawing };
 }
 
 /** Merge boxes that overlap (after growing each by `pad`) into combined boxes. */

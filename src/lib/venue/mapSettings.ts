@@ -5,7 +5,7 @@
 
 export type IndoorView = '3d' | '2d';
 
-export type IndoorLayerId = 'walls' | 'rooms' | 'objects' | 'labels' | 'paths' | 'otherFloors' | 'scenery';
+export type IndoorLayerId = 'walls' | 'rooms' | 'objects' | 'furniture' | 'labels' | 'paths' | 'otherFloors' | 'scenery';
 
 export interface VenueMapSettings {
   /** Which indoor view opens first. */
@@ -19,7 +19,7 @@ export interface VenueMapSettings {
 export const WALL_HEIGHT_RANGE = { min: 2, max: 8, step: 0.2 } as const;
 
 export const DEFAULT_LAYERS: Record<IndoorLayerId, boolean> = {
-  walls: true, rooms: true, objects: true, labels: true, paths: false, otherFloors: true, scenery: true,
+  walls: true, rooms: true, objects: true, furniture: true, labels: true, paths: false, otherFloors: true, scenery: true,
 };
 
 export const DEFAULT_MAP_SETTINGS: VenueMapSettings = { defaultView: '3d', wallHeightM: 2.8, layers: DEFAULT_LAYERS };
@@ -29,6 +29,7 @@ export const INDOOR_LAYERS: { id: IndoorLayerId; label: string; description: str
   { id: 'walls', label: 'Walls', description: 'Walls and partitions', color: '#64748b' },
   { id: 'rooms', label: 'Rooms', description: 'Coloured room floors', color: '#0ea5e9' },
   { id: 'objects', label: '3D objects', description: 'Doors, stairs, furniture, trees', color: '#d97706' },
+  { id: 'furniture', label: 'Furniture', description: 'Furniture, fixtures and planting on the floor plan', color: '#a16207' },
   { id: 'labels', label: 'Labels', description: 'Names of places and rooms', color: '#7c3aed' },
   { id: 'paths', label: 'Walkways', description: 'Every walkable path', color: '#16a34a' },
   { id: 'otherFloors', label: 'Other floors', description: 'The rest of the building, stacked', color: '#db2777' },

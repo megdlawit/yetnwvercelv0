@@ -21,6 +21,8 @@ export type VisitorBuilding = Tables<'buildings'>;
 export interface VisitorVenueData {
   building: VisitorBuilding;
   previewing: boolean;
+  /** Show floor drawings as last imported (the team's preview, or a venue without a snapshot), not as last published. */
+  drawingLive: boolean;
   floors: Floor[];
   nodes: (NavNode & { floorLevel: number })[];
   edges: RouteEdge[];
@@ -54,6 +56,7 @@ async function load(idOrSlug: string, preview: boolean): Promise<VisitorVenueDat
     // Published hero/theme/position/map-settings fields come from the snapshot (never the draft row's).
     building: (src.live ? b : { ...b, tagline: null, cover_url: null, hero_view: '3d', map_settings: {}, ...src.building }) as VisitorBuilding,
     previewing: src.teamPreview && b.is_published,
+    drawingLive: src.live,
     floors: fl,
     // Older imports can leave names empty (null); treat that as "no name".
     nodes: src.nodes.map(x => ({ id: x.id, floorId: x.floor_id, name: x.name ?? '', x: x.x, y: x.y, isHallway: x.is_hallway, floorLevel: levelOf.get(x.floor_id) ?? 0 })),

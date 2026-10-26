@@ -1,5 +1,7 @@
 // The visitor's 2D map of one floor: pan/zoom, tap a place, the route on top,
-// and a live "you are here" dot that the map follows while navigating.
+// and a live "you are here" dot that the map follows while navigating. When the
+// floor was imported from CAD, it's drawn as the architect drew it — a formal plan
+// with filled walls, door swings, windows, stairs and furniture — not as a diagram.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MapFeature } from '@/lib/venue/features';
@@ -9,9 +11,11 @@ import { useSvgViewport, type Inset } from '@/hooks/useSvgViewport';
 import { roomOutline } from '@/lib/venue/features';
 import FeatureGlyph from '@/components/venue/FeatureGlyph';
 import { cn } from '@/lib/utils';
+import { drawingBounds, layerPath, type DrawingLayer } from '@/lib/cad/planDrawing';
+import { useFloorDrawing } from './useFloorDrawing';
 import { CATEGORY_COLORS, CATEGORY_ICONS, PX_PER_METER, type Place } from './types';
 
-export default function PlanView({ floorId, data, selected, start, route, onSelect, places, here, follow, focus, heading, inset, layers, registerControls, theme, onZoomOutExit }: {
+export default function PlanView({ floorId, data, selected, start, route, onSelect, places, here, follow, focus, heading, inset, layers, registerControls, theme, onZoomOutExit, drawingLive }: {
   floorId: string | null;
   data: { walls: Wall[]; rooms: Room[]; features: MapFeature[]; nodes: NavNode[]; edges?: NavEdge[] };
   selected: string | null; start: string | null;
@@ -36,20 +40,36 @@ export default function PlanView({ floorId, data, selected, start, route, onSele
   theme?: { primary: string; route: string; slab: string; ground: string };
   /** Zoomed out until the floor is small in the middle (go to the outdoor map). */
   onZoomOutExit?: () => void;
+  /** Draw the floor as last imported (the team's preview) rather than as last published. */
+  drawingLive?: boolean;
 }) {
   const show = { ...DEFAULT_LAYERS, ...layers };
   const viewport = useSvgViewport();
   const k = 1 / viewport.scale;
   const [drag, setDrag] = useState<{ x: number; y: number; moved: boolean } | null>(null);
   const [hover, setHover] = useState<string | null>(null);
+  const drawing = useFloorDrawing(floorId, drawingLive);
+  const plan = useMemo(() => {
+    if (!drawing) return null;
+    const out = {} as Record<DrawingLayer, string>;
+    for (const [layer, lines] of Object.entries(drawing.layers) as [DrawingLayer, number[][]][]) out[layer] = layerPath(lines, layer === 'poche');
+    return out;
+  }, [drawing]);
+  // What the drawing shows already isn't drawn again as an icon.
+  const drawn = useMemo(() => new Set<string>(plan ? [
+    ...(plan.doors ? ['door'] : []), ...(plan.windows ? ['window'] : []), ...(plan.stairs ? ['stairs'] : []),
+    ...(plan.elevators ? ['elevator'] : []), ...(plan.furniture ? ['furniture', 'bench'] : []), ...(plan.trees ? ['tree'] : []),
+  ] : []), [plan]);
 
   const bounds = useMemo(() => {
     const xs: number[] = [], ys: number[] = [];
     data.walls.forEach(w => { xs.push(w.x1, w.x2); ys.push(w.y1, w.y2); });
     data.rooms.forEach(r => { xs.push(r.x, r.x + r.width); ys.push(r.y, r.y + r.height); });
     data.nodes.forEach(n => { xs.push(n.x); ys.push(n.y); });
+    const db = drawingBounds(drawing);
+    if (db) { xs.push(db.minX, db.maxX); ys.push(db.minY, db.maxY); }
     return xs.length ? { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) } : null;
-  }, [data]);
+  }, [data, drawing]);
 
   // Fit when the floor changes or the map first gets a size.
   const { fitTo, size, centerOn, zoomBy } = viewport;
@@ -109,10 +129,12 @@ export default function PlanView({ floorId, data, selected, start, route, onSele
         onPointerUp={() => setDrag(null)}>
         {show.rooms && data.rooms.map(r => (
           <polygon key={r.id} points={roomOutline(r).map(p => `${p.x},${p.y}`).join(' ')}
-            fill={r.nodeId && r.nodeId === selected ? 'hsl(var(--primary) / 0.18)' : theme ? theme.slab : 'hsl(var(--nav-room))'}
-            stroke="hsl(var(--border))" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            // Over the architect's drawing, rooms are only tinted when picked: the walls show the rooms.
+            fill={r.nodeId && r.nodeId === selected ? 'hsl(var(--primary) / 0.18)' : plan?.walls ? 'transparent' : theme ? theme.slab : 'hsl(var(--nav-room))'}
+            stroke={plan?.walls ? 'none' : 'hsl(var(--border))'} strokeWidth={1} vectorEffect="non-scaling-stroke" />
         ))}
-        {show.walls && (
+        {plan && <PlanDrawingLayers plan={plan} show={show} />}
+        {show.walls && !plan?.walls && (
           <path d={data.walls.map(w => `M${w.x1} ${w.y1}L${w.x2} ${w.y2}`).join('')} stroke="hsl(var(--foreground) / 0.75)" strokeWidth={2.5}
             strokeLinecap="round" fill="none" vectorEffect="non-scaling-stroke" />
         )}
@@ -120,7 +142,7 @@ export default function PlanView({ floorId, data, selected, start, route, onSele
           <path d={data.edges.map(e => { const a = nodeById.get(e.fromNodeId), b = nodeById.get(e.toNodeId); return a && b ? `M${a.x} ${a.y}L${b.x} ${b.y}` : ''; }).join('')}
             stroke={theme?.primary ?? 'hsl(var(--primary))'} strokeOpacity={0.35} strokeWidth={5} strokeLinecap="round" fill="none" vectorEffect="non-scaling-stroke" className="pointer-events-none" />
         )}
-        {data.features.filter(f => (f.kind === 'label' ? show.labels && viewport.scale > 0.6 : show.objects)).map(f => (
+        {data.features.filter(f => !drawn.has(f.kind) && (f.kind === 'label' ? show.labels && viewport.scale > 0.6 : show.objects)).map(f => (
           <g key={f.id} className="pointer-events-none"><FeatureGlyph f={f} pxPerMeter={PX_PER_METER} k={k} selected={false} /></g>
         ))}
         {route && route.length > 1 && (
@@ -174,5 +196,29 @@ export default function PlanView({ floorId, data, selected, start, route, onSele
         )}
       </svg>
     </div>
+  );
+}
+
+/**
+ * The architect's linework, styled as a printed plan: cut walls filled solid with a heavy
+ * outline, doors and windows lighter, stairs and lifts finer, furniture and planting
+ * finest and greyed — the line-weight hierarchy that makes a drawing read as a building.
+ */
+function PlanDrawingLayers({ plan, show }: { plan: Partial<Record<DrawingLayer, string>>; show: Record<IndoorLayerId, boolean> }) {
+  const ink = 'hsl(var(--foreground))';
+  const line = (d: string | undefined, width: number, opacity: number, color = ink) => d ? (
+    <path d={d} fill="none" stroke={color} strokeOpacity={opacity} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+  ) : null;
+  return (
+    <g className="pointer-events-none" aria-hidden>
+      {show.furniture && line(plan.furniture, 0.7, 0.42)}
+      {show.furniture && line(plan.trees, 0.8, 0.55, '#3f7d4e')}
+      {show.objects && line(plan.stairs, 0.9, 0.7)}
+      {show.objects && line(plan.elevators, 0.9, 0.7)}
+      {show.objects && line(plan.windows, 1, 0.8, '#3b6ea5')}
+      {show.objects && line(plan.doors, 0.9, 0.75)}
+      {show.walls && plan.poche && <path d={plan.poche} fill={ink} fillOpacity={0.82} fillRule="nonzero" stroke="none" />}
+      {show.walls && line(plan.walls, 1.6, 0.92)}
+    </g>
   );
 }

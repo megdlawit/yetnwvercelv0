@@ -734,6 +734,30 @@ export type Database = {
           },
         ]
       }
+      floor_drawings: {
+        Row: {
+          floor_id: string
+          building_id: string
+          drawing: Json
+          published: Json | null
+          updated_at: string
+        }
+        Insert: {
+          floor_id: string
+          building_id: string
+          drawing: Json
+          published?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          floor_id?: string
+          building_id?: string
+          drawing?: Json
+          published?: Json | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       floors: {
         Row: {
           building_id: string

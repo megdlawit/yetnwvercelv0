@@ -4,7 +4,7 @@
 // 'manual'); anything drawn by hand stays.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '@/integrations/supabase/types';
+import type { Database, Json } from '@/integrations/supabase/types';
 import { generatePathGraph, type PathGraphResult } from '../dxf/generatePathGraph';
 import { buildRouteGraph } from './routeGraph';
 import type { BuiltVenue } from './buildVenue';
@@ -104,6 +104,20 @@ export async function commitVenue(
       ...base, kind: f.kind, x: f.x, y: f.y, rotation_deg: f.rotationDeg,
       width: f.width ?? null, depth: f.depth ?? null, label: f.label ?? null,
     })), part => supabase.from('map_features').insert(part));
+  }
+
+  // The architect's drawing for the visitor map; visitors see it once the venue is published.
+  if (venue.drawing) {
+    const { error } = await supabase.from('floor_drawings').upsert({
+      floor_id: floorId, building_id: buildingId, drawing: venue.drawing as unknown as Json, updated_at: new Date().toISOString(),
+    });
+    if (error) {
+      warnings.push(/floor_drawings|schema cache/i.test(error.message)
+        ? "The architect's drawing (shown to visitors as the floor plan) wasn't saved: the database needs migration 20261026090000. Run it and import again."
+        : `The architect's drawing wasn't saved: ${error.message}`);
+    } else if (venue.drawing.truncated) {
+      warnings.push('The drawing is very detailed: some furniture was left out of the visitor floor plan to keep it quick to load.');
+    }
   }
 
   return {

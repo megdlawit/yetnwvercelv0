@@ -101,6 +101,23 @@ describe('partsFromFile', () => {
     expect(parts.map(p => [p.name, p.level, p.include !== false])).toEqual([['Ground floor', 0, true], ['1st floor', 1, true], ['2nd floor', 2, true]]);
     expect(parts.every(p => /no floor titles/.test(p.note ?? ''))).toBe(true);
   });
+
+  it('an ArchiCAD sheet: titled plans count without door swings, titled elevations never do, another building is set apart', async () => {
+    // Shop shutters have no swings; the elevation has an arched window that looks like a door.
+    const noSwings = (ox: number, title: string) => plan(ox, title).replace(/0\nARC\n(?:(?!0\n)[^\n]*\n[^\n]*\n)*/g, '');
+    const elevation = plan(44000, 'FRONT SIDE ELEVATION SC 1:50');
+    const sheet2 = pair(0, 'SECTION') + pair(2, 'HEADER') + pair(9, '$INSUNITS') + pair(70, 4) + pair(0, 'ENDSEC') + pair(0, 'SECTION') + pair(2, 'ENTITIES')
+      + noSwings(0, 'GROUND FLOOR PLAN SC 1:50') + noSwings(22000, '1st -4th FLOOR PLAN SC 1:50') + elevation
+      // the shop block, 90 m off and a different size (a same-size twin would be a copy of the plan)
+      + plan(150000, 'GROUND FLOOR PLAN SC 1:50') + line('A-WALL', 164000, 0, 172000, 0) + line('A-WALL', 172000, 0, 172000, 9000) + line('A-WALL', 172000, 9000, 164000, 9000)
+      + pair(0, 'ENDSEC') + pair(0, 'EOF');
+    const parts = await partsFromFile(fileOf('Drawing1.dxf', sheet2));
+    expect(parts.map(p => [p.name, p.level, p.include !== false])).toEqual([
+      ['Ground floor', 0, true], ['1st floor', 1, true], ['2nd floor', 2, true], ['3rd floor', 3, true], ['4th floor', 4, true],
+      ['Ground floor', 0, false],
+    ]);
+    expect(parts[5].note).toMatch(/Another building/);
+  });
 });
 
 describe('a real sheet: floor plans among elevations, copies and an annex', () => {

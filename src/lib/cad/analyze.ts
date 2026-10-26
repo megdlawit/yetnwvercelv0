@@ -407,8 +407,11 @@ export function findFloorPlans(d: CadDrawing, isWallLayer: (layer: string) => bo
   // of a floor that has them: floors of one building share it, elevations and sections don't.
   const sameFootprint = (a: typeof candidates[number], b: typeof candidates[number]) =>
     Math.abs(a.w - b.w) <= 0.15 * b.w && Math.abs(a.h - b.h) <= 0.15 * b.h && a.len >= 0.4 * b.len;
+  // The sheet's own titles beat door counting: ArchiCAD exports draw shop shutters without
+  // swings and open doors at 60–75°, and an elevation's window arcs can pass for doors.
+  const titled = (b: typeof candidates[number]) => titleKind(d, b, perMeter);
   const plans = candidates
-    .filter(b => b.doors >= 1 || withDoors.some(o => sameFootprint(b, o)))
+    .filter(b => { const t = titled(b); return t === 'floor' || (t !== 'other' && (b.doors >= 1 || withDoors.some(o => sameFootprint(b, o)))); })
     .sort((a, b) => a.minX - b.minX || a.minY - b.minY);
   return plans.map(b => {
     const w = (b.maxX - b.minX) / perMeter, h = (b.maxY - b.minY) / perMeter;
@@ -417,6 +420,31 @@ export function findFloorPlans(d: CadDrawing, isWallLayer: (layer: string) => bo
       label: `Floor plan — ${w.toFixed(0)} × ${h.toFixed(0)} m, ${b.doors} door${b.doors === 1 ? '' : 's'}`,
     };
   });
+}
+
+// "GROUND FLOOR PLAN", "1st -4th FLOOR PLAN"; not a bare "GROUND FLOOR", which is also how
+// sections and elevations mark their levels.
+const FLOOR_TITLE = /\b(?:floor|level)\s+plan\b/i;
+// A title starts with what it is: labels inside plans say "95XE Elevation" (a door type).
+const OTHER_TITLE = /^\s*(?:(?:front|rear|back|left|right|side|north|south|east|west)\s+){0,2}(?:elevations?|sections?)\b|^\s*(?:site|roof|foundation|footing|reflected\s+ceiling)\s+plan\b/i;
+
+/**
+ * What the title just below a drawing says it is: a floor plan, something else (an elevation,
+ * section, site or roof plan), or null when there's no such title. The nearest title wins;
+ * within the drawing's width, at most a third of its height (and at least 6 m) below it.
+ */
+export function titleKind(d: CadDrawing, a: { minX: number; minY: number; maxX: number; maxY: number }, perMeter: number): 'floor' | 'other' | null {
+  const h = a.maxY - a.minY, w = a.maxX - a.minX, reach = Math.max(0.35 * h, 6 * perMeter);
+  let best: { kind: 'floor' | 'other'; g: number } | null = null;
+  for (const e of d.entities) {
+    if (e.kind !== 'TEXT' || e.text.length > 80 || e.pos.x < a.minX - 0.1 * w || e.pos.x > a.maxX + 0.1 * w) continue;
+    const kind = OTHER_TITLE.test(e.text) ? 'other' : FLOOR_TITLE.test(e.text) ? 'floor' : null;
+    if (!kind) continue;
+    const g = d.flipY ? a.minY - e.pos.y : e.pos.y - a.maxY;   // below on paper
+    if (g < -0.25 * h || g > reach) continue;
+    if (!best || Math.abs(g) < Math.abs(best.g)) best = { kind, g };
+  }
+  return best?.kind ?? null;
 }
 
 /** Entities inside a drawing area (by their first point) — the rest of the sheet is left out. */

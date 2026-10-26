@@ -189,6 +189,18 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
   const kept = found.filter(p => !found.some(o => o !== p && p.title && norm(o.title) === norm(p.title)
     && Math.abs(o.size - p.size) <= 0.2 * p.size && (o.a.doors > p.a.doors || (o.a.doors === p.a.doors && found.indexOf(o) < found.indexOf(p)))));
   const biggest = Math.max(...kept.map(p => p.size));
+  // A building's floors are drawn side by side; another building on the sheet (a shop block
+  // beside a G+4) sits further off. The building with the most floors is the venue: where
+  // the other one has a floor of the same level, the venue's own plan is that floor.
+  const group = kept.map((_, i) => i);
+  const root = (i: number): number => (group[i] === i ? i : (group[i] = root(group[i])));
+  const span = (a: DrawingArea) => Math.max(a.maxX - a.minX, a.maxY - a.minY);
+  kept.forEach((p, i) => kept.forEach((o, j) => { if (j > i && gapTo({ x: (o.a.minX + o.a.maxX) / 2, y: (o.a.minY + o.a.maxY) / 2 }, p.a) - span(o.a) / 2 <= Math.max(span(p.a), span(o.a))) group[root(i)] = root(j); }));
+  const levelsIn = (g: number) => new Set(kept.flatMap((p, i) => (root(i) === g && p.title ? levelsFromName(p.title) : [])));
+  const roots = [...new Set(kept.map((_, i) => root(i)))];
+  const area = (g: number) => kept.reduce((s, p, i) => s + (root(i) === g ? p.size : 0), 0);
+  const main = roots.sort((a, b) => levelsIn(b).size - levelsIn(a).size || area(b) - area(a))[0];
+  const inMain = (i: number) => root(i) === main;
   const parts: FloorPart[] = [];
   const detail = new Map<string, number>();   // part key → its plan's doors (and size), to pick between drawings of one floor
   kept.forEach((p, i) => {
@@ -198,7 +210,7 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
     const origin = `Plan ${i + 1} of ${kept.length}${p.title ? ` — “${p.title}”` : ''}`;
     const drawing = withinArea(d, p.a);
     if (levels.length > 1) {
-      levels.forEach(lv => detail.set(`${fileName}#P${i}L${lv}`, p.a.doors * 1e12 + p.size));
+      levels.forEach(lv => detail.set(`${fileName}#P${i}L${lv}`, (inMain(i) ? 1e18 : 0) + p.a.doors * 1e12 + p.size));
       levels.forEach(lv => parts.push({
         key: `${fileName}#P${i}L${lv}`, file: fileName, origin, drawing, units, name: ORDINAL_NAME(lv), level: lv, named: p.title ?? undefined,
         note: `One plan for floors ${levels[0]}–${levels[levels.length - 1]}`,
@@ -206,18 +218,21 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
       return;
     }
     const level = levels[0] ?? null;
-    const clash = small && kept.some(o => o !== p && o.size >= 0.4 * biggest && o.title && levelsFromName(o.title).includes(level as number));
+    const sameLevel = (o: (typeof kept)[number]) => !!o.title && levelsFromName(o.title).includes(level as number);
+    const otherBuilding = !inMain(i) && kept.some((o, j) => inMain(j) && sameLevel(o));
+    const clash = otherBuilding || (small && kept.some((o, j) => o !== p && (inMain(j) || !inMain(i)) && o.size >= 0.4 * biggest && sameLevel(o)));
     // Untitled among plans titled by floor: the roof or site plan, most likely.
     const untitled = !p.title && kept.some(o => o.title && levelsFromName(o.title).length);
     // No floor titles anywhere on the sheet: the plans are laid out from the ground floor up,
     // so they're named in that order — and the note says to check.
     const byOrder = !p.title && kept.length > 1 && !kept.some(o => o.title && levelsFromName(o.title).length);
-    detail.set(`${fileName}#P${i}`, p.a.doors * 1e12 + p.size);
+    detail.set(`${fileName}#P${i}`, (inMain(i) ? 1e18 : 0) + p.a.doors * 1e12 + p.size);
     parts.push({
       key: `${fileName}#P${i}`, file: fileName, origin, drawing, units, named: p.title ?? (kept.length === 1 ? fileName : undefined),
       name: level != null ? ORDINAL_NAME(level) : p.title ? (floorNameFrom(p.title).replace(/\s+(?:floor\s+)?plan\b.*$/i, '') || floorNameFrom(p.title)) : kept.length === 1 ? floorNameFrom(fileName) : byOrder ? ORDINAL_NAME(i) : `Floor ${i}`,
       level: level ?? (byOrder ? i : null),
-      ...(clash || (small && level == null) ? { include: false, note: 'Small separate plan — another building on the site? Tick it to import it.' }
+      ...(otherBuilding ? { include: false, note: 'Another building drawn on this sheet — import it as its own venue, or tick it to add it here.' }
+        : clash || (small && level == null) ? { include: false, note: 'Small separate plan — another building on the site? Tick it to import it.' }
         : untitled ? { include: false, note: 'Plan without a floor title — the roof or site plan? Tick it to import it.' }
         : byOrder ? { note: 'The sheet has no floor titles — named in order, left to right. Check the floor.' } : {}),
     });

@@ -8,6 +8,7 @@ import { indoorToGeo, latLngToMeters, metersToLatLng } from '@/lib/geo/GeoMath';
 import type { GeoAnchor, GeoCoord } from '@/lib/geo/GeoTypes';
 import { roomOutline } from './features';
 import type { Room, Wall } from '@/data/types';
+import type { DrawingLayer, PlanDrawing } from '@/lib/cad/planDrawing';
 
 export const PX_PER_METER = 40;
 export const DEFAULT_MPP = 1 / PX_PER_METER;
@@ -51,6 +52,8 @@ export interface VenueGeoInput {
   rooms: Room[];
   places: { id: string; name: string; x: number; y: number; kind?: string }[];
   paths: { a: { x: number; y: number }; b: { x: number; y: number } }[];
+  /** The architect's drawing of this floor (planDrawing.ts), laid on the ground. */
+  drawing?: PlanDrawing | null;
 }
 
 export interface FeatureCollection { type: 'FeatureCollection'; features: { type: 'Feature'; properties: Record<string, unknown>; geometry: { type: string; coordinates: unknown } }[] }
@@ -72,7 +75,25 @@ export function venueGeoJSON(anchor: GeoAnchor, d: VenueGeoInput, props: Record<
   }));
   const paths = fc(d.paths.map(p => ({ type: 'Feature' as const, properties: { ...props }, geometry: { type: 'LineString', coordinates: [ll(anchor, p.a.x, p.a.y), ll(anchor, p.b.x, p.b.y)] } })));
   const places = fc(d.places.map(p => ({ type: 'Feature' as const, properties: { ...props, id: p.id, name: p.name, kind: p.kind ?? 'place' }, geometry: { type: 'Point', coordinates: ll(anchor, p.x, p.y) } })));
-  return { walls, rooms, paths, places };
+  return { walls, rooms, paths, places, ...drawingGeoJSON(anchor, d.drawing, props) };
+}
+
+/**
+ * The architect's drawing on the map: its lines (each with its `layer`: walls, doors,
+ * furniture…) and its solid wall fills. Empty collections when there's no drawing.
+ */
+export function drawingGeoJSON(anchor: GeoAnchor, drawing: PlanDrawing | null | undefined, props: Record<string, unknown> = {}, skip: DrawingLayer[] = []) {
+  const lines: FeatureCollection['features'] = [], poche: FeatureCollection['features'] = [];
+  for (const [layer, list] of Object.entries(drawing?.layers ?? {}) as [DrawingLayer, number[][]][]) {
+    if (skip.includes(layer)) continue;
+    for (const l of list) {
+      const coords: Pos[] = [];
+      for (let i = 0; i < l.length; i += 2) coords.push(ll(anchor, l[i], l[i + 1]));
+      if (layer === 'poche') { if (coords.length >= 4) poche.push({ type: 'Feature', properties: { ...props }, geometry: { type: 'Polygon', coordinates: [coords] } }); }
+      else lines.push({ type: 'Feature', properties: { ...props, layer }, geometry: { type: 'LineString', coordinates: coords } });
+    }
+  }
+  return { planLines: fc(lines), planPoche: fc(poche) };
 }
 
 /** The venue's footprint on the map: its plan's bounding box, as a polygon (lng/lat). */

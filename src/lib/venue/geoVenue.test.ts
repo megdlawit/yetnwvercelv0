@@ -46,3 +46,18 @@ describe('venue on the world map', () => {
     expect(insideRing(ring, { lat: UNITY.lat + 0.001, lng: UNITY.lng })).toBe(false); // ~110 m north
   });
 });
+
+describe('the architect\'s drawing on the world map', () => {
+  it('turns its lines and wall fills into GeoJSON at the right place, and can leave layers out', async () => {
+    const { drawingGeoJSON } = await import('./geoVenue');
+    const a = anchorForCenter(UNITY, { x: 0, y: 0 }, 0);
+    const drawing = { v: 1 as const, layers: { walls: [[0, 0, 400, 0]], furniture: [[10, 10, 20, 20]], poche: [[0, 0, 400, 0, 400, 8, 0, 8, 0, 0]] } };
+    const g = drawingGeoJSON(a, drawing, { venue: 'v' });
+    expect(g.planLines.features.map(f => f.properties.layer).sort()).toEqual(['furniture', 'walls']);
+    expect(g.planPoche.features).toHaveLength(1);
+    const [p, q] = g.planLines.features.find(f => f.properties.layer === 'walls')!.geometry.coordinates as [number, number][];
+    expect(haversineMeters({ lat: p[1], lng: p[0] }, { lat: q[1], lng: q[0] })).toBeCloseTo(10, 2);
+    expect(drawingGeoJSON(a, drawing, {}, ['furniture']).planLines.features).toHaveLength(1);
+    expect(drawingGeoJSON(a, null).planLines.features).toHaveLength(0);
+  });
+});

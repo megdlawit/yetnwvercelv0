@@ -40,6 +40,7 @@ import { CategoryChips, CategoryList, CollectionView, DiscoverHome, ExploreView,
 import { DirectionsPanel, GuidanceCard } from '@/components/visitor/NavigationViews';
 import { GreetingCard, LocateButtons, NearbyChip, OutsideBanner, QrScanDialog, StartSheet } from '@/components/visitor/MapOverlays';
 import PlanView from '@/components/visitor/PlanView';
+import { useFloorDrawing } from '@/components/visitor/useFloorDrawing';
 
 const Venue3D = lazy(() => import('@/components/venue/Venue3D'));
 const OutdoorView = lazy(() => import('@/components/venue/OutdoorView'));
@@ -141,6 +142,7 @@ export default function ViewMap() {
   const gps = useGps(anchor);
   const stepCounter = useStepCounter();
 
+  const groundDrawing = useFloorDrawing(groundId ?? null, venue.data?.drawingLive);
   const ground = useMemo(() => {
     if (!groundId) return null;
     const ns = nodes.filter(n => n.floorId === groundId), byId = new Map(ns.map(n => [n.id, n] as const));
@@ -148,8 +150,9 @@ export default function ViewMap() {
       walls: walls.filter(w => w.floorId === groundId), rooms: rooms.filter(r => r.floorId === groundId),
       places: places.filter(p => p.floorId === groundId).map(p => ({ id: p.id, name: p.name, x: p.x, y: p.y })),
       paths: edges.flatMap(e => { const a = byId.get(e.fromNodeId), z = byId.get(e.toNodeId); return a && z ? [{ a, b: z }] : []; }),
+      drawing: groundDrawing,
     };
-  }, [groundId, nodes, walls, rooms, places, edges]);
+  }, [groundId, nodes, walls, rooms, places, edges, groundDrawing]);
   const currentOutdoor = useCurrentOutdoorVenue(building, ground, floors.length);
   const siblings = useSiblingVenues(anchor ? building : null);
   const outdoorVenues = useMemo(() => (currentOutdoor ? [currentOutdoor, ...siblings] : []), [currentOutdoor, siblings]);

@@ -7,6 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Room, Wall } from '@/data/types';
 import { anchorOf, footprint, planBounds, venueGeoJSON } from '@/lib/venue/geoVenue';
 import type { OutdoorVenue } from './OutdoorView';
+import type { PlanDrawing } from '@/lib/cad/planDrawing';
 
 interface BuildingLike {
   id: string; name: string; institution_id?: string | null; layout?: string | null;
@@ -16,6 +17,7 @@ interface Ground {
   walls: Pick<Wall, 'x1' | 'y1' | 'x2' | 'y2'>[]; rooms: Room[];
   places: { id: string; name: string; x: number; y: number }[];
   paths: { a: { x: number; y: number }; b: { x: number; y: number } }[];
+  drawing?: PlanDrawing | null;
 }
 
 /** The venue being viewed, placed on the map — or null if it hasn't been placed yet. */

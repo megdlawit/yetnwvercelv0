@@ -1,6 +1,7 @@
 // The outdoor world around a venue: a real map (streets or satellite) with
 // 3D terrain, styled in the venue's theme, and the venue itself standing on
-// it — walls extruded, rooms, paths and places. Other venues of the same
+// it — walls extruded, rooms, paths and places, and the architect's drawing laid
+// on the ground once you're close. Other venues of the same
 // institution (a museum inside the park…) appear as buildings you can step
 // into. Zoom right in on a venue, or tap it, to switch to the indoor viewer.
 
@@ -133,7 +134,7 @@ export default function OutdoorView({ venues, theme, selectedPlaceId, onSelectPl
     try { (map as unknown as { setSky?: (s: object) => void }).setSky?.({ 'sky-color': t.sky, 'horizon-color': '#ffffff', 'sky-horizon-blend': 0.5, 'fog-ground-blend': 1, 'atmosphere-blend': 0 }); } catch { /* older styles */ }
 
     const add = (id: string, data: FeatureCollection) => { if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data: data as never }); };
-    add('yn-footprints', empty); add('yn-rooms', empty); add('yn-paths', empty); add('yn-walls', empty); add('yn-route', empty);
+    add('yn-footprints', empty); add('yn-rooms', empty); add('yn-plan-poche', empty); add('yn-plan-lines', empty); add('yn-paths', empty); add('yn-walls', empty); add('yn-route', empty);
     const layer = (spec: maplibregl.AddLayerObject) => { if (!map.getLayer(spec.id)) map.addLayer(spec); };
     layer({ id: 'yn-footprints', type: 'fill-extrusion', source: 'yn-footprints', paint: {
       'fill-extrusion-color': ['case', ['==', ['get', 'layout'], 'site'], t.ground, t.wall],
@@ -141,6 +142,15 @@ export default function OutdoorView({ venues, theme, selectedPlaceId, onSelectPl
       'fill-extrusion-opacity': 0.85,
     } });
     layer({ id: 'yn-rooms', type: 'fill', source: 'yn-rooms', paint: { 'fill-color': t.slab, 'fill-opacity': 0.92, 'fill-outline-color': t.path } });
+    // The architect's drawing on the floor: furniture, doors, stairs… in the theme's wall colour,
+    // planting green and glass blue; it fades in as you come close enough to read it.
+    const fadeIn = ['interpolate', ['linear'], ['zoom'], 17, 0, 18, 1] as maplibregl.ExpressionSpecification;
+    layer({ id: 'yn-plan-poche', type: 'fill', source: 'yn-plan-poche', minzoom: 17, paint: { 'fill-color': t.wall, 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 17, 0, 18, 0.9] } });
+    layer({ id: 'yn-plan-lines', type: 'line', source: 'yn-plan-lines', minzoom: 17, layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: {
+      'line-color': ['match', ['get', 'layer'], 'trees', '#3f7d4e', 'windows', '#3b6ea5', t.wall],
+      'line-width': ['*', ['match', ['get', 'layer'], 'walls', 1.6, 'furniture', 0.6, 'trees', 0.8, 1], ['interpolate', ['exponential', 2], ['zoom'], 17, 0.6, 21, 2.2]],
+      'line-opacity': ['*', ['match', ['get', 'layer'], 'furniture', 0.5, 'stairs', 0.75, 'elevators', 0.75, 0.9], fadeIn],
+    } });
     layer({ id: 'yn-paths', type: 'line', source: 'yn-paths', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': t.path, 'line-width': ['interpolate', ['linear'], ['zoom'], 16, 1.5, 20, 7], 'line-opacity': 0.85 } });
     layer({ id: 'yn-walls', type: 'fill-extrusion', source: 'yn-walls', paint: { 'fill-extrusion-color': t.wall, 'fill-extrusion-height': 3, 'fill-extrusion-opacity': 0.95 } });
     layer({ id: 'yn-route-casing', type: 'line', source: 'yn-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': 10 } });
@@ -167,7 +177,10 @@ export default function OutdoorView({ venues, theme, selectedPlaceId, onSelectPl
     const set = (id: string, data: FeatureCollection) => (map.getSource(id) as maplibregl.GeoJSONSource | undefined)?.setData(data as never);
     set('yn-footprints', { type: 'FeatureCollection', features: vs.filter(v => !v.geo).map(v => ({ type: 'Feature', properties: { venue: v.id, layout: v.layout, floors: Math.max(1, v.floors) }, geometry: { type: 'Polygon', coordinates: [v.ring] } })) });
     set('yn-rooms', merge(vs.map(v => v.geo?.rooms)));
-    set('yn-paths', merge(vs.map(v => v.geo?.paths)));
+    // Over a drawing, walkways would turn the plan back into a diagram; the route still shows.
+    set('yn-paths', merge(vs.map(v => (v.geo?.planLines.features.length ? undefined : v.geo?.paths))));
+    set('yn-plan-poche', merge(vs.map(v => v.geo?.planPoche)));
+    set('yn-plan-lines', merge(vs.map(v => v.geo?.planLines)));
     set('yn-walls', merge(vs.map(v => v.geo?.walls)));
     set('yn-route', r && r.length > 1 ? { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: r } }] } : empty);
 

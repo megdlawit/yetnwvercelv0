@@ -7,6 +7,7 @@ import type { Tables } from '@/integrations/supabase/types';
 import { themeOf } from '@/lib/venue/themes';
 import { useCurrentOutdoorVenue, useSiblingVenues } from '@/components/venue/useOutdoorVenues';
 import { useFloorGeometry } from './VenueViewer';
+import { useFloorDrawing } from '@/components/visitor/useFloorDrawing';
 
 const OutdoorView = lazy(() => import('@/components/venue/OutdoorView'));
 
@@ -14,6 +15,7 @@ export default function VenueWorld({ building, groundFloorId, floors, onEnter, c
   building: Tables<'buildings'>; groundFloorId: string | null; floors: number; onEnter: (venueId: string) => void; className?: string;
 }) {
   const geo = useFloorGeometry(building.id, groundFloorId);
+  const drawing = useFloorDrawing(groundFloorId, true);
   const ground = useMemo(() => {
     if (!geo) return null;
     const byId = new Map(geo.nodes.map(n => [n.id, n] as const));
@@ -22,8 +24,9 @@ export default function VenueWorld({ building, groundFloorId, floors, onEnter, c
       walls: geo.walls, rooms: geo.rooms,
       places: geo.nodes.filter(n => !n.isHallway && (roomName.get(n.id) || n.name.trim())).map(n => ({ id: n.id, name: roomName.get(n.id) || n.name, x: n.x, y: n.y })),
       paths: geo.edges.flatMap(e => { const a = byId.get(e.fromNodeId), b = byId.get(e.toNodeId); return a && b ? [{ a, b }] : []; }),
+      drawing,
     };
-  }, [geo]);
+  }, [geo, drawing]);
   const current = useCurrentOutdoorVenue(building, ground, floors);
   const siblings = useSiblingVenues(building);
   const venues = useMemo(() => (current ? [current, ...siblings] : []), [current, siblings]);

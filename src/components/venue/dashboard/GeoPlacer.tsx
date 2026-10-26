@@ -17,6 +17,8 @@ import { indoorToGeo } from '@/lib/geo/GeoMath';
 import { anchorForCenter, anchorOf, DEFAULT_MPP, planBounds } from '@/lib/venue/geoVenue';
 import { roomOutline } from '@/lib/venue/features';
 import { useFloorGeometry } from './VenueViewer';
+import { useFloorDrawing } from '@/components/visitor/useFloorDrawing';
+import { drawingGeoJSON } from '@/lib/venue/geoVenue';
 import type { VenueData } from './useVenue';
 import PlaceSearch from './PlaceSearch';
 import type { PlaceSuggestion } from '@/hooks/usePlaceSuggestions';
@@ -33,6 +35,8 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
   const b = data.building;
   const ground = useMemo(() => [...data.floors].sort((x, y) => x.level - y.level)[0], [data.floors]);
   const geo = useFloorGeometry(b.id, ground?.id ?? null);
+  // The architect's drawing, when the floor was imported from CAD: much easier to line up than bare walls.
+  const drawing = useFloorDrawing(ground?.id ?? null, true);
   const saved = anchorOf(b);
   const [rotation, setRotation] = useState(saved?.rotationDeg ?? 0);
   const [scale, setScale] = useState(saved ? saved.metersPerPixel / DEFAULT_MPP : 1);
@@ -52,6 +56,8 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
   centerRef.current = center;
   const geoRef = useRef(geo);
   geoRef.current = geo;
+  const drawingRef = useRef(drawing);
+  drawingRef.current = drawing;
 
   // Draw the plan where it would land if saved now (centred on the map's centre).
   const draw = () => {
@@ -60,14 +66,20 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
     const c = map.getCenter();
     const a = anchorForCenter({ lat: c.lat, lng: c.lng }, centerRef.current, live.current.rotation, DEFAULT_MPP * live.current.scale);
     const pt = (x: number, y: number) => { const p = indoorToGeo(a, x, y); return [p.lng, p.lat]; };
+    // Redrawn on every move: the building's shell is what you line up, so furniture stays out.
+    const dr = drawingGeoJSON(a, drawingRef.current, {}, ['furniture', 'trees']);
+    (map.getSource('plan-drawing') as maplibregl.GeoJSONSource | undefined)?.setData(dr.planLines as never);
+    (map.getSource('plan-poche') as maplibregl.GeoJSONSource | undefined)?.setData(dr.planPoche as never);
     (map.getSource('plan-walls') as maplibregl.GeoJSONSource).setData({
-      type: 'FeatureCollection', features: g.walls.map(w => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [pt(w.x1, w.y1), pt(w.x2, w.y2)] } })),
+      type: 'FeatureCollection', features: (dr.planLines.features.length ? [] : g.walls).map(w => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [pt(w.x1, w.y1), pt(w.x2, w.y2)] } })),
     });
     (map.getSource('plan-rooms') as maplibregl.GeoJSONSource).setData({
       type: 'FeatureCollection', features: g.rooms.map(r => { const ring = roomOutline(r).map(p => pt(p.x, p.y)); return { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[...ring, ring[0]]] } }; }),
     });
     map.setPaintProperty('plan-walls', 'line-opacity', live.current.opacity);
-    map.setPaintProperty('plan-rooms', 'fill-opacity', live.current.opacity * 0.35);
+    map.setPaintProperty('plan-rooms', 'fill-opacity', live.current.opacity * (dr.planLines.features.length ? 0.15 : 0.35));
+    if (map.getLayer('plan-drawing')) map.setPaintProperty('plan-drawing', 'line-opacity', live.current.opacity);
+    if (map.getLayer('plan-poche')) map.setPaintProperty('plan-poche', 'fill-opacity', live.current.opacity * 0.8);
   };
 
   useEffect(() => {
@@ -82,6 +94,11 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
       if (!map.getSource('plan-rooms')) map.addSource('plan-rooms', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       if (!map.getLayer('plan-rooms')) map.addLayer({ id: 'plan-rooms', type: 'fill', source: 'plan-rooms', paint: { 'fill-color': '#facc15', 'fill-opacity': 0.3 } });
       if (!map.getLayer('plan-walls')) map.addLayer({ id: 'plan-walls', type: 'line', source: 'plan-walls', paint: { 'line-color': '#fde047', 'line-width': 2 } });
+      for (const id of ['plan-drawing', 'plan-poche']) if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      if (!map.getLayer('plan-poche')) map.addLayer({ id: 'plan-poche', type: 'fill', source: 'plan-poche', paint: { 'fill-color': '#fde047', 'fill-opacity': 0.7 } });
+      if (!map.getLayer('plan-drawing')) map.addLayer({ id: 'plan-drawing', type: 'line', source: 'plan-drawing', paint: {
+        'line-color': '#fde047', 'line-width': ['match', ['get', 'layer'], 'walls', 1.8, 'furniture', 0.7, 1],
+      } });
       draw();
     });
     let raf = 0;
@@ -92,7 +109,7 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
     return () => { cancelAnimationFrame(raf); map.remove(); mapRef.current = null; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { draw(); }, [rotation, scale, opacity, geo]);  
+  useEffect(() => { draw(); }, [rotation, scale, opacity, geo, drawing]);  
   const firstBase = useRef(true);
   useEffect(() => {
     if (firstBase.current) { firstBase.current = false; return; }

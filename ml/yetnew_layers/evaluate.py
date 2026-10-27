@@ -12,13 +12,16 @@ baseline, or baseline + retrieval when YETNEW_RETRIEVAL_K > 0) only if ALL hold:
   * accuracy at least WIN_MARGIN (3 points) higher, and
   * the 95% confidence interval of that difference lies above 0 (bootstrap
     over whole venues, since layers of one venue are not independent), and
-  * no lower accuracy on wall, walkable or ignore (NO_REGRESSION_LABELS).
+  * no lower accuracy on wall, walkable or ignore (NO_REGRESSION_LABELS) — judged where
+    there is evidence: a label with fewer than MIN_VAL_PER_LABEL held-out examples can't
+    count as worse (one walkway layer got wrong isn't a regression).
 
 model_choice.json may only be written when the comparison means something:
   * real data (not the synthetic dry run),
   * at least MIN_VAL_VENUES venues and MIN_VAL_LAYERS layers held out,
-  * at least MIN_VAL_PER_LABEL held-out examples of every label present, and
-    of each no-regression label,
+  * labels with fewer than MIN_VAL_PER_LABEL held-out examples are reported (notes),
+    and judged by the overall score only (owner's choice, 2026-10-27: the held-out
+    drawings have 2 restroom and 1 walkway layers, too few to judge either way),
   * exported with the current PROMPT_VERSION and text-sample setting,
   * a current, passing check_template.py for the fine-tuned model on this
     Ollama version and model digest.
@@ -93,6 +96,8 @@ class Decision:
     reference: str
     comparison: Comparison
     reasons: list[str] = field(default_factory=list)
+    #: What couldn't be judged for lack of held-out examples: reported, not blocking.
+    notes: list[str] = field(default_factory=list)
 
 
 def load_val(dataset_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -189,11 +194,12 @@ def bootstrap_ci(rows: list[dict[str, Any]], a: list[bool], b: list[bool], *, sa
     return round(lo, 4), round(hi, 4)
 
 
-def compare(rows: list[dict[str, Any]], challenger: Report, reference: Report, *, margin: float = WIN_MARGIN) -> Comparison:
+def compare(rows: list[dict[str, Any]], challenger: Report, reference: Report, *, margin: float = WIN_MARGIN,
+            min_support: int = MIN_VAL_PER_LABEL) -> Comparison:
     lo, hi = bootstrap_ci(rows, challenger.hits, reference.hits)
     regressions = [
         label for label in NO_REGRESSION_LABELS
-        if label in reference.per_label
+        if label in reference.per_label and int(reference.per_label[label]["support"]) >= min_support
         and challenger.per_label.get(label, {"accuracy": 0.0})["accuracy"] < reference.per_label[label]["accuracy"]
     ]
     diff = round(challenger.accuracy - reference.accuracy, 4)
@@ -204,7 +210,7 @@ def decide(manifest: dict[str, Any], rows: list[dict[str, Any]], reports: dict[s
            template: tuple[bool, str] = (False, "not checked"), min_venues: int = MIN_VAL_VENUES,
            min_layers: int = MIN_VAL_LAYERS, min_per_label: int = MIN_VAL_PER_LABEL, margin: float = WIN_MARGIN) -> Decision:
     ref = reports[reference]
-    comparison = compare(rows, reports["finetuned"], ref, margin=margin)
+    comparison = compare(rows, reports["finetuned"], ref, margin=margin, min_support=min_per_label)
     winner = "finetuned" if comparison.wins else reference
     reasons = []
     if manifest.get("synthetic"):
@@ -217,15 +223,15 @@ def decide(manifest: dict[str, Any], rows: list[dict[str, Any]], reports: dict[s
     support = {label: int(v["support"]) for label, v in ref.per_label.items()}
     thin = sorted({label for label, n in support.items() if n < min_per_label}
                   | {label for label in NO_REGRESSION_LABELS if support.get(label, 0) < min_per_label})
-    if thin:
-        reasons.append(f"fewer than {min_per_label} held-out examples of: " + ", ".join(f"{label} ({support.get(label, 0)})" for label in thin))
+    notes = [f"too few held-out examples to judge on their own (fewer than {min_per_label}): "
+             + ", ".join(f"{label} ({support.get(label, 0)})" for label in thin)] if thin else []
     if manifest.get("prompt_version") != PROMPT_VERSION:
         reasons.append(f"exported with prompt version {manifest.get('prompt_version')}, the code is at {PROMPT_VERSION} — export and train again")
     if manifest.get("include_text_samples") != INCLUDE_TEXT_SAMPLES:
         reasons.append("exported with a different INCLUDE_TEXT_SAMPLES setting than the service uses now")
     if not template[0]:
         reasons.append(f"template check not current: {template[1]}")
-    return Decision(winner=winner, can_write=not reasons, reference=reference, comparison=comparison, reasons=reasons)
+    return Decision(winner=winner, can_write=not reasons, reference=reference, comparison=comparison, reasons=reasons, notes=notes)
 
 
 def choice_record(manifest: dict[str, Any], reports: dict[str, Report], decision: Decision, *, retrieval_k: int = 0) -> dict[str, Any]:

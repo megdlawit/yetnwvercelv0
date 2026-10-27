@@ -122,6 +122,8 @@ def main() -> int:
     print("\nSwitch rule")
     show_comparison(decision.comparison)
     # Reasons that make ANY conclusion from this data premature (not the fine-tuned model's template check).
+    for note in decision.notes:
+        print(f"note: {note}")
     insufficient = [r for r in decision.reasons if not r.startswith("template check")]
     if "retrieval" in reports and reference == "baseline":
         rc = compare(rows, reports["retrieval"], reports["baseline"])

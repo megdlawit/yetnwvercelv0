@@ -137,15 +137,24 @@ def test_choice_needs_enough_real_held_out_data_and_a_template_check() -> None:
     assert "held-out layers" in " ".join(decide(manifest(3), small, r2, template=CHECKED).reasons)
 
 
-def test_every_label_needs_ten_held_out_examples() -> None:
+def test_labels_with_too_few_held_out_examples_are_noted_not_judged() -> None:
+    """Owner's choice (2026-10-27): with 2 restroom and 1 walkway layers held out, those labels
+    can't block a switch or count as worse; they're reported. Labels with evidence still can."""
     rows = val_rows(4, 40)
     rows += [{"building_id": "v0", "label": "elevator", "summary": {"name": f"LIFT-{i}", "entity_counts": {}, "blocks": [], "texts": []}}
              for i in range(4)]
     reports = evaluate(rows, base_wrong=spread(rows, 0.15), ft_wrong=set())
-    assert "elevator (4)" in " ".join(decide(manifest(4), rows, reports, template=CHECKED).reasons)
-    no_walkable = val_rows(4, 40, ["wall", "ignore", "door", "window"])
-    r2 = evaluate(no_walkable, set(), set())
-    assert "walkable (0)" in " ".join(decide(manifest(4), no_walkable, r2, template=CHECKED).reasons)
+    d = decide(manifest(4), rows, reports, template=CHECKED)
+    assert d.can_write and "elevator (4)" in " ".join(d.notes) and not d.reasons
+    # One walkway layer got wrong (the only one held out) is not a regression…
+    thin = val_rows(4, 40, ["wall", "ignore", "door", "window"])
+    thin.append({"building_id": "v1", "label": "walkable", "summary": {"name": "WALK-1", "entity_counts": {}, "blocks": [], "texts": []}})
+    r2 = evaluate(thin, base_wrong=spread(thin, 0.5, "door"), ft_wrong={"WALK-1"})
+    d2 = decide(manifest(4), thin, r2, template=CHECKED)
+    assert d2.comparison.regressions == [] and d2.winner == "finetuned" and "walkable (1)" in " ".join(d2.notes)
+    # …but walls, with plenty held out, still are.
+    r3 = evaluate(thin, base_wrong=spread(thin, 0.5, "door"), ft_wrong=spread(thin, 0.1, "wall"))
+    assert decide(manifest(4), thin, r3, template=CHECKED).comparison.regressions == ["wall"]
 
 
 def test_bootstrap_is_paired_and_deterministic() -> None:

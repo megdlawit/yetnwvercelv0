@@ -11,12 +11,15 @@
 // Lists are plain space-separated text so they're easy to grow: add a word and a
 // test, nothing else. Multi-word entries use "_" for the space.
 
+import { COMPOUNDS as COMPOUND_TEXT, MORE_CHAT, MORE_MISSPELLINGS, MORE_OBJECTS, MORE_PLACES, MORE_SMALL_TALK } from './lexiconMore';
+
+/** "wrong:right" pairs; an entry that maps a word to itself is left out. */
 const pairs = (s: string): Record<string, string> =>
-  Object.fromEntries(s.trim().split(/\s+/).map(p => { const [a, b] = p.split(':'); return [a.replace(/_/g, ' '), b.replace(/_/g, ' ')]; }));
+  Object.fromEntries(s.trim().split(/\s+/).map(p => { const [a, b] = p.split(':'); return [a.replace(/_/g, ' '), b.replace(/_/g, ' ')]; }).filter(([a, b]) => a && b && a !== b));
 const list = (s: string): string[] => s.trim().split(/\s+/).map(w => w.replace(/_/g, ' '));
 
 /** Words people commonly misspell → the word. Only ever-wrong spellings: none of these is a real word. */
-export const MISSPELLINGS: Record<string, string> = pairs(`
+export const MISSPELLINGS: Record<string, string> = { ...pairs(MORE_MISSPELLINGS), ...pairs(`
   accomodate:accommodate acommodate:accommodate accomodation:accommodation acheive:achieve accross:across adress:address adresses:addresses
   agian:again agin:again alot:a_lot allready:already alredy:already allways:always alwasy:always amature:amateur anual:annual anwser:answer
   aparent:apparent apparant:apparent appartment:apartment apartmant:apartment aproximately:approximately arguement:argument atleast:at_least
@@ -77,10 +80,10 @@ export const MISSPELLINGS: Record<string, string> = pairs(`
   frist:first fisrt:first secnod:second scond:second thrid:third thrd:third fourht:fourth  fith:fifth
   grond:ground groud:ground gorund:ground basment:basement basemnt:basement baement:basement upsatirs:upstairs upstair:upstairs downstair:downstairs
   accesible:accessible accessable:accessible accesable:accessible wheelchar:wheelchair wheelchiar:wheelchair weelchair:wheelchair
-`);
+`) };
 
 /** Texting and chat spellings → plain English. */
-export const CHAT: Record<string, string> = pairs(`
+export const CHAT: Record<string, string> = { ...pairs(MORE_CHAT), ...pairs(`
   u:you ya:you yu:you yuo:you uu:you r:are ur:your urs:yours yr:your ure:you_are
   pls:please plz:please plez:please pleez:please plox:please pleaze:please plss:please plzz:please
   thx:thanks thnx:thanks thanx:thanks thnks:thanks thks:thanks tnx:thanks tx:thanks tq:thank_you ty:thanks tyty:thanks tysm:thank_you_so_much
@@ -115,7 +118,7 @@ export const CHAT: Record<string, string> = pairs(`
   conf:conference mtg:meeting mtng:meeting rec:reception recep:reception  wc:toilet loo:toilet
   sec:second secs:seconds min:minute mins:minutes hr:hour hrs:hours m:metres mtrs:metres mtr:metre ft:feet
   qty:quantity approx:about abt:about vs:versus etc:and_so_on eg:for_example ie:that_is
-`);
+`) };
 
 /** Chat noise with no meaning: dropped before understanding. */
 export const FILLER: string[] = list(`
@@ -185,8 +188,13 @@ export const PLACE_WORDS: Record<string, string[]> = {
     common_room hostel dorm dormitory ward_room consultation_room treatment_room x_ray radiology pharmacy_counter`),
 };
 
+for (const [kind, words] of Object.entries(MORE_PLACES)) PLACE_WORDS[kind] = [...(PLACE_WORDS[kind] ?? []), ...list(words)];
+
+/** Words people write as two that are one ("good bye", "rest room", "wheel chair"): read joined. */
+export const COMPOUNDS: Set<string> = new Set(list(COMPOUND_TEXT));
+
 /** Furniture and objects people place on a map (vocabulary for spelling, and "add a …"). */
-export const OBJECT_WORDS: string[] = list(`
+export const OBJECT_WORDS: string[] = [...list(MORE_OBJECTS), ...list(`
   bench benches chair chairs seat seats seating sofa couch armchair stool stools table tables desk desks counter counters shelf shelves
   bookshelf bookcase cabinet cabinets cupboard wardrobe locker lockers bed beds bunk crib cot sink sinks basin basins tap taps fountain
   water_fountain drinking_fountain bin bins trash_can rubbish_bin recycling_bin plant plants tree trees bush bushes hedge planter flowerbed
@@ -194,7 +202,7 @@ export const OBJECT_WORDS: string[] = list(`
   kiosk vending_machine atm charger charging_station socket fire_extinguisher extinguisher alarm defibrillator aed first_aid_kit
   statue sculpture monument artwork painting mural pillar column post bollard railing handrail fence wall gate turnstile barrier
   stage podium lectern piano speaker microphone camera cctv clock map info_point help_point qr_code beacon
-  car bike bicycle bike_rack scooter bus_stop taxi_rank parking_space`);
+  car bike bicycle bike_rack scooter bus_stop taxi_rank parking_space`)];
 
 /** Small talk, by kind: what language.ts adds to the editor's and visitor's greetings. */
 export const SMALL_TALK: Record<'greeting' | 'howareyou' | 'thanks' | 'bye' | 'compliment', string[]> = {
@@ -219,9 +227,11 @@ export const SMALL_TALK: Record<'greeting' | 'howareyou' | 'thanks' | 'bye' | 'c
     ten_out_of_ten 10_out_of_10 chef_kiss you_are_a_genius genius`),
 };
 
+for (const [kind, phrases] of Object.entries(MORE_SMALL_TALK) as [keyof typeof SMALL_TALK, string][]) SMALL_TALK[kind] = [...SMALL_TALK[kind], ...list(phrases)];
+
 /** Every word in the bank, for the size check and the spelling vocabulary. */
 export function lexiconSize(): number {
   return Object.keys(MISSPELLINGS).length + Object.keys(CHAT).length + FILLER.length
     + Object.values(VERBS).reduce((n, l) => n + l.length, 0) + Object.values(PLACE_WORDS).reduce((n, l) => n + l.length, 0)
-    + OBJECT_WORDS.length + Object.values(SMALL_TALK).reduce((n, l) => n + l.length, 0);
+    + OBJECT_WORDS.length + Object.values(SMALL_TALK).reduce((n, l) => n + l.length, 0) + COMPOUNDS.size;
 }

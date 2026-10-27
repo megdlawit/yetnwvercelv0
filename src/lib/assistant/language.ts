@@ -19,7 +19,20 @@ export function normalize(text: string): string {
   s = s.replace(/[^\p{L}\p{N}'\s-]+/gu, ' ').replace(/(^|\s)'+|'+(?=\s|$)/g, ' ');
   // "room12" → "room 12", "2nd" stays: letters then digits are split only after a word of 3+ letters.
   s = s.replace(/\b([a-z]{3,})(\d+)\b/g, '$1 $2');
-  return s.split(/\s+/).filter(w => w && !FILLER_WORDS.has(w)).map(w => SPELLED_OUT[w] ?? w).join(' ').replace(/\s+/g, ' ').trim();
+  // "wheel-chair", "check-in": a hyphen between letters is a space (then joined below if it's one word).
+  s = s.replace(/(\p{L})-(?=\p{L})/gu, '$1 ');
+  const words = s.split(/\s+/).filter(w => w && !FILLER_WORDS.has(w)).flatMap(w => (SPELLED_OUT[w] ?? w).split(' '));
+  return joinCompounds(words).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+/** "good bye" → "goodbye", "rest room" → "restroom": two words that are written as one. */
+function joinCompounds(words: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const two = words[i] + (words[i + 1] ?? '');
+    if (i + 1 < words.length && COMPOUNDS.has(two)) { out.push(two); i++; } else out.push(words[i]);
+  }
+  return out;
 }
 
 /** Chat noise that carries no meaning: "lol", "haha", "bruh" (and the word bank's). */
@@ -110,7 +123,8 @@ export function plainSlang(normalized: string): { text: string; slang: boolean }
   return { text, slang: text !== normalized };
 }
 
-import { CHAT, FILLER as CHAT_FILLER, MISSPELLINGS, OBJECT_WORDS, PLACE_WORDS, VERBS } from './lexicon';
+import { CHAT, COMPOUNDS, FILLER as CHAT_FILLER, MISSPELLINGS, OBJECT_WORDS, PLACE_WORDS, VERBS } from './lexicon';
+import { COMMON_ENGLISH } from './lexiconMore';
 
 const CONTRACTIONS: [RegExp, string][] = [
   [/\bwhere'?s\b/g, 'where is'], [/\bwhat'?s\b/g, 'what is'], [/\bwho'?s\b/g, 'who is'], [/\bhow'?s\b/g, 'how is'],
@@ -145,7 +159,7 @@ const SHORTHANDS: Record<string, string> = {
 const SPELLED_OUT: Record<string, string> = { ...CHAT, ...SHORTHANDS };
 
 /** Words never "corrected": everyday English that isn't in an assistant's vocabulary, and the word bank's verbs. */
-const KEEP = new Set([...Object.values(VERBS).flat().filter(w => !w.includes(' ')), ...('a an the is are am was were be been being i you he she it we they me him her us them my your his its our their mine yours ' +
+const KEEP = new Set([...Object.values(VERBS).flat().flatMap(w => w.split(' ')), ...COMMON_ENGLISH.trim().split(/\s+/), ...('a an the is are am was were be been being i you he she it we they me him her us them my your his its our their mine yours ' +
   'to of in on at for and or but nor so yet if then than as by with from into onto about over under near far up down out off ' +
   'this that these those there here where when what who whom whose which why how all any some no not none each every both either ' +
   'do does did done doing have has had having can could will would shall should may might must need want like love hate ' +
@@ -206,11 +220,15 @@ export function correct(text: string, vocab: Set<string>): { text: string; chang
 
 function fixWords(words: string[], vocab: Set<string>): { text: string; changed: boolean } {
   let changed = false;
+  const isWord = (w: string) => vocab.has(w) || KEEP.has(w) || COMPOUNDS.has(w);
   const out = words.map(w => {
     // A known misspelling ("resturant", "elevater") is the word, whatever the vocabulary.
     const known = MISSPELLINGS[w];
     if (known && !vocab.has(w)) { changed = true; return known; }
-    if (vocab.has(w) || KEEP.has(w) || /\d/.test(w) || !/^[a-z'-]+$/.test(w)) return w;
+    if (isWord(w) || /\d/.test(w) || !/^[a-z'-]+$/.test(w)) return w;
+    // Words run together ("whereis", "groundfloor", "nearesttoilet"): split before any typo is guessed.
+    const parts = splitGlued(w, isWord);
+    if (parts) { changed = true; return parts.join(' '); }
     // A three-letter word may be a longer word missing a letter ("rom" for "room"), nothing else.
     const short = w.length === 3;
     const max = short ? 1 : allowed(w.length);
@@ -226,6 +244,24 @@ function fixWords(words: string[], vocab: Set<string>): { text: string; changed:
     return best;
   });
   return { text: out.join(' '), changed };
+}
+
+/**
+ * A word that is two or three known words run together ("takemeto" → take me to), or null.
+ * Every piece has two letters or more; of several ways, the one with the fewest, longest pieces.
+ */
+export function splitGlued(w: string, isWord: (x: string) => boolean, depth = 0): string[] | null {
+  if (w.length < (depth ? 4 : 5) || depth > 1) return null;
+  let best: string[] | null = null;
+  for (let i = w.length - 2; i >= 2; i--) {
+    const left = w.slice(0, i), right = w.slice(i);
+    if (!isWord(left)) continue;
+    const rest = isWord(right) && right.length >= 2 ? [right] : splitGlued(right, isWord, depth + 1);
+    if (!rest) continue;
+    const parts = [left, ...rest];
+    if (!best || parts.length < best.length || (parts.length === best.length && Math.min(...parts.map(p => p.length)) > Math.min(...best.map(p => p.length)))) best = parts;
+  }
+  return best;
 }
 
 export interface NameMatch<T> { item: T; score: number }

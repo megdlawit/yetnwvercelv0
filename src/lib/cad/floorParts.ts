@@ -5,8 +5,9 @@
 
 import { readCadFile } from './readFile';
 import { classifyLayers } from './classify';
-import { buildVenue, type BuiltVenue } from './buildVenue';
+import { buildVenue, placeLabelFrom, type BuiltVenue } from './buildVenue';
 import { findDrawings, findFloorPlans, inferUnits, quarterArcs, withinArea, type DrawingArea } from './analyze';
+import type { DxfEntity } from '../dxf/parseDxf';
 import type { CadDrawing, LayerMapping } from './types';
 
 export type Units = { perMeter: number; source: 'file' | 'inferred' | 'assumed' | 'manual'; reason: string };
@@ -159,6 +160,51 @@ function titleBelow(d: CadDrawing, a: DrawingArea, perMeter: number): string | n
   return best?.t ?? null;
 }
 
+/** Every point of an entity moved by (dx, dy). */
+function moved(e: DxfEntity, dx: number, dy: number): DxfEntity {
+  const m = (p: { x: number; y: number }) => ({ x: p.x + dx, y: p.y + dy });
+  switch (e.kind) {
+    case 'LINE': return { ...e, a: m(e.a), b: m(e.b) };
+    case 'POLYLINE': return { ...e, pts: e.pts.map(m) };
+    case 'CIRCLE': case 'ARC': return { ...e, center: m(e.center) };
+    case 'TEXT': case 'INSERT': return { ...e, pos: m(e.pos) };
+  }
+}
+
+/**
+ * A floor's drawing with an outbuilding's beside it: the outbuilding keeps its place on the
+ * sheet, moved off just far enough to leave `gap` between them (sheets draw it touching).
+ */
+function beside(host: CadDrawing, extra: CadDrawing, gap: number): CadDrawing {
+  const H = host.bounds!, A = extra.bounds!;
+  const hc = { x: (H.minX + H.maxX) / 2, y: (H.minY + H.maxY) / 2 }, ac = { x: (A.minX + A.maxX) / 2, y: (A.minY + A.maxY) / 2 };
+  let dx = 0, dy = 0;
+  // Off the side it's drawn on: across the longer way between the centres.
+  if (Math.abs(ac.y - hc.y) / (H.maxY - H.minY) >= Math.abs(ac.x - hc.x) / (H.maxX - H.minX)) {
+    dy = ac.y < hc.y ? Math.min(0, H.minY - gap - A.maxY) : Math.max(0, H.maxY + gap - A.minY);
+  } else {
+    dx = ac.x < hc.x ? Math.min(0, H.minX - gap - A.maxX) : Math.max(0, H.maxX + gap - A.minX);
+  }
+  const entities = [...host.entities, ...extra.entities.map(e => moved(e, dx, dy))];
+  const hatches = [...(host.hatches ?? []), ...(extra.hatches ?? []).map(h => ({ ...h, loops: h.loops.map(l => l.map(p => ({ x: p.x + dx, y: p.y + dy }))) }))];
+  return {
+    ...host, entities, hatches, layers: [...new Set([...host.layers, ...extra.layers])].sort(),
+    bounds: { minX: Math.min(H.minX, A.minX + dx), minY: Math.min(H.minY, A.minY + dy), maxX: Math.max(H.maxX, A.maxX + dx), maxY: Math.max(H.maxY, A.maxY + dy) },
+  };
+}
+
+/** An outbuilding's name: its biggest room's ("Guard House Ceramic ff A=11.75m²" → "guard house"). */
+function outbuildingName(d: CadDrawing): string | null {
+  const named = d.entities.flatMap(e => {
+    if (e.kind !== 'TEXT') return [];
+    const name = placeLabelFrom(e.text);
+    if (!name || /toilet|wc|bath|shower|store|corridor|stair/i.test(name)) return [];
+    return [{ name, area: Number(/A\s*=\s*([\d.]+)/i.exec(e.text)?.[1] ?? 0) }];
+  });
+  const best = named.sort((a, b) => b.area - a.area)[0];
+  return best ? best.name.toLowerCase() : null;
+}
+
 /**
  * The floors on a sheet of plans, by their walls (see findFloorPlans): one part per
  * floor, named from its title. A "2nd–4th floor" plan becomes one part per floor; a
@@ -204,14 +250,33 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
   const area = (g: number) => kept.reduce((s, p, i) => s + (root(i) === g ? p.size : 0), 0);
   const main = roots.sort((a, b) => levelsIn(b).size - levelsIn(a).size || area(b) - area(a))[0];
   const inMain = (i: number) => root(i) === main;
+  // An outbuilding drawn beside the building's plans (a guard house titled "GROUND FLOOR"): small,
+  // at a level a plan of the same building already has, with far fewer doors than that plan (a
+  // smaller copy of the same floor has as many). It's part of that floor, not a second one.
+  const singleLevel = (p: (typeof kept)[number]) => (p.title ? levelsFromName(p.title) : []);
+  const annexOf = new Map<number, number>();
+  kept.forEach((p, i) => {
+    const lv = singleLevel(p);
+    if (lv.length !== 1 || p.size >= 0.4 * biggest) return;
+    const host = kept.findIndex((o, j) => j !== i && root(j) === root(i) && o.size >= 0.4 * biggest
+      && singleLevel(o).length === 1 && singleLevel(o)[0] === lv[0] && p.a.doors <= 0.5 * o.a.doors);
+    if (host >= 0) annexOf.set(i, host);
+  });
   const parts: FloorPart[] = [];
   const detail = new Map<string, number>();   // part key → its plan's doors (and size), to pick between drawings of one floor
   kept.forEach((p, i) => {
     // No title on the sheet: a file with one plan is named by its file name ("level-2.dxf").
     const levels = p.title ? levelsFromName(p.title) : kept.length === 1 ? levelsFromName(fileName) : [];
     const small = p.size < 0.4 * biggest;
+    if (annexOf.has(i)) return;   // drawn into its floor (below)
     const origin = `Plan ${i + 1} of ${kept.length}${p.title ? ` — “${p.title}”` : ''}`;
-    const drawing = withinArea(d, p.a);
+    let drawing = withinArea(d, p.a);
+    const annexes = [...annexOf].filter(([, host]) => host === i).map(([a]) => kept[a].a);
+    for (const a of annexes) drawing = beside(drawing, withinArea(d, a), 4 * units.perMeter);
+    const annexNote = annexes.length ? annexes.map(a => {
+      const name = outbuildingName(withinArea(d, a));
+      return `Includes ${name ? `the ${name}` : 'a small separate building'} drawn beside it on the sheet, placed 4 m off the building — drag it to where it stands in the editor.`;
+    }).join(' ') : null;
     if (levels.length > 1) {
       levels.forEach(lv => detail.set(`${fileName}#P${i}L${lv}`, (inMain(i) ? 1e18 : 0) + p.a.doors * 1e12 + p.size));
       levels.forEach(lv => parts.push({
@@ -237,7 +302,8 @@ function sheetFloors(fileName: string, d: CadDrawing, units: Units, plans: Drawi
       ...(otherBuilding ? { include: false, note: 'Another building drawn on this sheet — import it as its own venue, or tick it to add it here.' }
         : clash || (small && level == null) ? { include: false, note: 'Small separate plan — another building on the site? Tick it to import it.' }
         : untitled ? { include: false, note: 'Plan without a floor title — the roof or site plan? Tick it to import it.' }
-        : byOrder ? { note: 'The sheet has no floor titles — named in order, left to right. Check the floor.' } : {}),
+        : byOrder ? { note: 'The sheet has no floor titles — named in order, left to right. Check the floor.' }
+        : annexNote ? { note: annexNote } : {}),
     });
   });
   orderBasements(parts);

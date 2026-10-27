@@ -102,6 +102,24 @@ describe('partsFromFile', () => {
     expect(parts.every(p => /no floor titles/.test(p.note ?? ''))).toBe(true);
   });
 
+  it('an outbuilding drawn beside the ground floor (a guard house) is part of the ground floor, not a second one', async () => {
+    const guard = (ox: number, oy: number) =>
+      line('A-WALL', ox, oy, ox + 6000, oy) + line('A-WALL', ox + 6000, oy, ox + 6000, oy + 5000) + line('A-WALL', ox + 6000, oy + 5000, ox, oy + 5000) +
+      line('A-WALL', ox, oy + 5000, ox, oy) + line('A-WALL', ox + 2000, oy + 3000, ox + 6000, oy + 3000) +
+      text('A-ANNO', ox + 3000, oy + 1500, 'Guard House Ceramic ff A=11.75m²') + text('A-ANNO-TTLB', ox + 1000, oy - 1500, 'GROUND FLOOR PLAN A= 21 M² Sc=1:50');
+    const sheet3 = pair(0, 'SECTION') + pair(2, 'HEADER') + pair(9, '$INSUNITS') + pair(70, 4) + pair(0, 'ENDSEC') + pair(0, 'SECTION') + pair(2, 'ENTITIES')
+      + plan(0, 'GROUND FLOOR PLAN') + guard(0, -9000) + plan(22000, 'FIRST FLOOR PLAN') + pair(0, 'ENDSEC') + pair(0, 'EOF');
+    const parts = await partsFromFile(fileOf('belay.dxf', sheet3));
+    expect(parts.map(p => [p.name, p.level, p.include !== false])).toEqual([['Ground floor', 0, true], ['1st floor', 1, true]]);
+    expect(parts[0].note).toMatch(/guard house.*drag it to where it stands/i);
+    const v = buildPart(parts[0], 40);
+    expect(v.rooms.map(r => r.name)).toContain('Guard House');
+    // set apart from the building: at least 4 m between them
+    const guardRoom = v.rooms.find(r => r.name === 'Guard House')!;
+    const building = v.walls.filter(w => Math.min(w.y1, w.y2) < guardRoom.y - 4 * 40);
+    expect(building.length).toBeGreaterThan(0);
+  });
+
   it('an ArchiCAD sheet: titled plans count without door swings, titled elevations never do, another building is set apart', async () => {
     // Shop shutters have no swings; the elevation has an arched window that looks like a door.
     const noSwings = (ox: number, title: string) => plan(ox, title).replace(/0\nARC\n(?:(?!0\n)[^\n]*\n[^\n]*\n)*/g, '');
@@ -145,10 +163,12 @@ describe('a real sheet: floor plans among elevations, copies and an annex', () =
       ['Basement', -1], ['Ground floor', 0], ['1st floor', 1], ['2nd floor', 2], ['3rd floor', 3], ['4th floor', 4],
     ]);
     expect(on.filter(p => p.level! >= 2).every(p => p.note === 'One plan for floors 2–4')).toBe(true);
-    // The elevation is not a floor, the ground floor's copy is imported once, the annex is offered but off.
-    const off = parts.filter(p => p.include === false);
-    expect(off).toHaveLength(1);
-    expect(off[0].note).toMatch(/Small separate plan/);
+    // The elevation is not a floor, the ground floor's copy is imported once, and the annex
+    // (an outbuilding titled "ground floor" too) is drawn into the ground floor.
+    expect(parts.filter(p => p.include === false)).toHaveLength(0);
+    const ground = on.find(p => p.level === 0)!;
+    expect(ground.note).toMatch(/small separate building.*drag it/);
+    expect(ground.drawing.bounds!.maxY - ground.drawing.bounds!.minY).toBeGreaterThan(9000 + 4000 + 6000 - 1);
   });
 });
 

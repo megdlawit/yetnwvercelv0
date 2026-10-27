@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readDxf } from './readers/dxf';
 import { readSvg, flattenPath } from './readers/svg';
-import { elementsToDrawing, boundsOf, type Element } from './readers/model3d';
+import { elementsToDrawing, boundsOf, decodeIfcString, doorSwings, storeysOf, topOutline, type Element } from './readers/model3d';
 import { classifyLayers } from './classify';
 import { buildVenue } from './buildVenue';
 import { roomTypeFromName } from './commitVenue';
@@ -160,12 +160,15 @@ describe('3D models → plan', () => {
   it('finds levels and cuts walls 1 m above the chosen floor', () => {
     const d = elementsToDrawing(elements, 'ifc', {}, []);
     expect(d.levels).toHaveLength(2);
-    expect(d.entities.filter(e => e.kind === 'LINE' && e.layer === 'IfcWall')).toHaveLength(4);
+    // the cut wall: one closed outline (filled solid on the plan), its four corners
+    const cut = d.entities.filter(e => e.layer === 'IfcWall');
+    expect(cut).toHaveLength(1);
+    expect(cut[0].kind === 'POLYLINE' && cut[0].closed && cut[0].pts.length).toBe(4);
     expect(d.entities.some(e => e.kind === 'TEXT' && e.text === 'Lobby')).toBe(true);
     expect(d.entities.some(e => e.kind === 'INSERT' && e.layer === 'IfcDoor')).toBe(true);
     const upstairs = d.atLevel!(1);
     expect(upstairs.entities.filter(e => e.layer === 'IfcSpace')).toHaveLength(0);
-    expect(upstairs.entities.filter(e => e.kind === 'LINE')).toHaveLength(4);
+    expect(upstairs.entities.filter(e => e.layer === 'IfcWall' && e.kind === 'POLYLINE' && e.closed)).toHaveLength(1);
   });
 });
 
@@ -211,5 +214,90 @@ describe('walkable paths follow the real plan', () => {
       const a = g.nodes[e.from], b = g.nodes[e.to];
       expect(Math.abs(e.weight - Math.hypot(a.x - b.x, a.y - b.y))).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe('IFC building models → plan', () => {
+  const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => {
+    const c = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]];
+    const f = [[0, 1, 2], [0, 2, 3], [4, 6, 5], [4, 7, 6], [0, 3, 7], [0, 7, 4], [1, 5, 6], [1, 6, 2], [3, 2, 6], [3, 6, 7], [0, 4, 5], [0, 5, 1]];
+    const positions = new Float32Array(c.flat());
+    return { positions, index: new Uint32Array(f.flat()), ...boundsOf(positions) };
+  };
+  const el = (layer: string, role: Element['role'], b: ReturnType<typeof box>, extra: Partial<Element> = {}): Element => ({ layer, name: '', role, ...b, ...extra });
+
+  it('reads the escapes IFC writes names in', () => {
+    expect(decodeIfcString(String.raw`Wohnk\X2\00FC\X0\che`)).toBe('Wohnküche');
+    expect(decodeIfcString(String.raw`Caf\X\E9`)).toBe('Café');
+    expect(decodeIfcString('Bad/WC')).toBe('Bad/WC');
+  });
+
+  it("uses the model's storeys, without its footing and roof", () => {
+    const els = [
+      el('IfcWall', 'slice', box(0, -1.2, 0, 10, -0.2, 0.3), { storey: 1 }),     // footing walls
+      el('IfcWall', 'slice', box(0, 0, 0, 10, 3, 0.3), { storey: 2 }),
+      el('IfcDoor', 'cut', box(4, 0, 0, 5, 2.1, 0.3), { storey: 2 }),
+      el('IfcWall', 'slice', box(0, 3, 0, 10, 6, 0.3), { storey: 3 }),
+      el('IfcWall', 'slice', box(0, 6, 0, 10, 7, 0.3), { storey: 4 }),          // parapet on the roof
+      el('IfcSpace', 'space', box(0, 6, 0.3, 10, 8, 5), { storey: 4 }),         // attic void
+    ];
+    const s = storeysOf(els, new Map([[1, 'T/FDN'], [2, 'Level 1'], [3, 'Level 2'], [4, 'Roof']]))!;
+    expect(s.map(x => [x.name, x.elevation])).toEqual([['Level 1', 0], ['Level 2', 3]]);
+    // the plan of Level 2 has its wall, and Level 1's door isn't there
+    const upstairs = elementsToDrawing(els, 'ifc', {}, [], 1, s);
+    expect(upstairs.entities.some(e => e.layer === 'IfcDoor')).toBe(false);
+    expect(upstairs.levels!.map(l => l.name)).toEqual(['Level 1', 'Level 2']);
+  });
+
+  it('cuts walls as solid outlines and doors with a swing, whatever way the exporter set up its frame', () => {
+    const door = box(4, 0, 0, 4.9, 2.1, 0.3);
+    // A frame (column-major 4x4) from its x, y, z axes in the model's Y-up world.
+    const frame = (x: number[], y: number[], z: number[]) => [...x, 0, ...y, 0, ...z, 0, 0, 0, 0, 1];
+    const archicad = frame([1, 0, 0], [0, 0, -1], [0, 1, 0]);           // x along the wall, y across it, z up
+    const revit = frame([1, 0, 0], [0, 1, 0], [0, 0, 1]);               // y points up, z across
+    const millimetres = frame([0.001, 0, 0], [0, 0, -0.001], [0, 0.001, 0]);
+    for (const m of [archicad, revit, millimetres]) {
+      const swings = doorSwings(m, door.positions, '')!;
+      expect(swings).toHaveLength(1);
+      expect(swings[0].width).toBeCloseTo(0.9, 5);
+    }
+    expect(doorSwings(archicad, box(0, 0, 0, 1.8, 2.1, 0.3).positions, '')).toHaveLength(2);   // wide: a double door
+    expect(doorSwings(archicad, box(0, 0, 0, 3, 2.4, 0.3).positions, '')).toHaveLength(0);     // a garage door
+    expect(doorSwings(archicad, door.positions, 'SLIDING_TO_LEFT')).toHaveLength(0);
+
+    const els = [
+      el('IfcWall', 'slice', box(0, 0, 0, 4, 3, 0.3), { storey: 1 }), el('IfcWall', 'slice', box(4.9, 0, 0, 9, 3, 0.3), { storey: 1 }),
+      el('IfcDoor', 'cut', door, { storey: 1, swings: doorSwings(archicad, door.positions, 'SINGLE_SWING_LEFT') }),
+    ];
+    const d = elementsToDrawing(els, 'ifc', {}, [], 0, [{ id: 1, name: 'Ground', elevation: 0 }]);
+    expect(d.entities.filter(e => e.layer === 'IfcWall' && e.kind === 'POLYLINE' && e.closed)).toHaveLength(2);
+    const arc = d.entities.find(e => e.kind === 'ARC' && e.layer === 'IfcDoor');
+    expect(arc && arc.kind === 'ARC' && arc.radius).toBeCloseTo(0.9, 5);
+  });
+
+  it('draws stairs and furniture as seen from above', () => {
+    // two treads: each a box, at different heights
+    const treads = [box(0, 0, 0, 1, 0.18, 0.28), box(0, 0.18, 0.28, 1, 0.36, 0.56)];
+    const positions = new Float32Array([...treads[0].positions, ...treads[1].positions]);
+    const index = new Uint32Array([...treads[0].index, ...Array.from(treads[1].index, i => i + 8)]);
+    const segs = topOutline(positions, index);
+    // each tread's outline: its front and back edges across the stair, and its sides
+    const across = segs.filter(s => Math.abs(s.y1 - s.y2) < 1e-6 && Math.abs(s.x2 - s.x1) > 0.99);
+    expect(new Set(across.map(s => s.y1.toFixed(2)))).toEqual(new Set(['0.00', '0.28', '0.56']));
+  });
+});
+
+describe('rooms around a few outlined ones', () => {
+  it('traces the rest of the floor when the outlined rooms cover little of it', () => {
+    const P = (pts: [number, number][], closed = true) => lwpoly('A-WALL', pts, closed);
+    // a 20 x 10 m floor in two halves, a 2 x 2 m stair hall outlined as a room in one corner
+    const dxf = pair(0, 'SECTION') + pair(2, 'HEADER') + pair(9, '$INSUNITS') + pair(70, 6) + pair(0, 'ENDSEC') + pair(0, 'SECTION') + pair(2, 'ENTITIES')
+      + P([[0, 0], [20, 0], [20, 10], [0, 10]]) + line('A-WALL', 10, 0, 10, 10)
+      + lwpoly('A-AREA', [[0.5, 0.5], [2.5, 0.5], [2.5, 2.5], [0.5, 2.5]], true) + text('A-AREA', 1.5, 1.5, 'Stair hall')
+      + pair(0, 'ENDSEC') + pair(0, 'EOF');
+    const d = readDxf(dxf);
+    const v = buildVenue(d, { 'A-WALL': 'walls', 'A-AREA': 'rooms' }, { unitsPerMeter: 1, pxPerMeter: 40, flipY: true, fix: { gaps: true, overlaps: true, rooms: true, floating: false } });
+    expect(v.rooms.map(r => r.name)).toContain('Stair hall');
+    expect(v.rooms.length).toBeGreaterThanOrEqual(2);   // the other half is a room too
   });
 });

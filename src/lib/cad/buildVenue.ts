@@ -198,6 +198,9 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
   const furnitureShapes: Pt[][] = [];
   for (const e of d.entities) {
     if (cat(e.layer) !== 'walls' || consumed.has(e) || e.kind !== 'POLYLINE' || e.pts.length < 3) continue;
+    // A building model says what each element is (IfcWall), so no guessing: a cut wall
+    // between two windows is short and thick, but it's a wall.
+    if (d.format === 'ifc' && d.layerHints?.[e.layer]?.category === 'walls') continue;
     const pts = e.pts.map(P), box = bbox(pts);
     const w = (box.maxX - box.minX) / m, h = (box.maxY - box.minY) / m;
     const thin = Math.min(w, h) < 0.25 || Math.min(w, h) / Math.max(w, h, 1e-9) < 0.15;
@@ -312,8 +315,13 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
   }
   let glass = panes.length ? mergeCollinear(panes, 0.3 * m, 0.05 * m).segs : [];
 
-  // No room outlines in the drawing: rooms are the spaces the walls enclose.
-  if (rooms.length === 0 && o.detect?.rooms !== false && walls.length) {
+  // No room outlines in the drawing: rooms are the spaces the walls enclose. So are the rest
+  // when the outlines cover little of the floor (a model with only its stair halls as spaces,
+  // its flats left out): those are traced around the outlined rooms.
+  const outlined = rooms.slice();
+  const wallBox = walls.length ? bbox(walls.flatMap(w => [{ x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }])) : null;
+  const sparse = !!wallBox && outlined.reduce((s, r) => s + polygonArea(r.polygon), 0) < 0.35 * (wallBox.maxX - wallBox.minX) * (wallBox.maxY - wallBox.minY);
+  if ((rooms.length === 0 || sparse) && o.detect?.rooms !== false && walls.length) {
     // Door swings seal their doorways; plain door-sized gaps in a wall line are doorways too.
     const sealed = [...seals, ...doorwaySeals(walls, m)];
     let found = detectRooms(walls, sealed, { pxPerMeter: m }).slice(0, 400);
@@ -326,6 +334,8 @@ export function buildVenue(d: CadDrawing, mapping: LayerMapping, o: BuildOptions
     const onFrame = (poly: Pt[]) => !!frame && poly.some(p => p.x - frame.minX < edge || frame.maxX - p.x < edge || p.y - frame.minY < edge || frame.maxY - p.y < edge);
     for (const r of found) {
       if (onFrame(r.polygon)) continue;
+      const rc = polygonCentroid(r.polygon);
+      if (outlined.some(x => pointInPolygon(rc, x.polygon) || pointInPolygon(polygonCentroid(x.polygon), r.polygon))) continue;
       const poly = r.polygon.map(p => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }));
       const c = polygonCentroid(poly);
       // The nearest real name inside: not a door size ("50/210"), level, grid letter or note.

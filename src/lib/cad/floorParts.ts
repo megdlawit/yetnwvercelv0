@@ -121,6 +121,9 @@ export function floorNameFrom(raw: string): string {
   return base ? base.charAt(0).toUpperCase() + base.slice(1) : 'Floor';
 }
 
+/** A storey name that only numbers it ("Level 1") or is a drawing code ("BT-A_0990_UG01_RDOK_0,000", "E00_OKRD"). */
+const GENERIC_LEVEL = /^(?:(?:level|floor|storey|story|ebene|niveau)\s*-?\d+|[A-Z0-9.,]+(?:[_-][A-Z0-9.,]+)+)$/i;
+
 const TITLE_WORDS = /(floor|level|storey|story|ground|basement|mezzanine|roof|plan|ፎቅ)/i;
 
 /** The title written in (or just below) a drawing on the sheet, if there is one. */
@@ -276,11 +279,17 @@ export function partsFromDrawing(fileName: string, d: CadDrawing, reviewed?: Lay
     } : undefined;
     const byHeight = [...levels].sort((a, b) => a.lv.elevation - b.lv.elevation);
     const groundIdx = Math.max(0, byHeight.findIndex(l => l.lv.elevation >= -0.5));
-    return levels.map(({ lv, drawing }, i) => ({
-      key: `${file.name}#L${i}`, file: file.name, origin: `${lv.name} (+${lv.elevation.toFixed(1)} m)`,
-      drawing: { ...drawing, bounds: frame ?? drawing.bounds }, units,
-      name: floorNameFrom(lv.name), level: levelFromName(lv.name) ?? byHeight.findIndex(l => l === levels[i]) - groundIdx,
-    }));
+    // The order by height decides the level: models call their ground floor "Level 1" (Revit),
+    // "Level 0" or "Erdgeschoss" alike. The model's own storey name is kept unless it's a bare
+    // number like that ("Level 1" reads better as "Ground floor").
+    return levels.map(({ lv, drawing }, i) => {
+      const level = byHeight.findIndex(l => l === levels[i]) - groundIdx;
+      return {
+        key: `${file.name}#L${i}`, file: file.name, origin: `${lv.name} (${lv.elevation >= 0 ? '+' : ''}${lv.elevation.toFixed(1)} m)`,
+        drawing: { ...drawing, bounds: frame ?? drawing.bounds }, units,
+        name: GENERIC_LEVEL.test(lv.name.trim()) ? ORDINAL_NAME(level) : floorNameFrom(lv.name), level,
+      };
+    });
   }
 
   // A sheet of floor plans (among elevations, sections, site plan…): found by their walls.

@@ -52,22 +52,68 @@ export function unitsFromInsunits(code: number | null): { perMeter: number; name
 
 interface Pair { code: number; value: string }
 
-function tokenize(text: string): Pair[] {
-  // DXF ASCII is line pairs: group code line, then value line. Normalize
-  // BOM and all three line-ending styles (\r\n, \n, and bare \r from old
-  // Mac-style exports) before splitting. Only the group-code line is
-  // trimmed — values can carry meaningful whitespace.
-  const clean = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
-  const lines = clean.split('\n');
+/**
+ * BOM off; bare-\r line ends (old Mac exports) become \n. \r\n is left as it is — the
+ * tokenizer drops the \r — so a 100 MB drawing isn't copied for nothing.
+ */
+function normalize(text: string): string {
+  const t = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+  const head = t.slice(0, 65536);
+  return head.includes('\r') && !head.includes('\n') ? t.replace(/\r\n?/g, '\n') : t;
+}
+
+/**
+ * DXF ASCII is line pairs: group code line, then value line. Reads the pairs between two
+ * offsets of the text in place (no split of the whole file). Only the group-code line is
+ * trimmed — values can carry meaningful whitespace; a stray blank line is skipped.
+ */
+function tokenize(text: string, from = 0, to = text.length): Pair[] {
   const pairs: Pair[] = [];
-  for (let i = 0; i + 1 < lines.length; i += 2) {
-    const codeStr = lines[i].trim();
-    if (codeStr === '') { i--; continue; } // tolerate stray blank lines
+  let pos = from;
+  const line = (): string | null => {
+    if (pos >= to) return null;
+    let end = text.indexOf('\n', pos);
+    if (end < 0 || end > to) end = to;
+    const s = text.charCodeAt(end - 1) === 13 ? text.slice(pos, end - 1) : text.slice(pos, end);
+    pos = end + 1;
+    return s;
+  };
+  for (;;) {
+    const c = line();
+    if (c === null) break;
+    const codeStr = c.trim();
+    if (codeStr === '') continue;
+    const value = line();
+    if (value === null) break;
     const code = parseInt(codeStr, 10);
-    if (Number.isNaN(code)) continue;
-    pairs.push({ code, value: lines[i + 1] });
+    if (!Number.isNaN(code)) pairs.push({ code, value });
   }
   return pairs;
+}
+
+/** The structural markers (code 0 SECTION / ENDSEC / BLOCK / ENDBLK), found by one native scan. */
+const MARKER = /^[ \t]*0[ \t]*\r?\n[ \t]*(SECTION|ENDSEC|BLOCK|ENDBLK)[ \t]*\r?$/gm;
+const NAME_PAIR = /[ \t]*2[ \t]*\r?\n([^\r\n]*)\r?\n/y;
+
+interface Span { from: number; to: number }
+/** Where each section's and each block's contents lie in the text (offsets), without reading them. */
+function indexDxf(text: string) {
+  const sections: (Span & { name: string })[] = [];
+  const blocks: Span[] = [];
+  let section: (Span & { name: string }) | null = null, block: Span | null = null;
+  MARKER.lastIndex = 0;
+  for (let m: RegExpExecArray | null; (m = MARKER.exec(text));) {
+    const after = MARKER.lastIndex + 1;
+    if (m[1] === 'SECTION') {
+      NAME_PAIR.lastIndex = after;
+      const n = NAME_PAIR.exec(text);
+      section = { name: n ? n[1].trim() : '', from: n ? NAME_PAIR.lastIndex : after, to: text.length };
+      sections.push(section);
+    } else if (m[1] === 'ENDSEC') { if (section) section.to = m.index; section = null; }
+    else if (m[1] === 'BLOCK' && section?.name === 'BLOCKS') { block = { from: after, to: m.index }; blocks.push(block); }
+    else if (m[1] === 'ENDBLK' && block) { block.to = m.index; block = null; }
+  }
+  return { sections, blocks };
 }
 
 function num(v: string | undefined, d = 0): number {
@@ -120,6 +166,7 @@ function expandBulges(layer: string, pts: DxfPoint[], bulges: number[], closed: 
 
 interface RawEntity { type: string; body: Pair[] }
 interface BlockDef { base: DxfPoint; entities: DxfEntity[] }
+interface Blocks { get(name: string): BlockDef | undefined }
 
 /** One entity's group codes → zero or more entities (a curved polyline can become several). */
 function toEntities(type: string, body: Pair[], vertices: Pair[][]): DxfEntity[] {
@@ -277,7 +324,7 @@ function readEntities(pairs: Pair[], from: number, until: (p: Pair) => boolean):
 }
 
 /** Place a block's contents at an insert: scale, rotate, move; layer "0" takes the insert's layer. */
-function explode(ins: DxfInsert & { sx: number; sy: number }, blocks: Map<string, BlockDef>, depth: number, out: DxfEntity[]) {
+function explode(ins: DxfInsert & { sx: number; sy: number }, blocks: Blocks, depth: number, out: DxfEntity[]) {
   const def = blocks.get(ins.block);
   if (!def || depth > 5) return;
   const r = (ins.rotationDeg * Math.PI) / 180, cos = Math.cos(r), sin = Math.sin(r);
@@ -310,66 +357,79 @@ function explode(ins: DxfInsert & { sx: number; sy: number }, blocks: Map<string
   }
 }
 
-export function parseDxf(text: string): ParsedDxf {
-  const pairs = tokenize(text);
-  const blocks = new Map<string, BlockDef>();
-  const topLevel: DxfEntity[] = [];
+export function parseDxf(raw: string): ParsedDxf {
+  const text = normalize(raw);
+  const { sections, blocks: blockSpans } = indexDxf(text);
   const hatches: DxfHatch[] = [];
   const insertScales = new Map<DxfInsert, { sx: number; sy: number }>();
   let insunits: number | null = null;
 
-  let i = 0;
-  while (i < pairs.length) {
-    const p = pairs[i];
-    if (!(p.code === 0 && p.value.trim() === 'SECTION')) { i++; continue; }
-    const name = pairs[i + 1]?.code === 2 ? pairs[i + 1].value.trim() : '';
-    i += 2;
-    const isEnd = (q: Pair) => q.code === 0 && q.value.trim() === 'ENDSEC';
-    if (name === 'HEADER') {
-      for (; i < pairs.length && !isEnd(pairs[i]); i++) {
-        if (pairs[i].code === 9 && pairs[i].value.trim() === '$INSUNITS' && pairs[i + 1]?.code === 70) {
-          const v = parseInt(pairs[i + 1].value, 10);
-          insunits = Number.isNaN(v) ? null : v;
+  const header = sections.find(s => s.name === 'HEADER');
+  if (header) {
+    const pairs = tokenize(text, header.from, header.to);
+    for (let i = 0; i < pairs.length; i++) {
+      if (pairs[i].code === 9 && pairs[i].value.trim() === '$INSUNITS' && pairs[i + 1]?.code === 70) {
+        const v = parseInt(pairs[i + 1].value, 10);
+        insunits = Number.isNaN(v) ? null : v;
+      }
+    }
+  }
+
+  // Blocks: most of a big drawing's file is symbol libraries and details it never places
+  // (93 % of a 95 MB apartment set). Only where each block lies is noted here; a block is
+  // read the first time the drawing inserts it.
+  const spans = new Map<string, Span & { base: DxfPoint }>();
+  for (const s of blockSpans) {
+    const head: Pair[] = [];
+    // The block's own group codes run until its first entity (code 0): a few lines.
+    for (const p of tokenize(text, s.from, Math.min(s.to, s.from + 4096))) {
+      if (p.code === 0) break;
+      head.push(p);
+    }
+    const bname = head.find(h => h.code === 2)?.value?.trim() ?? '';
+    // *Model_Space / *Paper_Space hold the drawing itself, not a symbol.
+    if (!bname || /^\*(model|paper)_space/i.test(bname)) continue;
+    spans.set(bname, { from: s.from, to: s.to, base: { x: num(head.find(h => h.code === 10)?.value), y: num(head.find(h => h.code === 20)?.value) } });
+  }
+  const read = new Map<string, BlockDef | undefined>();
+  const blocks: Blocks = {
+    get(name) {
+      if (!read.has(name)) {
+        const s = spans.get(name);
+        if (!s) read.set(name, undefined);
+        else {
+          const pairs = tokenize(text, s.from, s.to);
+          const first = pairs.findIndex(p => p.code === 0);
+          read.set(name, { base: s.base, entities: first < 0 ? [] : readEntities(pairs, first, () => false).entities });
         }
       }
-    } else if (name === 'BLOCKS') {
-      while (i < pairs.length && !isEnd(pairs[i])) {
-        if (!(pairs[i].code === 0 && pairs[i].value.trim() === 'BLOCK')) { i++; continue; }
-        i++;
-        const head: Pair[] = [];
-        while (i < pairs.length && pairs[i].code !== 0) head.push(pairs[i++]);
-        const bname = head.find(h => h.code === 2)?.value?.trim() ?? '';
-        const base = { x: num(head.find(h => h.code === 10)?.value), y: num(head.find(h => h.code === 20)?.value) };
-        const { entities, next } = readEntities(pairs, i, q => q.code === 0 && q.value.trim() === 'ENDBLK');
-        i = next + 1;
-        // *Model_Space / *Paper_Space hold the drawing itself, not a symbol.
-        if (bname && !/^\*(model|paper)_space/i.test(bname)) blocks.set(bname, { base, entities });
-      }
-    } else if (name === 'ENTITIES') {
-      const start = i;
-      const { entities, next } = readEntities(pairs, i, isEnd);
-      // read insert scales for exploding (kept off the public entity shape)
-      const inserts = entities.filter((e): e is DxfInsert => e.kind === 'INSERT');
-      let k = 0;
-      for (let j = start; j < next; j++) {
-        if (pairs[j].code === 0 && pairs[j].value.trim() === 'INSERT') {
-          const body: Pair[] = [];
-          for (let m = j + 1; m < next && pairs[m].code !== 0; m++) body.push(pairs[m]);
-          const ins = inserts[k++];
-          if (ins) insertScales.set(ins, { sx: num(body.find(b => b.code === 41)?.value, 1) || 1, sy: num(body.find(b => b.code === 42)?.value, 1) || 1 });
-        }
-      }
-      for (const e of entities) topLevel.push(e); // not push(...entities): a big drawing overflows the call stack
-      for (let j = start; j < next; j++) {
-        if (pairs[j].code !== 0 || pairs[j].value.trim() !== 'HATCH') continue;
+      return read.get(name);
+    },
+  };
+
+  const topLevel: DxfEntity[] = [];
+  for (const sec of sections.filter(s => s.name === 'ENTITIES')) {
+    const pairs = tokenize(text, sec.from, sec.to);
+    const { entities, next } = readEntities(pairs, 0, () => false);
+    // read insert scales for exploding (kept off the public entity shape)
+    const inserts = entities.filter((e): e is DxfInsert => e.kind === 'INSERT');
+    let k = 0;
+    for (let j = 0; j < next; j++) {
+      if (pairs[j].code === 0 && pairs[j].value.trim() === 'INSERT') {
         const body: Pair[] = [];
         for (let m = j + 1; m < next && pairs[m].code !== 0; m++) body.push(pairs[m]);
-        const loops = hatchLoops(body);
-        if (loops.length) hatches.push({ layer: body.find(b => b.code === 8)?.value?.trim() || '0', pattern: body.find(b => b.code === 2)?.value?.trim() ?? '', loops });
+        const ins = inserts[k++];
+        if (ins) insertScales.set(ins, { sx: num(body.find(b => b.code === 41)?.value, 1) || 1, sy: num(body.find(b => b.code === 42)?.value, 1) || 1 });
       }
-      i = next;
     }
-    i++;
+    for (const e of entities) topLevel.push(e); // not push(...entities): a big drawing overflows the call stack
+    for (let j = 0; j < next; j++) {
+      if (pairs[j].code !== 0 || pairs[j].value.trim() !== 'HATCH') continue;
+      const body: Pair[] = [];
+      for (let m = j + 1; m < next && pairs[m].code !== 0; m++) body.push(pairs[m]);
+      const loops = hatchLoops(body);
+      if (loops.length) hatches.push({ layer: body.find(b => b.code === 8)?.value?.trim() || '0', pattern: body.find(b => b.code === 2)?.value?.trim() ?? '', loops });
+    }
   }
 
   const entities: DxfEntity[] = [];
@@ -434,7 +494,7 @@ export function diagnoseDxf(text: string): DxfDiagnosis {
     return d;
   }
 
-  const pairs = tokenize(text);
+  const pairs = tokenize(normalize(text));
   if (pairs.length === 0) {
     d.format = 'not-dxf';
     d.hints.push('No DXF group-code/value pairs found — the file is empty or not a DXF.');

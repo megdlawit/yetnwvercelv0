@@ -3,6 +3,7 @@ model choice, Ollama errors and auth. Ollama is faked."""
 
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import threading
@@ -106,6 +107,17 @@ def test_rejected_uploads_leave_no_job_and_no_file(client: TestClient, fake_base
     monkeypatch.setattr(app_module, "MAX_UPLOAD_BYTES", 1024)
     assert submit(client, FIXTURE.read_bytes()).status_code == 413
     assert client.get("/health").json()["jobs"] == {"max_active": 2}
+    assert uploads(tmp_path) == []
+
+
+def test_gzipped_upload_is_unpacked_and_its_unpacked_size_counts(client: TestClient, fake_baseline: None, tmp_path: Path,
+                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    packed = gzip.compress(FIXTURE.read_bytes())
+    job = wait(client, submit(client, packed).json()["id"])
+    assert job["status"] == "done" and len(job["result"]["layers"]) == 18
+    assert submit(client, packed[:40]).status_code in (400, 415)   # damaged
+    monkeypatch.setattr(app_module, "MAX_UPLOAD_BYTES", 1024)
+    assert len(packed) < 1024 * 50 and submit(client, packed).status_code == 413   # small packed, big unpacked
     assert uploads(tmp_path) == []
 
 

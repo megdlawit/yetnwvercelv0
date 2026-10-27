@@ -4,6 +4,7 @@
 // when YETNEW_REQUIRE_AUTH=1, and jobs belong to that user).
 
 import type { AiLayer, ReviewPolicy } from './review';
+import { gzip } from './save';
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
@@ -71,13 +72,27 @@ async function call<T>(base: string, path: string, token: string | null, init: R
 }
 
 /** `known`: layers the editor's rules are sure about — the service doesn't ask the model about them. */
-export function startJob(base: string, file: Blob, fileName: string, token: string | null, signal?: AbortSignal,
-                         known?: Record<string, string>): Promise<LabelJob> {
-  const form = new FormData();
-  form.append('file', file, fileName);
-  if (known && Object.keys(known).length) form.append('known', JSON.stringify(known));
-  return call<LabelJob>(base, '/jobs', token, { method: 'POST', body: form, signal });
+export async function startJob(base: string, file: Blob, fileName: string, token: string | null, signal?: AbortSignal,
+                               known?: Record<string, string>): Promise<LabelJob> {
+  const send = (body: Blob) => {
+    const form = new FormData();
+    form.append('file', body, fileName);
+    if (known && Object.keys(known).length) form.append('known', JSON.stringify(known));
+    return call<LabelJob>(base, '/jobs', token, { method: 'POST', body: form, signal });
+  };
+  // A big drawing goes gzipped (about a tenth of the size; the service unpacks it). A service
+  // from before that refuses it as "not a DXF": then it goes as it is.
+  if (file.size < GZIP_FROM_BYTES) return send(file);
+  try {
+    return await send(await gzip(file));
+  } catch (err) {
+    if (signal?.aborted || !/isn't a DXF|415/i.test(err instanceof Error ? err.message : '')) throw err;
+    return send(file);
+  }
 }
+
+/** Below this, compressing takes longer than it saves. */
+const GZIP_FROM_BYTES = 1024 * 1024;
 
 export function getJob(base: string, id: string, token: string | null, signal?: AbortSignal): Promise<LabelJob> {
   return call<LabelJob>(base, `/jobs/${encodeURIComponent(id)}`, token, { signal });

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/integrations/supabase/types';
@@ -40,7 +41,7 @@ describe('saving layer labels', () => {
 
   it('records how each layer was confirmed', () => {
     const p = pending();
-    expect(p.sourcePath).toMatch(/^b1\/[0-9a-f-]{36}\/Plan v2\.dxf$/);
+    expect(p.sourcePath).toMatch(/^b1\/[0-9a-f-]{36}\/Plan v2\.dxf\.gz$/);
     expect(p.records.map(r => [r.layer_name, r.final_label, r.human_verified, r.confirmed_via])).toEqual([
       ['GRID', 'ignore', false, null], ['A-WALL', 'wall', true, 'group'],
     ]);
@@ -84,5 +85,18 @@ describe('saving layer labels', () => {
     const out = await savePendingLabels(client, pending());
     expect(out.ok).toBe(false);
     expect(out.error).toMatch(/needs migrations 20261010090000 and 20261010110000/);
+  });
+
+  it('stores the drawing gzipped, and saves the labels without it when it is too big even so', async () => {
+    const { client, stored, files } = fakeSupabase({ upload: [], upsert: [] });
+    const ok = await savePendingLabels(client, pending());
+    expect(ok.ok).toBe(true);
+    expect(files[0]).toMatch(/\.dxf\.gz$/);
+    const big = await savePendingLabels(client, pending(), 10);
+    expect(big).toMatchObject({ ok: true, saved: 2 });
+    expect(big.note).toMatch(/too big to keep a copy/);
+    expect(files).toHaveLength(1);                                   // not uploaded
+    expect(big.pending.records.every(r => r.source_path === null)).toBe(true);
+    expect(stored.size).toBe(4);
   });
 });

@@ -12,6 +12,7 @@
 
 import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -160,6 +161,7 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
       const out = await savePendingLabels(supabase, prepareLayerLabels({ buildingId, fileName: labelSource.fileName, source: labelSource.blob, rows: ai.rows, result: labeling.result }));
       setFloorsBusy(false);
       if (!out.ok) { setError(`The reviewed layer labels couldn't be saved: ${out.error}`); return; }
+      if (out.note) toast.message(out.note);
     }
     const f = file;
     if (close(false)) onImportAsFloors(f, effectiveMapping);
@@ -185,6 +187,7 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
       ? { status: 'saved', error: null, pending: null, saved: out.saved }
       : { status: 'failed', error: out.error, pending: out.pending, saved: 0 });
     if (out.ok) setConfirmDiscard(false);
+    if (out.note) toast.message(out.note);
   };
 
   const pick = (f: File | null) => {

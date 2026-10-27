@@ -28,6 +28,7 @@ import re
 import tempfile
 import threading
 import time
+import zlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePath
@@ -193,16 +194,30 @@ def safe_name(filename: str | None) -> str:
 
 
 async def save_upload(file: UploadFile, folder: Path) -> Path:
-    """Streams the upload to <folder>/upload.dxf, enforcing the size limit as it goes."""
+    """Streams the upload to <folder>/upload.dxf, enforcing the size limit as it goes.
+
+    The editor gzips big drawings (a DWG's DXF text runs to 100 MB; gzipped about a tenth):
+    recognised by the gzip magic bytes and unpacked on the way. The limit counts the
+    unpacked size, so a small file can't expand into a huge one."""
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / "upload.dxf"
     size = 0
+    unzip: zlib._Decompress | None = None
+    first = True
     with target.open("wb") as out:
         while chunk := await file.read(CHUNK):
-            size += len(chunk)
-            if size > MAX_UPLOAD_BYTES:
+            if first:
+                first = False
+                if chunk[:2] == b"\x1f\x8b":
+                    unzip = zlib.decompressobj(wbits=31)
+            try:
+                data = unzip.decompress(chunk, MAX_UPLOAD_BYTES + 1 - size) if unzip else chunk
+            except zlib.error as err:
+                raise HTTPException(400, "The compressed upload is damaged.") from err
+            size += len(data)
+            if size > MAX_UPLOAD_BYTES or (unzip and unzip.unconsumed_tail):
                 raise HTTPException(413, f"The file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
-            out.write(chunk)
+            out.write(data)
     if size == 0:
         raise HTTPException(400, "The file is empty.")
     with target.open("rb") as f:

@@ -34,6 +34,14 @@ function setup(extra: Partial<MapAssistantProps> = {}) {
 }
 
 describe('the floor editor chat', () => {
+  it('understands English slang and says how it read it', async () => {
+    const { send } = setup();
+    await send('yo hook up room 1 n room 2 lol');
+    await waitFor(() => expect(screen.getByRole('button', { name: /Apply/ })).toBeTruthy());
+    expect(screen.getByText(/I read that as “connect room 1 and room 2”/)).toBeTruthy();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('reads past typos, says what it read, and never calls an outside service', async () => {
     const { send } = setup();
     await send('conect rom 1 and rom 2');

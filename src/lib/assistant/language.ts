@@ -13,11 +13,74 @@
 /** Lower case, accents off, contractions and chat spellings written out, punctuation gone. Amharic is kept. */
 export function normalize(text: string): string {
   let s = text.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[’‘`´]/g, "'");
+  // "heyyy", "connnect", "pleeease": a letter held down is one letter too many.
+  s = s.replace(/(\p{L})\1{2,}/gu, '$1$1');
   for (const [re, to] of CONTRACTIONS) s = s.replace(re, to);
   s = s.replace(/[^\p{L}\p{N}'\s-]+/gu, ' ').replace(/(^|\s)'+|'+(?=\s|$)/g, ' ');
   // "room12" → "room 12", "2nd" stays: letters then digits are split only after a word of 3+ letters.
   s = s.replace(/\b([a-z]{3,})(\d+)\b/g, '$1 $2');
-  return s.split(/\s+/).filter(Boolean).map(w => SHORTHANDS[w] ?? w).join(' ').replace(/\s+/g, ' ').trim();
+  return s.split(/\s+/).filter(w => w && !FILLER_WORDS.has(w)).map(w => SHORTHANDS[w] ?? w).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+/** Chat noise that carries no meaning: "lol", "haha", "bruh". */
+const FILLER_WORDS = new Set(['lol', 'lmao', 'lmfao', 'rofl', 'haha', 'hahah', 'hahaha', 'hehe', 'xd', 'bruh', 'bro', 'dude', 'mate', 'fam',
+  'buddy', 'yall', 'guys', 'pal', 'smh', 'tbh', 'imo', 'ngl', 'fr', 'ong', 'lowkey', 'highkey', 'literally', 'basically']);
+
+/**
+ * English slang for the editor's requests, said the way the assistant understands them:
+ * "nuke the bench" → "remove the bench", "hook up the cafe and the lobby" → "connect…",
+ * "nudge it left" → "move it a little left", "ship it" → "publish", "my bad" → "undo".
+ * Works on normalized text (lower case, shorthands written out). The first that fits wins.
+ */
+const SLANG: [RegExp, string][] = [
+  // undo / redo
+  [/^(my bad|oops|whoops|oopsie|ctrl z|control z|cmd z|scratch that|take it back|reverse that|back it out|no undo( that)?|go back one|revert it|roll( it)? back)$/, 'undo'],
+  [/^(ctrl y|control y|cmd shift z|ctrl shift z|redo it|do it again)$/, 'redo'],
+  // check / fix
+  [/^(are we good|we good|is it (all )?good|is (it|everything) (ok|okay|fine|alright)|anything broken|is anything broken|what is broken|sanity check|how is (my|the) map( looking)?|how does (it|the map) look|rate my map|is it legit|any (errors|bugs|issues|problems)|check (it|everything|stuff))$/, 'check the map'],
+  [/^(sort it( all)? out|sort (it|everything|the map) out|clean (it|everything|the map) up|clean up( the map)?|tidy( it)? up|patch (it|everything)( up)?|make it work|just fix it|fix (it|stuff|things|the lot)|do your thing)$/, 'fix everything'],
+  // publish / view
+  [/^(ship it|push it live|send it live|launch( it)?|drop it live|go public|put it out there|make it public)$/, 'publish'],
+  [/^(pan out|zoom way out|show (me )?the whole thing|show (me )?everything|birds? eye( view)?)$/, 'fit the map'],
+  // remove
+  [/^(?:nuke|yeet|trash|ditch|kill|scrap|bin|axe|toss|chuck out|chuck away|zap|dump|kick out|wipe) (.+)$/, 'remove $1'],
+  // connect
+  [/^(?:hook up|wire up|link up|tie up|bridge) (.+?) (?:and|with|to) (.+)$/, 'connect $1 and $2'],
+  [/^(?:hook|wire|tie|patch|plug) (.+?) (?:up )?(?:to|with|into|and) (.+)$/, 'connect $1 and $2'],
+  [/^(?:make a way|make a path|let (?:people|folks|visitors) walk|let me walk) (?:from|between) (.+?) (?:to|and) (.+)$/, 'connect $1 and $2'],
+  // move
+  [/^(?:nudge|scoot|budge|inch) (.+?) (?:over )?(?:to the )?(left|right|up|down)$/, 'move $1 a little $2'],
+  [/^(?:shove|slide|bump|shift|drag|push|yank|pull) (.+?) (?:over )?(?:to the )?(left|right|up|down)$/, 'move $1 $2'],
+  [/^(?:shove|slide|shift|drag|push|plonk|stick|park) (.+?) (?:over )?(?:next to|near|beside|by) (.+)$/, 'move $1 next to $2'],
+  [/^(?:shove|slide|shift|drag|plonk|stick|park) (.+?) (?:over )?(here|there)$/, 'move $1 here'],
+  // add
+  [/^(?:chuck|pop|slap|throw|stick|plonk|drop|whack|bung|toss) (a|an|another|some) (.+)$/, 'add $1 $2'],
+  // resize / rotate
+  [/^(?:beef up|bulk up|blow up|pump up|supersize) (.+)$/, 'make $1 bigger'],
+  [/^make (.+?) (?:chunkier|fatter|thicc|thicker|huge|massive|way bigger)$/, 'make $1 bigger'],
+  [/^make (.+?) (?:tinier|teeny|smol|skinnier|thinner|way smaller|tiny)$/, 'make $1 smaller'],
+  [/^(?:shrink|squish|squash) (.+?)(?: down)?$/, 'make $1 smaller'],
+  [/^(?:spin|twist|swivel|flip) (.+?) (?:by )?(\d+)(?: degrees| deg)?$/, 'rotate $1 $2 degrees'],
+  [/^flip (?!to )(.+?)(?: around| over)?$/, 'rotate $1 180 degrees'],
+  // rename
+  [/^(?:call|label|tag) (it|this|that) (?!to |as )(.+)$/, 'rename $1 to $2'],
+  [/^(?:label|tag) (.+?) as (.+)$/, 'rename $1 to $2'],
+  // where
+  [/^where (?:the|is the) (.+?) at$/, 'where is the $1'],
+  [/^where is (.+?) at$/, 'where is $1'],
+  [/^where did (.+?) go$/, 'where is $1'],
+  [/^let me see (.+)$/, 'show $1'],
+];
+
+/** The request with its slang said plainly ("nuke the bench" → "remove the bench"); `slang` when anything changed. */
+export function plainSlang(normalized: string): { text: string; slang: boolean } {
+  // "yo hook up…", "ok so just nuke it please": the request is what's between the hellos and the pleases.
+  const core = normalized
+    .replace(/^((yo|hey|hi|hello|hiya|ok|okay|alright|so|um|uh|well|please|can you|could you|would you|just|go ahead and|now)\s+)+/, '')
+    .replace(/(\s+(please|thanks|thank you|now|for me|real quick|quickly))+$/, '');
+  const hit = SLANG.find(([re]) => re.test(core));
+  const text = hit ? core.replace(hit[0], hit[1]) : normalized;
+  return { text, slang: text !== normalized };
 }
 
 const CONTRACTIONS: [RegExp, string][] = [
@@ -38,6 +101,14 @@ const SHORTHANDS: Record<string, string> = {
   doin: 'doing', goin: 'going', gud: 'good', gd: 'good', k: 'ok', kk: 'ok', okey: 'okay', okk: 'ok', btw: 'by the way',
   loo: 'toilet', wc: 'toilet', 'w.c': 'toilet', b4: 'before', '2day': 'today', tmrw: 'tomorrow', tmr: 'tomorrow',
   hii: 'hi', hiii: 'hi', helo: 'hello', hellow: 'hello', heloo: 'hello', hallo: 'hello', hai: 'hi', hy: 'hi', heyy: 'hey',
+  gimme: 'give me', lemme: 'let me', dunno: 'do not know', kinda: 'kind of', sorta: 'sort of', cuz: 'because', coz: 'because',
+  cos: 'because', bc: 'because', tho: 'though', thru: 'through', 'w/': 'with', 'w/o': 'without', 'b/w': 'between', bw: 'between',
+  nvm: 'never mind', np: 'no problem', idk: 'i do not know', rn: 'right now', asap: 'now', tysm: 'thank you so much', tyvm: 'thank you very much',
+  thnks: 'thanks', dat: 'that', dis: 'this', dem: 'them', da: 'the', teh: 'the', hte: 'the', tge: 'the', n: 'and',
+  yea: 'yes', yeah: 'yes', ye: 'yes', yah: 'yes', yass: 'yes', yas: 'yes', yup: 'yes', yep: 'yes', nah: 'no', naw: 'no', nope: 'no',
+  okie: 'ok', oki: 'ok', okies: 'ok', aight: 'alright', ight: 'alright', gr8: 'great', l8r: 'later', ppl: 'people', cya: 'bye', thanku: 'thanks',
+  sumthin: 'something', smth: 'something', sth: 'something', somethin: 'something', nothin: 'nothing', everythin: 'everything',
+  bout: 'about', abt: 'about', prolly: 'probably',
   pic: 'picture', nr: 'near', nxt: 'next', fl: 'floor', flr: 'floor', lvl: 'level', rm: 'room', rms: 'rooms', bldg: 'building',
 };
 
@@ -50,7 +121,11 @@ const KEEP = new Set(('a an the is are am was were be been being i you he she it
   'make made take took give gave let put keep kept try tried help please thanks thank yes yeah no nope ok okay sure fine good great ' +
   'nice bad well very much many more most less least just only also too again still already now today tonight tomorrow yesterday ' +
   'day night time hour hours minute minutes way thing things place places one two three four five six seven eight nine ten first ' +
-  'second third last next other another same new old big small little long short left right back front top bottom inside outside open close').split(' '));
+  'second third last next other another same new old big small little long short left right back front top bottom inside outside open close ' +
+  // slang verbs and words: they mean something (SLANG below), so they're never "corrected" into a command ("chuck" isn't "check")
+  'nuke yeet trash ditch kill scrap bin axe toss chuck zap dump wipe hook wire tie patch plug bridge nudge scoot budge inch shove slide bump ' +
+  'shift drag push yank pull plonk stick park pop slap throw drop whack bung beef bulk blow pump supersize chunkier fatter thicc smol tinier ' +
+  'teeny skinnier shrink squish squash spin twist swivel flip label tag ship launch oops whoops oopsie sanity tidy sort legit public').split(' '));
 
 /** Damerau–Levenshtein distance, giving up (returning max + 1) once it can't be within `max`. */
 export function editDistance(a: string, b: string, max = Infinity): number {
@@ -88,7 +163,13 @@ export function vocabulary(...lists: (Iterable<string> | string)[]): Set<string>
  * word. `changed`: whether anything was corrected (so the assistant can say what it read).
  */
 export function correct(text: string, vocab: Set<string>): { text: string; changed: boolean } {
-  const words = normalize(text).split(' ').filter(Boolean);
+  const fixed = fixWords(normalize(text).split(' ').filter(Boolean), vocab);
+  // Slang is said plainly once the typos are fixed ("nuek the bench" → "nuke the bench" → "remove the bench").
+  const plain = plainSlang(fixed.text);
+  return { text: plain.text, changed: fixed.changed || plain.slang };
+}
+
+function fixWords(words: string[], vocab: Set<string>): { text: string; changed: boolean } {
   let changed = false;
   const out = words.map(w => {
     if (vocab.has(w) || KEEP.has(w) || /\d/.test(w) || !/^[a-z'-]+$/.test(w)) return w;

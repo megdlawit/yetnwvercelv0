@@ -55,3 +55,42 @@ describe('the editor reads past typos', () => {
     expect(parseIntent(fixed.text)).toEqual([expect.objectContaining({ op: 'connect', from: expect.stringMatching(/room 1/i), to: expect.stringMatching(/room 2/i) })]);
   });
 });
+
+describe('English slang in the floor editor', () => {
+  it('reads slang, chat speak and held-down keys as the request they mean', async () => {
+    const { parseIntent } = await import('./intent');
+    const v = vocabulary('connect remove move add undo redo publish check fix rename rotate make bigger smaller room bench lobby cafe entrance here',
+      ['Room 1', 'Room 2', 'Lobby', 'Cafe', 'Main Entrance']);
+    const op = (said: string) => parseIntent(correct(said, v).text)?.[0]?.op ?? null;
+    const cases: [string, string][] = [
+      ['nuke room 1', 'remove'], ['yeet the bench lol', 'remove'], ['ditch dat bench pls', 'remove'],
+      ['hook up the cafe and the lobby', 'connect'], ['wire up room 1 n room 2', 'connect'], ['conect rom 1 & rom 2 bruh', 'connect'],
+      ['nudge it left', 'move'], ['scoot the bench over to the right', 'move'], ['shove room 2 next to the lobby', 'move'],
+      ['chuck a bench here', 'add'], ['pop a restroom next to the lobby', 'add'],
+      ['beef up room 1', 'resize'], ['make room 2 smol', 'resize'], ['spin it 90', 'rotate'],
+      ['call it Staff Room', 'rename'],
+      ['my bad', 'undo'], ['ctrl z', 'undo'], ['oopsie', 'undo'], ['ctrl y', 'redo'],
+      ['are we good', 'health'], ['anything broken?', 'health'], ['sort it all out', 'fix_all'], ['clean it up', 'fix_all'],
+      ['ship it', 'publish'], ['pan out', 'fit'], ['where the lobby at', 'show'], ['heyyy connnect room 1 and room 2 pleeease', 'connect'],
+    ];
+    for (const [said, want] of cases) expect(op(said), said).toBe(want);
+  });
+
+  it('leaves plain requests alone', () => {
+    const v = vocabulary('connect room', ['Room 1', 'Room 2']);
+    expect(correct('connect room 1 and room 2', v)).toEqual({ text: 'connect room 1 and room 2', changed: false });
+    expect(correct('flip to 3d', v).text).toBe('flip to 3d');
+  });
+});
+
+describe('casual hellos', () => {
+  it('knows them however they are typed', async () => {
+    const { smallTalkKind } = await import('./smalltalk');
+    const v = vocabulary('hello how are you doing');
+    for (const [said, kind] of [['wassup', 'greeting'], ["what's up bro", 'greeting'], ['heyyy', 'greeting'], ['yo', 'greeting'],
+      ['how u doin', 'howareyou'], ['hows it goin', 'howareyou'], ['u good?', 'howareyou'], ['thx m8', null]] as const) {
+      const t = correct(said, v).text;
+      expect(smallTalkKind(t) ?? smallTalkKind(said), said).toBe(kind ?? smallTalkKind(t));
+    }
+  });
+});

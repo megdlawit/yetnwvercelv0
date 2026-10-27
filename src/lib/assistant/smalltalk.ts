@@ -10,8 +10,8 @@ export type SmallTalkKind = 'greeting' | 'howareyou' | 'thanks' | 'help' | 'who'
   | 'confused' | 'compliment' | 'complaint';
 
 const PATTERNS: [SmallTalkKind, RegExp][] = [
-  ['greeting', /^(hi+|hello+|hey+|heya|hey there|hi there|hello there|yo|hiya|howdy|good (morning|afternoon|evening|day)|greetings|selam|salam|ሰላም|ጤና ይስጥልኝ|tena yistilign|what's up|whats up|sup)$/],
-  ['howareyou', /^((hi|hey|hello|selam|ሰላም),? )?(how are (you|u|ya)( doing| today)?|how r u|how're you|how's it going|hows it going|how is it going|how have you been|how's your day|you ok|are you ok|እንዴት ነህ|እንዴት ነሽ|እንዴት ናችሁ|ደህና ነህ|ደህና ነሽ|endet neh|endet nesh|dehna neh)$/],
+  ['greeting', /^(hi+|hello+|hey+|heya|hey there|hi there|hello there|yo|hiya|howdy|good (morning|afternoon|evening|day)|greetings|selam|salam|ሰላም|ጤና ይስጥልኝ|tena yistilign|what's up|whats up|what is up|sup|wassup|wazzup|whaddup|what is good|whats good|what's good|what is happening|hey hey|hi hi|ello|oi|yo yo)$/],
+  ['howareyou', /^((hi|hey|hello|selam|ሰላም),? )?(how are (you|u|ya)( doing| today)?|how r u|how're you|how's it going|hows it going|how is it going|how have you been|how's your day|you ok|are you ok|how you doing|how you doin|how are things|how is everything|how is life|how is your day( going)?|how is it going|you good|u good|how are you holding up|how is your day been|how have you been doing|what is new|እንዴት ነህ|እንዴት ነሽ|እንዴት ናችሁ|ደህና ነህ|ደህና ነሽ|endet neh|endet nesh|dehna neh)$/],
   ['thanks', /^((thanks|thank you|thx|ty|cheers)( (so|very) much| a lot)?( for (that|this|the help|your help))?|አመሰግናለሁ|amesegnalehu|great,? thanks|perfect,? thanks)$/],
   ['help', /^(help|help me|what can (you|u) do|what (do|can) (you|u) (do|help with)|what are (you|u) (for|able to do)|how (does|do) (this|it|you) work|how do i use (you|this chat)|what should i (do|say|ask)|commands|options|what now|now what|where do i start|ideas)$/],
   ['who', /^(who are (you|u)|what are (you|u)|are (you|u) (a bot|an? ai|human|real)|what is this|what's your name|whats your name|what is your name|do you have a name)$/],

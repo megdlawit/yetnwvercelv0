@@ -142,9 +142,9 @@ const DocsInstitutions: React.FC = () => (
     />
     <DocsP>
       Use <b>this</b> for what you’ve selected, <b>it</b> for what you just talked about, and <b>here</b> for where you
-      last clicked. Common requests are understood instantly on your device; anything else is understood by Claude
-      (Anthropic’s AI), which gets a short text summary of your floor — names, kinds, sizes and positions — never your
-      drawing files or anyone’s personal data. You can write in English or Amharic.
+      last clicked. Everything is understood right here on your device by Yet New’s own assistant — nothing you type
+      is sent to any outside service. Typos are fine (“conect rom 1 and rom 2”): it says what it read. You can write
+      in English or Amharic.
     </DocsP>
 
     <DocsH2 id="places">Places, events and content</DocsH2>
@@ -228,7 +228,7 @@ const DocsInstitutions: React.FC = () => (
       <p>That’s normal for a new institution’s first publish. You can keep editing; the version you publish last is what goes live when it’s approved.</p>
     </DocsFaq>
     <DocsFaq q="The assistant says it didn’t understand.">
-      <p>Try naming things exactly as they appear on the map, or select it and say “this”. Questions about Yet New itself (“what’s a room?”, “how do I publish?”) are answered right away. Unusual requests need an AI model on the server — a free one or Claude — ask the Yet New team.</p>
+      <p>Try naming things exactly as they appear on the map, or select it and say “this”. Questions about Yet New itself (“what’s a room?”, “how do I publish?”) are answered right away. Typos are fine: the assistant reads past them and tells you what it understood, and when it isn’t sure it offers the closest things it can do.</p>
     </DocsFaq>
   </DocsShell>
 );

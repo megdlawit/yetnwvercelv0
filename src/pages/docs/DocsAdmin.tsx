@@ -107,7 +107,6 @@ const DocsAdmin: React.FC = () => (
         ['Database, auth, storage', 'Supabase', 'Row-level security on every table; migrations in supabase/migrations.'],
         [<DocsInlineCode>institution-accounts</DocsInlineCode>, 'Supabase edge function', 'Username sign-up, adding and removing team members.'],
         [<DocsInlineCode>indoor-maps-api</DocsInlineCode>, 'Supabase edge function', 'The partner API behind embeds and the SDK.'],
-        [<DocsInlineCode>/api/map-assistant</DocsInlineCode>, 'Vercel', 'The editor’s AI: a free hosted model first (when configured), then Claude. Signed-in users only.'],
         [<DocsInlineCode>/api/dwg-convert</DocsInlineCode>, 'Vercel', 'Turns DWG into DXF on our server (LibreDWG); drawings never leave it.'],
         [<DocsInlineCode>/api/osrm</DocsInlineCode>, <DocsInlineCode>/api/overpass</DocsInlineCode>, 'Outdoor routing and map data proxies.'],
       ]}
@@ -118,10 +117,6 @@ const DocsAdmin: React.FC = () => (
       rows={[
         [<DocsInlineCode>VITE_SUPABASE_URL</DocsInlineCode>, 'Web app, API routes', 'Your Supabase project URL.'],
         [<DocsInlineCode>VITE_SUPABASE_PUBLISHABLE_KEY</DocsInlineCode>, 'Web app, API routes', 'The public (anon) key.'],
-        [<DocsInlineCode>ASSISTANT_FREE_URL</DocsInlineCode>, '/api/map-assistant', 'Optional, server-side: a free model with an OpenAI-compatible API (e.g. Groq, OpenRouter, Gemini’s OpenAI-compatible endpoint, or your own Ollama server at …/v1). Tried before Claude. The map summary is sent to that service — check its data terms.'],
-        [<DocsInlineCode>ASSISTANT_FREE_MODEL</DocsInlineCode>, '/api/map-assistant', 'The model name at that service. Both URL and model must be set to turn the free fallback on.'],
-        [<DocsInlineCode>ASSISTANT_FREE_KEY</DocsInlineCode>, '/api/map-assistant', 'Its API key (empty for your own server). ASSISTANT_FREE_JSON_MODE=off if it rejects JSON mode.'],
-        [<DocsInlineCode>ANTHROPIC_API_KEY</DocsInlineCode>, '/api/map-assistant', 'Optional, paid: Claude, used when no free model is set or it fails. Without any of these, the assistant still understands common requests on the device, plus the free local model when it runs.'],
         [<DocsInlineCode>OVERPASS_ENDPOINT</DocsInlineCode>, '/api/overpass', 'Optional: a different Overpass server.'],
         [<DocsInlineCode>CLOUDCONVERT_API_KEY</DocsInlineCode>, '/api/dwg-convert', 'Optional fallback converter for unusual DWG files.'],
         [<DocsInlineCode>SUPABASE_SERVICE_ROLE_KEY</DocsInlineCode>, 'Edge functions', 'Set in Supabase, never in the web app.'],

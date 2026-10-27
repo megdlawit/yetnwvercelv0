@@ -1,7 +1,7 @@
 // What someone wants done to their map, in plain words → a small list of map
-// changes. The same vocabulary is used by the local phrase parser (instant,
-// offline) and by Claude (api/map-assistant) for anything the parser doesn't
-// recognise. References stay words here ("Room 1", "this", "it", "the
+// changes. The phrase parser here understands it instantly, on the device; the
+// same vocabulary is what our own assistant model (ml/, POST /assistant) is
+// trained to answer in. References stay words here ("Room 1", "this", "it", "the
 // elevator"); the editor resolves them against the map.
 
 export type Direction = 'left' | 'right' | 'up' | 'down';

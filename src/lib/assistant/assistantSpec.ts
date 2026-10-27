@@ -1,9 +1,7 @@
-// The map assistant's contract — ONE place for both backends:
-//   * api/map-assistant.ts (Claude, needs ANTHROPIC_API_KEY), and
-//   * the free local assistant (ml/: POST /assistant on the labeling service,
-//     a local model in Ollama, which can be fine-tuned).
-// Both get the same instructions, the same actions and the same message for
-// the same request. ml/assistant/spec.json and ml/assistant/messages_fixture.json
+// The contract of our own assistant model (ml/: POST /assistant on the labeling
+// service, a local model in Ollama that we fine-tune): its instructions, the
+// actions it may answer with and the message it gets for a request. The editor
+// itself understands requests on the device (intent.ts, language.ts). ml/assistant/spec.json and ml/assistant/messages_fixture.json
 // are generated from this file (assistantSpec.test.ts fails when they drift;
 // UPDATE_ASSISTANT_SPEC=1 npx vitest run src/lib/assistant/assistantSpec.test.ts rewrites them).
 

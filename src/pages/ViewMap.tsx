@@ -41,6 +41,8 @@ import { DirectionsPanel, GuidanceCard } from '@/components/visitor/NavigationVi
 import { GreetingCard, LocateButtons, NearbyChip, OutsideBanner, QrScanDialog, StartSheet } from '@/components/visitor/MapOverlays';
 import PlanView from '@/components/visitor/PlanView';
 import { useFloorDrawing } from '@/components/visitor/useFloorDrawing';
+import VisitorAssistant from '@/components/visitor/VisitorAssistant';
+import type { VisitorAction, VisitorContext } from '@/lib/assistant/visitor';
 
 const Venue3D = lazy(() => import('@/components/venue/Venue3D'));
 const OutdoorView = lazy(() => import('@/components/venue/OutdoorView'));
@@ -81,6 +83,8 @@ export default function ViewMap() {
   const [guiding, setGuiding] = useState(false);
   const [stepFree, setStepFree] = useState(false);
   const [fromId, setFromId] = useState<string | null>(null);
+  // The guide's chat ("Ask"), answered on the phone itself.
+  const [asking, setAsking] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
   const [showStreetRoute, setShowStreetRoute] = useState(false);
   const [outsideDismissed, setOutsideDismissed] = useState(false);
@@ -303,6 +307,21 @@ export default function ViewMap() {
     const p = id ? placeById.get(id) : null;
     if (p && p.floorId !== floorId) setFloorId(p.floorId);
   };
+  const askPlaces = useMemo(() => places.map(p => ({ ...p, roomType: p.room?.type ?? null })), [places]);
+  const askHere = useMemo(() => (position ? { x: position.x, y: position.y, floorId: position.floorId, floorLevel: position.floorLevel } : null), [position]);
+  const askContext = useMemo<VisitorContext>(() => ({ venue: building?.name ?? 'this place', floors, places: askPlaces, content, floorId, here: askHere }),
+    [building?.name, floors, askPlaces, content, floorId, askHere]);
+  /** What an answer does on the map: show the place, start directions, change floor, open an event. */
+  const onAsk = (a: VisitorAction) => {
+    if (a.op === 'show') selectPlace(a.placeId);
+    else if (a.op === 'route') {
+      selectPlace(a.placeId);
+      if (a.fromId) setFromId(a.fromId);
+      setNavigating(true);
+      if (!isDesktop) setAsking(false);   // the directions panel needs the room
+    } else if (a.op === 'floor') setFloorId(a.floorId);
+    else if (a.op === 'content') { setOpenContent(a.contentId); setSnap('half'); if (!isDesktop) setAsking(false); }
+  };
   /** "Use my location": GPS (outdoors) plus steps and compass (everywhere). Runs from a tap — iPhones ask permission. */
   const startTracking = async () => {
     if (anchor) gps.start();
@@ -506,6 +525,12 @@ export default function ViewMap() {
             </button>
           ))}
         </div>
+        {isDesktop && (
+          <button onClick={() => setAsking(a => !a)} aria-pressed={asking}
+            className={cn('pointer-events-auto flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold', glass, asking && 'ring-2 ring-primary')}>
+            <Sparkles className="h-3.5 w-3.5 text-primary" /> Ask
+          </button>
+        )}
         {multiFloor && mode !== 'outdoor' && (
           <div className={cn('pointer-events-auto flex flex-col rounded-2xl p-1', glass)} role="group" aria-label="Floor">
             {[...floors].reverse().map(f => {
@@ -555,16 +580,25 @@ export default function ViewMap() {
         <BottomSheet snap={snap} onSnap={setSnap} header={panelHeader} bottomOffset={60}>{panelBody}</BottomSheet>
       )}
 
+      {/* ── Ask the guide ── */}
+      <AnimatePresence>
+        {asking && building && (
+          <VisitorAssistant context={askContext} onAction={onAsk} onClose={() => setAsking(false)}
+            className={isDesktop ? 'fixed bottom-4 right-4 z-40 h-[min(560px,75vh)] w-[380px]' : 'fixed inset-x-2 bottom-[68px] z-40 h-[58vh]'} />
+        )}
+      </AnimatePresence>
+
       {/* ── Phone navigation ── */}
       {!isDesktop && (
-        <nav className="fixed inset-x-0 bottom-0 z-40 grid h-[60px] grid-cols-4 border-t border-border/60 bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl" aria-label="Visitor">
+        <nav className="fixed inset-x-0 bottom-0 z-40 grid h-[60px] grid-cols-5 border-t border-border/60 bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl" aria-label="Visitor">
           {([
             ['home', HomeIcon, 'Home', () => navigate(`/visit?v=${buildingId}`)],
             ['map', MapIcon, 'Map', () => { selectPlace(null); endGuidance(); setSnap('peek'); }],
             ['explore', Compass, 'Explore', () => { selectPlace(null); setQuery(''); setTab('explore'); setSnap('half'); }],
             ['events', CalendarDays, 'Events', () => { selectPlace(null); setQuery(''); setCollectionId('events'); setSnap('half'); }],
+            ['ask', Sparkles, 'Ask', () => setAsking(a => !a)],
           ] as const).map(([id, Icon, label, go]) => {
-            const active = id === 'map' ? snap === 'peek' : id === 'explore' ? tab === 'explore' && snap !== 'peek' && !collection : id === 'events' ? collectionId === 'events' : false;
+            const active = id === 'ask' ? asking : id === 'map' ? snap === 'peek' : id === 'explore' ? tab === 'explore' && snap !== 'peek' && !collection : id === 'events' ? collectionId === 'events' : false;
             return (
               <button key={id} onClick={go} className={cn('relative flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition-colors', active ? 'text-primary' : 'text-muted-foreground')}>
                 {active && <motion.span layoutId="nav-dot" className="absolute top-1 h-1 w-6 rounded-full bg-primary" />}

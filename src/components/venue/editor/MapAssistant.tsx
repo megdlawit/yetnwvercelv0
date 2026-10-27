@@ -3,18 +3,19 @@
 // everything") and the map does it — with a preview for bigger changes, an
 // Undo after every one, and the map health always in view.
 //
-// Understanding is local first (src/lib/assistant/intent.ts); anything it
-// doesn't recognise goes to the free local assistant (ml/ service, a local model)
-// when it runs, else to /api/map-assistant (Claude) when that's set up.
+// Understanding is all our own and runs here in the editor — no outside service:
+// the phrase parser (src/lib/assistant/intent.ts), small talk and product
+// knowledge; a message it doesn't recognise is read again with its typos corrected
+// against the assistant's words and the map's names (language.ts), and failing
+// that it offers the closest things it can do ("Did you mean…?").
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Check, ChevronDown, ChevronUp, Loader2, Sparkles, Undo2, X, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
-import { guardModelActions, parseIntent, type MapAction } from '@/lib/assistant/intent';
+import { parseIntent, type MapAction } from '@/lib/assistant/intent';
 import { smallTalk, smallTalkKind } from '@/lib/assistant/smalltalk';
 import { knowledge } from '@/lib/assistant/knowledge';
-import { labelerUrl } from '@/lib/cad/layerLabels/client';
+import { correct, matchNames, vocabulary } from '@/lib/assistant/language';
 import { brief, plan, suggestions, type Chip, type HealthItem, type Highlight, type MapState, type Plan, type Thing } from '@/lib/assistant/engine';
 
 type BaseState = Omit<MapState, 'last' | 'lastChange'>;
@@ -55,15 +56,14 @@ const HINTS = ['Connect Room 1 and Room 2', 'Add a 6 by 4 m meeting room here', 
 /** Edits that only change what's on screen (or can't be taken back from here). */
 const NOT_UNDOABLE = new Set(['undo', 'redo', 'show', 'view', 'fit', 'floor', 'setting', 'tool', 'select_all', 'select_none', 'open', 'publish']);
 const nextFrame = () => new Promise<void>(r => requestAnimationFrame(() => setTimeout(r, 30)));
-/** How long to wait for the AI (the free local model is slow on a laptop CPU). */
-const AI_TIMEOUT_MS = 120_000;
-
-/** fetch with a time limit. */
-async function fetchWithin(url: string, init: RequestInit, ms: number): Promise<Response> {
-  const ctl = new AbortController();
-  const t = window.setTimeout(() => ctl.abort(), ms);
-  try { return await fetch(url, { ...init, signal: ctl.signal }); } finally { window.clearTimeout(t); }
-}
+/** What the editor understands, as words: typos are corrected towards these and the map's names. */
+const EDITOR_WORDS = `connect disconnect join link unlink block unblock walkable walk path paths add put place create make draw move shift drag rename call
+  name remove delete erase undo redo show hide find where fix everything check health problems accessible wheelchair step free rotate turn resize
+  bigger smaller wider narrower longer shorter duplicate copy select all none floor floors upstairs downstairs room rooms restroom toilet elevator
+  lift stairs entrance exit door doors window windows wall walls corridor hallway cafe kitchen office meeting reception lobby height high tall
+  metres meters degrees left right up down near next beside between behind publish open save view zoom fit type kind called named here this it`;
+/** Things to say, for "Did you mean…?" when a message isn't understood. */
+const KNOWN_REQUESTS = [...HINTS, 'Undo', 'Redo', 'Check the map', 'Show the 2nd floor', 'Add a restroom here', 'Remove this', 'Rename this to ', 'Connect the floors with the stairs', 'Make this wheelchair accessible', 'Publish'];
 
 export default function MapAssistant(props: MapAssistantProps) {
   const { getState, apply, onHighlight, undo, health, selectedName, greeting } = props;
@@ -75,8 +75,6 @@ export default function MapAssistant(props: MapAssistantProps) {
   const [showDetails, setShowDetails] = useState<number | null>(null);
   const [earlier, setEarlier] = useState(false);
   const [hint, setHint] = useState(0);
-  // Waiting on the AI (not the instant local understanding): say so, it can take a while.
-  const [thinking, setThinking] = useState(false);
   const last = useRef<Thing | null>(null);
   const lastChange = useRef<MapState['lastChange']>(null);
   const queue = useRef<MapAction[]>([]);
@@ -177,34 +175,6 @@ export default function MapAssistant(props: MapAssistantProps) {
     } finally { setBusy(false); }
   };
 
-  const askClaude = async (said: string): Promise<{ actions: MapAction[]; reply: string | null } | null> => {
-    const s = getState();
-    try {
-      const { data } = await supabase.auth.getSession();
-      const names = s ? [...new Set(s.rows.rooms.filter(r => r.floor_id === s.floorId).map(r => r.name).concat(s.rows.nodes.filter(n => n.floor_id === s.floorId && !n.is_hallway).map(n => n.name)).filter((x): x is string => !!x))] : [];
-      // The whole picture (kinds, sizes, positions, paths, health) and the last few turns, so follow-ups make sense.
-      let mapBrief = '';
-      try { const full = state(); if (full) mapBrief = brief(full); } catch (err) { console.error('map brief failed', err); }
-      const history = msgs.slice(-10).map(m => ({ who: m.who, text: m.text.slice(0, 400) }));
-      const init = {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {}) },
-        body: JSON.stringify({ text: said, history, context: { floor: props.floorName, floors: props.floors, places: names, selection: selectedName, last: last.current?.name ?? null, brief: mapBrief } }),
-      };
-      // The free local assistant first (a local model; same request and answer), then Claude if it isn't running.
-      const local = labelerUrl();
-      if (local) {
-        try {
-          const r = await fetchWithin(`${local}/assistant`, init, AI_TIMEOUT_MS);
-          if (r.ok) return await r.json();
-        } catch { /* not running or too slow: try the Claude route */ }
-      }
-      const r = await fetchWithin('/api/map-assistant', init, AI_TIMEOUT_MS);
-      if (!r.ok) return null;
-      return await r.json();
-    } catch { return null; }
-  };
-
   const submit = async (raw?: string) => {
     const said = (raw ?? text).trim();
     if (!said || busy) return;
@@ -221,31 +191,33 @@ export default function MapAssistant(props: MapAssistantProps) {
     }
     if (pending) { setMsgs(p => p.map(x => (x.preview ? { ...x, preview: undefined } : x))); onHighlight(null); queue.current = []; }
     say({ who: 'me', text: said });
-    // Greetings, thanks, "what can you do?": answered right away, never sent to the AI.
-    const chat = smallTalk(said, state());
+    // Typos corrected against what the assistant knows and the map's names: tried when the words as typed aren't understood.
+    const s0 = state();
+    const names = s0 ? [...s0.rows.rooms.map(r => r.name), ...s0.rows.nodes.map(n => n.name), ...s0.rows.floors.map(f => f.name)].filter((x): x is string => !!x) : [];
+    const fixed = correct(said, vocabulary(EDITOR_WORDS, HINTS, names));
+    const alt = fixed.changed ? fixed.text : null;
+    // Greetings, thanks, "what can you do?": answered right away.
+    const chat = smallTalk(said, s0) ?? (alt ? smallTalk(alt, s0) : null);
     if (chat) { say({ who: 'map', text: chat.reply, tone: 'info', chips: chat.chips.length ? chat.chips : undefined }); return; }
     // "What's a room?", "how do I publish?": what Yet New is and does, answered from what it really does.
-    const known = knowledge(said);
+    const known = knowledge(said) ?? (alt ? knowledge(alt) : null);
     if (known) { say({ who: 'map', text: known.reply, tone: 'info', chips: known.chips.length ? known.chips : undefined }); return; }
     setBusy(true);
     try {
-      let actions = parseIntent(said);
+      // The corrected reading first: corrections only move unknown words to the map's names and the
+      // assistant's own words, and "conect rom 1…" parses as typed but names no place.
+      const fromAlt = alt ? parseIntent(alt) : null;
+      const actions = fromAlt ?? parseIntent(said);
+      if (fromAlt) say({ who: 'map', text: `I read that as “${alt}”.`, tone: 'info' });
       if (!actions) {
-        setThinking(true);
-        const ai = await askClaude(said).finally(() => setThinking(false));
-        // Never the opposite of what was asked ("don't connect…" answered with a connect).
-        const guarded = ai?.actions?.length ? guardModelActions(said, ai.actions) : null;
-        if (guarded && !guarded.actions.length) { say({ who: 'map', text: guarded.reply!, tone: 'info' }); return; }
-        if (ai?.actions?.length) {
-          actions = ai.actions;
-          // An answer that comes with actions ("There are 3 — here's the nearest") is said first.
-          if (ai.reply) say({ who: 'map', text: ai.reply, tone: 'info' });
-        }
-        else {
-          const s = state();
-          say({ who: 'map', text: ai?.reply ?? "I didn't quite get that. You can say things like \"Connect Room 1 and Room 2\", \"Add a restroom here\" or \"Fix everything\".", tone: 'info', chips: s ? suggestions(s) : undefined });
-          return;
-        }
+        // Not understood: the closest things it can do, to tap.
+        const close = matchNames(alt ?? said, KNOWN_REQUESTS, x => x).filter(x => x.score >= 45).slice(0, 3).map(x => x.item);
+        say({
+          who: 'map', tone: 'info',
+          text: close.length ? 'I’m not sure what you mean — did you mean one of these?' : "I didn't quite get that. You can say things like \"Connect Room 1 and Room 2\", \"Add a restroom here\" or \"Fix everything\".",
+          chips: close.length ? close.map(c => ({ label: c.trim(), say: c })) : s0 ? suggestions(s0) : undefined,
+        });
+        return;
       }
       await run(actions);
     } finally { setBusy(false); }
@@ -312,7 +284,7 @@ export default function MapAssistant(props: MapAssistantProps) {
             {busy && !pending && (
               <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {thinking ? 'Thinking about that — this can take up to a minute…' : 'Working on it…'}
+                Working on it…
               </div>
             )}
           </div>

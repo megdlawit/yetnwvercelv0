@@ -17,9 +17,11 @@
 // If CLOUDCONVERT_API_KEY is set, CloudConvert is the fallback for the rare
 // DWG that LibreDWG can't read.
 //
-// Vercel limits a request body (and the answer) to about 4.5 MB, so on the
-// website bigger DWGs come back 413 and the client asks for a DXF instead.
-// Run locally (`vite dev`), any DWG up to MAX_DWG_BYTES converts here.
+// Vercel limits a request body (and the answer) to about 4.5 MB, and a DWG's DXF is
+// often ten times the DWG. So the editor sends { storagePath }: the DWG it put in the
+// private cad-uploads bucket (migration 20261027090000); the DXF goes back there
+// gzipped (viaStorage below). Raw bytes in the request still work, for small drawings
+// and for `vite dev`, where any DWG up to MAX_DWG_BYTES converts.
 
 import type { IncomingMessage } from 'http';
 import { createRequire } from 'module';
@@ -81,6 +83,43 @@ async function readJsonBody(req: any): Promise<any> {
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
+/**
+ * A DWG too big for a request (Vercel: ~4.5 MB each way) converted through storage: the editor
+ * uploaded it to cad-uploads/<user>/<id>.dwg; with the uploader's own session (so storage's
+ * rules apply) it's read, converted here, and the DXF written back as <id>.dxf.gz — a 95 MB
+ * drawing is ~10 MB gzipped — for the editor to download. The DWG is removed either way.
+ */
+interface Reply { statusCode: number; setHeader(name: string, value: string): void; end(body: string): void }
+async function viaStorage(req: { headers?: Record<string, unknown> }, res: Reply, path: string) {
+  const send = (status: number, body: unknown) => { res.statusCode = status; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(body)); };
+  const token = String(req.headers?.authorization || '').replace(/^Bearer\s+/i, '');
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const anon = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  if (!token) return send(401, { error: 'Sign in first.' });
+  if (!url || !anon) return send(500, { error: 'The converter is missing SUPABASE_URL / SUPABASE_ANON_KEY.' });
+  if (!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.dwg$/i.test(path)) return send(400, { error: 'Not an upload path.' });
+
+  const { createClient } = await import('@supabase/supabase-js');
+  const storage = createClient(url, anon, { auth: { persistSession: false }, global: { headers: { Authorization: `Bearer ${token}` } } }).storage.from('cad-uploads');
+  const dxfPath = path.replace(/\.dwg$/i, '.dxf.gz');
+  try {
+    const { data, error } = await storage.download(path);
+    if (error || !data) return send(404, { error: `The uploaded drawing couldn't be read: ${error?.message ?? 'not found'}` });
+    const buf = Buffer.from(await data.arrayBuffer());
+    if (buf.byteLength > MAX_DWG_BYTES) return send(413, { error: `This DWG is too large (max ${MAX_DWG_BYTES / 1024 / 1024} MB).`, hint: 'In AutoCAD choose File → Save As → AutoCAD DXF and upload the DXF instead.' });
+    let dxfText: string;
+    try { dxfText = await convertLocally(buf); } catch {
+      return send(422, { error: 'This DWG file could not be read.', hint: 'It may be damaged or from a very new AutoCAD release. In AutoCAD choose File → Save As → AutoCAD DXF and upload the DXF instead.' });
+    }
+    const { gzipSync } = await import('zlib');
+    const up = await storage.upload(dxfPath, gzipSync(Buffer.from(dxfText, 'utf8')), { contentType: 'application/gzip', upsert: true });
+    if (up.error) return send(500, { error: `The converted drawing couldn't be stored: ${up.error.message}` });
+    return send(200, { dxfPath, converter: 'libredwg' });
+  } finally {
+    await storage.remove([path]).catch(() => {});
+  }
+}
+
 const CLOUDCONVERT_API = 'https://api.cloudconvert.com/v2';
 const MAX_DWG_BYTES = 60 * 1024 * 1024;
 const POLL_INTERVAL_MS = 1500;
@@ -108,6 +147,8 @@ export default async function handler(req: any, res: any) {
     let fileName = decodeURIComponent(String(req.headers?.['x-file-name'] || 'upload.dwg'));
     if (!buf) {
       const body = await readJsonBody(req);
+      // A big DWG comes through storage (cad-uploads): read it, convert, write the DXF back gzipped.
+      if (typeof body?.storagePath === 'string') { await viaStorage(req, res, body.storagePath); return; }
       if (!body?.dwgBase64 || typeof body.dwgBase64 !== 'string') {
         res.statusCode = 400; res.end(JSON.stringify({ error: 'Send the DWG file (application/octet-stream), or JSON { dwgBase64 }.' })); return;
       }

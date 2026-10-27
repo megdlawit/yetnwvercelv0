@@ -93,6 +93,11 @@ def main() -> int:
     parser.add_argument("--generic-names", type=int, default=0,
                         help="Copies of each training layer under a meaningless name (Layer 3, 0, New Layer) — teaches judging by "
                              "content, as uploads from non-architects need. Experimental: compare with evaluate.py.")
+    parser.add_argument("--ignore-ratio", type=float, default=None,
+                        help="Keep at most this many 'ignore' training layers per other layer (e.g. 1.0: as many as all others). "
+                             "Round 1 learned to answer 'ignore'. Validation is never changed.")
+    parser.add_argument("--min-per-label", type=int, default=0,
+                        help="Top up each rare label to this many training examples with copies under other names (same content).")
     parser.add_argument("--synthetic-dry-run", action="store_true", help="Allow the SYNTHETIC fixture (pipeline test only).")
     parser.add_argument("--gold", action="store_true",
                         help="Rows from scripts/gold_rows.py (drawings shared with training permission, not customer venues): "
@@ -121,20 +126,20 @@ def main() -> int:
     try:
         ds = build_dataset(rows, registry=load_registry(registry_path), seed=args.seed,
                            augment_copies=args.augment, generic_name_copies=args.generic_names,
-                           allow_synthetic=args.synthetic_dry_run)
+                           allow_synthetic=args.synthetic_dry_run, ignore_ratio=args.ignore_ratio, min_per_label=args.min_per_label)
     except DatasetError as err:
         print(f"Not exported: {err}", file=sys.stderr)
         return 2
-    manifest = write_dataset(ds, out)
+    manifest = write_dataset(ds, out, balance={"ignore_ratio": args.ignore_ratio, "min_per_label": args.min_per_label})
     save_registry(registry_path, ds.registry)  # only after a successful export; it only grows
 
     print(f"{'SYNTHETIC DRY RUN — never train on this. ' if ds.synthetic else ''}Wrote {out}")
     print(f"venues: {len(ds.train_venues)} train, {len(ds.val_venues)} validation (whole venues, frozen in {registry_path.name})")
     print(f"examples: {manifest['examples']['train']} train ({manifest['examples']['train_augmented']} augmented), {manifest['examples']['val']} validation")
     print(f"text samples: {'included' if INCLUDE_TEXT_SAMPLES else 'left out'}")
-    print(f"\n{'label':<12} {'train':>6} {'val':>5}")
+    print(f"\n{'label':<12} {'train':>6} {'+copies':>8} {'val':>5}")
     for label, n in manifest["label_counts"]["train"].items():
-        print(f"{label:<12} {n:>6} {manifest['label_counts']['val'][label]:>5}")
+        print(f"{label:<12} {n:>6} {manifest['label_counts']['train_all'][label]:>8} {manifest['label_counts']['val'][label]:>5}")
     for reason, n in ds.dropped.items():
         print(f"dropped {n}: {reason}")
     for w in ds.warnings:

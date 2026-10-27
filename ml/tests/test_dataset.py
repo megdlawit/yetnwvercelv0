@@ -4,6 +4,7 @@ augmentation, example bank, counts."""
 from __future__ import annotations
 
 import json
+from collections import Counter
 import re
 from pathlib import Path
 from typing import Any
@@ -223,3 +224,30 @@ def test_generic_name_copies_keep_content_and_label_and_stay_in_training() -> No
         assert (c.building_id, c.label, tuple(c.summary["entity_counts"].items())) in originals
     assert not any(e.augmented for e in ds.val)
     assert build_dataset(venues(5), augment_copies=0, generic_name_copies=2).train[-1].layer_name == copies[-1].layer_name  # deterministic
+
+
+# ── Rebalancing (round 2) ────────────────────────────────────────────────────
+
+def test_ignore_is_cut_and_rare_labels_topped_up_in_training_only() -> None:
+    layers = tuple((f"JUNK-{i}", "ignore") for i in range(12)) + (("A-WALL", "wall"), ("A-LIFT", "elevator"))
+    plain = build_dataset(venues(5, layers), augment_copies=0)
+    ds = build_dataset(venues(5, layers), augment_copies=0, ignore_ratio=1.0, min_per_label=10)
+    real = [e for e in ds.train if not e.augmented]
+    # ignore cut to as many as all other layers together (2 per venue)
+    assert sum(e.label == "ignore" for e in real) == sum(e.label != "ignore" for e in real)
+    # every other label topped up to 10, with copies under other names and the same content
+    counts = Counter(e.label for e in ds.train)
+    assert counts["elevator"] >= 10 and counts["wall"] >= 10
+    lift = next(e for e in real if e.label == "elevator")
+    copies = [e for e in ds.train if e.augmented and e.label == "elevator"]
+    assert all(c.summary["entity_counts"] == lift.summary["entity_counts"] and c.summary["name"] == c.layer_name for c in copies)
+    assert len({c.layer_name for c in copies}) > 1
+    # validation is never touched
+    assert [(e.layer_name, e.label) for e in ds.val] == [(e.layer_name, e.label) for e in plain.val]
+
+
+def test_rebalancing_is_the_same_every_export() -> None:
+    layers = tuple((f"JUNK-{i}", "ignore") for i in range(12)) + (("A-WALL", "wall"),)
+    a = build_dataset(venues(5, layers), ignore_ratio=1.0, min_per_label=6)
+    b = build_dataset(venues(5, layers), ignore_ratio=1.0, min_per_label=6)
+    assert [e.layer_name for e in a.train] == [e.layer_name for e in b.train]

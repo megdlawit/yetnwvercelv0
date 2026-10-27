@@ -210,8 +210,37 @@ def augment(examples: list[Example], copies: int, generic_copies: int = 0) -> li
     return extra
 
 
+def cut_ignore(real: list[Example], ratio: float) -> list[Example]:
+    """At most `ratio` times as many "ignore" layers as all other layers together; which ones by
+    a fixed hash, so every export keeps the same. (Round 1 learned to answer "ignore": 335 of
+    534 training layers were.)"""
+    others = sum(1 for e in real if e.label != "ignore")
+    order = lambda e: hashlib.sha256(f"{e.building_id}:{e.layer_name}".encode()).hexdigest()  # noqa: E731
+    keep = {id(e) for e in sorted((e for e in real if e.label == "ignore"), key=order)[:max(1, round(ratio * others))]}
+    return [e for e in real if e.label != "ignore" or id(e) in keep]
+
+
+def top_up(train: list[Example], min_per_label: int) -> list[Example]:
+    """Copies of a rare label's real layers under other names — generic ones and spelling
+    variants, same content — until it has `min_per_label` examples ("ignore" never)."""
+    counts = Counter(e.label for e in train)
+    real: dict[str, list[Example]] = {}
+    for e in train:
+        if not e.augmented and e.label != "ignore":
+            real.setdefault(e.label, []).append(e)
+    extra: list[Example] = []
+    for label, examples in sorted(real.items()):
+        for i in range(max(0, min_per_label - counts[label])):
+            ex, k = examples[i % len(examples)], i // len(examples)
+            variants = name_variants(ex.layer_name)
+            name = variants[k // 2] if k % 2 and k // 2 < len(variants) else generic_name(ex, 100 + k)
+            extra.append(Example(ex.building_id, name, ex.label, {**ex.summary, "name": name}, ex.file_name, ex.created_at, augmented=True))
+    return extra
+
+
 def build_dataset(rows: list[dict[str, Any]], *, registry: dict[str, Any] | None = None, seed: str = "yetnew",
-                  augment_copies: int = 1, generic_name_copies: int = 0, allow_synthetic: bool = False) -> Dataset:
+                  augment_copies: int = 1, generic_name_copies: int = 0, allow_synthetic: bool = False,
+                  ignore_ratio: float | None = None, min_per_label: int = 0) -> Dataset:
     synthetic = any(is_synthetic(r) for r in rows)
     # Customer venues need the legal review; gold rows (drawings shared with permission) don't.
     customer = [r for r in rows if r.get("confirmed_via") != GOLD_CONFIRMATION]
@@ -223,7 +252,12 @@ def build_dataset(rows: list[dict[str, Any]], *, registry: dict[str, Any] | None
     train_v, val_v, new_registry = assign_splits(venues, registry or empty_registry(), seed=seed)
     train = [e for e in examples if e.building_id in train_v]
     val = [e for e in examples if e.building_id in val_v]
-    train += augment(train, augment_copies, generic_name_copies)  # training set only
+    # Training set only: fewer "ignore" layers, spelling copies, then rare labels topped up.
+    if ignore_ratio is not None:
+        train = cut_ignore(train, ignore_ratio)
+    train += augment(train, augment_copies, generic_name_copies)
+    if min_per_label:
+        train += top_up(train, min_per_label)
 
     warnings: list[str] = []
     real = [e for e in train if not e.augmented] + val
@@ -243,7 +277,7 @@ def label_counts(examples: list[Example]) -> dict[str, int]:
     return {label: c.get(label, 0) for label in LABELS if label != "unknown"}
 
 
-def write_dataset(ds: Dataset, out_dir: Path) -> dict[str, Any]:
+def write_dataset(ds: Dataset, out_dir: Path, balance: dict[str, Any] | None = None) -> dict[str, Any]:
     """train.jsonl / val.jsonl (chat rows), val_layers.jsonl (for evaluate.py),
     example_bank.jsonl (retrieval: training venues only), manifest.json."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -269,7 +303,8 @@ def write_dataset(ds: Dataset, out_dir: Path) -> dict[str, Any]:
         "include_text_samples": INCLUDE_TEXT_SAMPLES,
         "venues": {"train": ds.train_venues, "val": ds.val_venues},
         "examples": {"train": len(ds.train), "train_augmented": sum(e.augmented for e in ds.train), "val": len(ds.val)},
-        "label_counts": {"train": label_counts([e for e in ds.train if not e.augmented]), "val": label_counts(ds.val)},
+        "label_counts": {"train": label_counts([e for e in ds.train if not e.augmented]), "train_all": label_counts(ds.train), "val": label_counts(ds.val)},
+        "balance": balance or {},
         "dropped": dict(ds.dropped),
         "warnings": ds.warnings,
     }

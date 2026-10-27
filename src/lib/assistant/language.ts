@@ -19,11 +19,11 @@ export function normalize(text: string): string {
   s = s.replace(/[^\p{L}\p{N}'\s-]+/gu, ' ').replace(/(^|\s)'+|'+(?=\s|$)/g, ' ');
   // "room12" → "room 12", "2nd" stays: letters then digits are split only after a word of 3+ letters.
   s = s.replace(/\b([a-z]{3,})(\d+)\b/g, '$1 $2');
-  return s.split(/\s+/).filter(w => w && !FILLER_WORDS.has(w)).map(w => SHORTHANDS[w] ?? w).join(' ').replace(/\s+/g, ' ').trim();
+  return s.split(/\s+/).filter(w => w && !FILLER_WORDS.has(w)).map(w => SPELLED_OUT[w] ?? w).join(' ').replace(/\s+/g, ' ').trim();
 }
 
-/** Chat noise that carries no meaning: "lol", "haha", "bruh". */
-const FILLER_WORDS = new Set(['lol', 'lmao', 'lmfao', 'rofl', 'haha', 'hahah', 'hahaha', 'hehe', 'xd', 'bruh', 'bro', 'dude', 'mate', 'fam',
+/** Chat noise that carries no meaning: "lol", "haha", "bruh" (and the word bank's). */
+const FILLER_WORDS = new Set([...CHAT_FILLER.filter(w => !w.includes(' ')), 'lol', 'lmao', 'lmfao', 'rofl', 'haha', 'hahah', 'hahaha', 'hehe', 'xd', 'bruh', 'bro', 'dude', 'mate', 'fam',
   'buddy', 'yall', 'guys', 'pal', 'smh', 'tbh', 'imo', 'ngl', 'fr', 'ong', 'lowkey', 'highkey', 'literally', 'basically']);
 
 /**
@@ -50,9 +50,9 @@ const SLANG: [RegExp, string][] = [
   [/^(?:make a way|make a path|let (?:people|folks|visitors) walk|let me walk) (?:from|between) (.+?) (?:to|and) (.+)$/, 'connect $1 and $2'],
   // move
   [/^(?:nudge|scoot|budge|inch) (.+?) (?:over )?(?:to the )?(left|right|up|down)$/, 'move $1 a little $2'],
-  [/^(?:shove|slide|bump|shift|drag|push|yank|pull) (.+?) (?:over )?(?:to the )?(left|right|up|down)$/, 'move $1 $2'],
-  [/^(?:shove|slide|shift|drag|push|plonk|stick|park) (.+?) (?:over )?(?:next to|near|beside|by) (.+)$/, 'move $1 next to $2'],
-  [/^(?:shove|slide|shift|drag|plonk|stick|park) (.+?) (?:over )?(here|there)$/, 'move $1 here'],
+  [/^(?:shove|slide|bump|shift|drag|push|yank|pull) (?!(?:in |on |down )?(?:a|an|another|some|one more|a new) )(.+?) (?:over )?(?:to the )?(left|right|up|down)$/, 'move $1 $2'],
+  [/^(?:shove|slide|shift|drag|push|plonk|stick|park) (?!(?:in |on |down )?(?:a|an|another|some|one more|a new) )(.+?) (?:over )?(?:next to|near|beside|by) (.+)$/, 'move $1 next to $2'],
+  [/^(?:shove|slide|shift|drag|plonk|stick|park) (?!(?:in |on |down )?(?:a|an|another|some|one more|a new) )(.+?) (?:over )?(here|there)$/, 'move $1 here'],
   // add
   [/^(?:chuck|pop|slap|throw|stick|plonk|drop|whack|bung|toss) (a|an|another|some) (.+)$/, 'add $1 $2'],
   // resize / rotate
@@ -72,16 +72,45 @@ const SLANG: [RegExp, string][] = [
   [/^let me see (.+)$/, 'show $1'],
 ];
 
+/** Verbs the phrase parser already understands as they are: never rewritten (no "I read that as" for them). */
+const UNDERSTOOD = new Set(['delete', 'remove', 'erase', 'get rid of', 'take away', 'add', 'put', 'place', 'insert', 'move', 'connect', 'link',
+  'join', 'join up', 'disconnect', 'unlink', 'rename', 'call', 'name', 'rotate', 'turn', 'spin', 'undo', 'revert', 'go back', 'never mind',
+  'redo', 'check', 'review', 'fix', 'repair', 'publish', 'go live', 'show', 'find', 'where is', 'locate', 'select', 'make']);
+const alt = (words: string[]) => words.filter(w => !UNDERSTOOD.has(w)).sort((a, b) => b.length - a.length).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+const v = (k: keyof typeof VERBS) => alt(VERBS[k]);
+
+/** The word bank's verbs as requests, each in the shape its action needs. */
+const VERB_RULES: [RegExp, string][] = [
+  [new RegExp(`^(?:${v('undo')})$`), 'undo'],
+  [new RegExp(`^(?:${v('redo')})$`), 'redo'],
+  [new RegExp(`^(?:${v('check')})(?: the| my)?(?: map| plan| floor| it| everything| stuff| things)?$`), 'check the map'],
+  [new RegExp(`^(?:${v('fix')})(?: up)?(?: the| my)?(?: map| plan| floor| it| everything| stuff| things| it all| all)?$`), 'fix everything'],
+  [new RegExp(`^(?:${v('publish')})(?: it| the map| my map| the venue| now)?$`), 'publish'],
+  [new RegExp(`^(?:${v('remove')}) (.+)$`), 'remove $1'],
+  [new RegExp(`^(?:${v('add')}) (a|an|another|some|one more|a new) (.+)$`), 'add $1 $2'],
+  [new RegExp(`^(?:${v('move')}) (.+?) (?:over )?(?:to the )?(left|right|up|down|here|there)$`), 'move $1 $2'],
+  [new RegExp(`^(?:${v('move')}) (.+?) (?:over )?(next to|near|beside|by|closer to) (.+)$`), 'move $1 $2 $3'],
+  [new RegExp(`^(?:${v('connect')}) (.+?) (?:up )?(?:and|with|to|into) (.+)$`), 'connect $1 and $2'],
+  [new RegExp(`^(?:${v('disconnect')}) (.+?) (?:and|from) (.+)$`), 'disconnect $1 and $2'],
+  [new RegExp(`^(?:${v('rename')}) (.+?) (?:to|as) (.+)$`), 'rename $1 to $2'],
+  [new RegExp(`^(?:${v('rotate')}) (.+?) (?:by )?(\\d+)(?: degrees| deg)?$`), 'rotate $1 $2 degrees'],
+  [new RegExp(`^(?:${v('bigger')}) (.+)$`), 'make $1 bigger'],
+  [new RegExp(`^(?:${v('smaller')}) (.+)$`), 'make $1 smaller'],
+  [new RegExp(`^(?:${v('show')}) (.+)$`), 'show $1'],
+];
+
 /** The request with its slang said plainly ("nuke the bench" → "remove the bench"); `slang` when anything changed. */
 export function plainSlang(normalized: string): { text: string; slang: boolean } {
   // "yo hook up…", "ok so just nuke it please": the request is what's between the hellos and the pleases.
   const core = normalized
     .replace(/^((yo|hey|hi|hello|hiya|ok|okay|alright|so|um|uh|well|please|can you|could you|would you|just|go ahead and|now)\s+)+/, '')
     .replace(/(\s+(please|thanks|thank you|now|for me|real quick|quickly))+$/, '');
-  const hit = SLANG.find(([re]) => re.test(core));
+  const hit = SLANG.find(([re]) => re.test(core)) ?? VERB_RULES.find(([re]) => re.test(core));
   const text = hit ? core.replace(hit[0], hit[1]) : normalized;
   return { text, slang: text !== normalized };
 }
+
+import { CHAT, FILLER as CHAT_FILLER, MISSPELLINGS, OBJECT_WORDS, PLACE_WORDS, VERBS } from './lexicon';
 
 const CONTRACTIONS: [RegExp, string][] = [
   [/\bwhere'?s\b/g, 'where is'], [/\bwhat'?s\b/g, 'what is'], [/\bwho'?s\b/g, 'who is'], [/\bhow'?s\b/g, 'how is'],
@@ -112,8 +141,11 @@ const SHORTHANDS: Record<string, string> = {
   pic: 'picture', nr: 'near', nxt: 'next', fl: 'floor', flr: 'floor', lvl: 'level', rm: 'room', rms: 'rooms', bldg: 'building',
 };
 
-/** Words never "corrected": everyday English that isn't in an assistant's vocabulary. */
-const KEEP = new Set(('a an the is are am was were be been being i you he she it we they me him her us them my your his its our their mine yours ' +
+/** Chat spellings written out (the word bank's, then the shorthands above). Misspellings are corrections: see fixWords. */
+const SPELLED_OUT: Record<string, string> = { ...CHAT, ...SHORTHANDS };
+
+/** Words never "corrected": everyday English that isn't in an assistant's vocabulary, and the word bank's verbs. */
+const KEEP = new Set([...Object.values(VERBS).flat().filter(w => !w.includes(' ')), ...('a an the is are am was were be been being i you he she it we they me him her us them my your his its our their mine yours ' +
   'to of in on at for and or but nor so yet if then than as by with from into onto about over under near far up down out off ' +
   'this that these those there here where when what who whom whose which why how all any some no not none each every both either ' +
   'do does did done doing have has had having can could will would shall should may might must need want like love hate ' +
@@ -125,7 +157,7 @@ const KEEP = new Set(('a an the is are am was were be been being i you he she it
   // slang verbs and words: they mean something (SLANG below), so they're never "corrected" into a command ("chuck" isn't "check")
   'nuke yeet trash ditch kill scrap bin axe toss chuck zap dump wipe hook wire tie patch plug bridge nudge scoot budge inch shove slide bump ' +
   'shift drag push yank pull plonk stick park pop slap throw drop whack bung beef bulk blow pump supersize chunkier fatter thicc smol tinier ' +
-  'teeny skinnier shrink squish squash spin twist swivel flip label tag ship launch oops whoops oopsie sanity tidy sort legit public').split(' '));
+  'teeny skinnier shrink squish squash spin twist swivel flip label tag ship launch oops whoops oopsie sanity tidy sort legit public').split(' ')]);
 
 /** Damerau–Levenshtein distance, giving up (returning max + 1) once it can't be within `max`. */
 export function editDistance(a: string, b: string, max = Infinity): number {
@@ -151,6 +183,9 @@ export function editDistance(a: string, b: string, max = Infinity): number {
 /** How many typos a word of this length may carry and still be recognised. */
 const allowed = (len: number) => (len <= 3 ? 0 : len <= 6 ? 1 : 2);
 
+/** Names of rooms, amenities and objects from the word bank: spelling is corrected towards these too. */
+export const PLACE_VOCABULARY: string[] = [...Object.values(PLACE_WORDS).flat(), ...OBJECT_WORDS];
+
 /** A vocabulary to correct towards: the assistant's phrases plus names (each name's words). */
 export function vocabulary(...lists: (Iterable<string> | string)[]): Set<string> {
   const v = new Set<string>();
@@ -172,6 +207,9 @@ export function correct(text: string, vocab: Set<string>): { text: string; chang
 function fixWords(words: string[], vocab: Set<string>): { text: string; changed: boolean } {
   let changed = false;
   const out = words.map(w => {
+    // A known misspelling ("resturant", "elevater") is the word, whatever the vocabulary.
+    const known = MISSPELLINGS[w];
+    if (known && !vocab.has(w)) { changed = true; return known; }
     if (vocab.has(w) || KEEP.has(w) || /\d/.test(w) || !/^[a-z'-]+$/.test(w)) return w;
     // A three-letter word may be a longer word missing a letter ("rom" for "room"), nothing else.
     const short = w.length === 3;

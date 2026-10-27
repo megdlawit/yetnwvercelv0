@@ -42,6 +42,8 @@ export type MapAction =
   | { op: 'list'; what?: string | null }
   | { op: 'describe'; target: string };
 
+import { PLACE_WORDS } from './lexicon';
+
 export type ViewMode = '2d' | '3d' | 'split';
 export type Panel = 'import' | 'add_floor' | 'tour' | 'shortcuts' | 'world_map';
 
@@ -60,7 +62,24 @@ export const ROOM_KINDS: [RegExp, string][] = [
   [/meeting|conference|board ?room|class ?room|seminar/, 'meeting'], [/entrance|entry|exit|gate/, 'entrance'], [/stair/, 'stairs'],
   [/elevator|lift/, 'elevator'], [/utility|storage|store ?room|server|electrical|plant|janitor|kitchen/, 'utility'], [/office|room|space|hall|gallery|shop|cafe|café/, 'office'],
 ];
-export const roomKind = (w: string) => ROOM_KINDS.find(([re]) => re.test(w.toLowerCase()))?.[1] ?? null;
+/**
+ * A room kind from its name: the patterns above, and the word bank's names for rooms when they
+ * say no more than "a room" ("loo" → restroom, "guard house" → utility).
+ */
+export const roomKind = (w: string) => {
+  const byPattern = ROOM_KINDS.find(([re]) => re.test(w.toLowerCase()))?.[1] ?? null;
+  if (byPattern && byPattern !== 'office') return byPattern;
+  return lexiconKind(w) ?? byPattern;
+};
+function lexiconKind(w: string): string | null {
+  const t = ` ${w.toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim()} `;
+  let best: { kind: string; len: number } | null = null;
+  for (const [kind, names] of Object.entries(PLACE_WORDS)) {
+    if (kind === 'office') continue;
+    for (const n of names) if (t.includes(` ${n} `) && (!best || n.length > best.len)) best = { kind, len: n.length };
+  }
+  return best?.kind ?? null;
+}
 
 const num = (s: string | undefined) => (s == null ? null : Number(s.replace(',', '.')));
 const SIZE = String.raw`(\d+(?:[.,]\d+)?)\s*(?:m|meters?|metres?)?\s*(?:x|by|×|\*)\s*(\d+(?:[.,]\d+)?)\s*(?:m|meters?|metres?)?`;

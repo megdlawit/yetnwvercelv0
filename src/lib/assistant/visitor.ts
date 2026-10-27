@@ -11,7 +11,7 @@
 
 import { categoryFromQuery, metresBetween, walkMinutes, VISITOR_CATEGORIES, type Spot, type VisitorCategory } from '@/lib/venue/discover';
 import { openStatus, type OpeningHours } from '@/lib/venue/places';
-import { correct, matchNames, normalize, pick, vary, vocabulary } from './language';
+import { PLACE_VOCABULARY, correct, matchNames, normalize, pick, vary, vocabulary } from './language';
 import { smallTalkKind } from './smalltalk';
 
 export interface VisitorPlace extends Spot {
@@ -107,7 +107,7 @@ export function visitorReply(said: string, ctx: VisitorContext, memory: VisitorM
   const am = /[ሀ-፿]/.test(raw);
   const base = normalize(raw);
   if (!base) return reply(ctx, memory, 'Ask me anything about this place — like “where is the toilet?”', [], examples(ctx));
-  const vocab = vocabulary(OWN_WORDS, ctx.places.map(p => p.name), ctx.floors.map(f => f.name), ctx.content.map(c => c.title));
+  const vocab = vocabulary(OWN_WORDS, PLACE_VOCABULARY, ctx.places.map(p => p.name), ctx.floors.map(f => f.name), ctx.content.map(c => c.title));
   const fixed = correct(base, vocab);
   const t = stripPolite(fixed.text);
   const readAs = fixed.changed ? fixed.text : undefined;

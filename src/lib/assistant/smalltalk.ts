@@ -5,6 +5,7 @@
 // (intent.ts strips the greeting and does it).
 
 import { healthOf, suggestions, type Chip, type MapState } from './engine';
+import { SMALL_TALK } from './lexicon';
 
 export type SmallTalkKind = 'greeting' | 'howareyou' | 'thanks' | 'help' | 'who' | 'maker' | 'bye' | 'yes' | 'no' | 'ack'
   | 'confused' | 'compliment' | 'complaint';
@@ -31,8 +32,17 @@ const normalise = (text: string) => text.toLowerCase().replace(/[!?.,…]+$/g, '
 export function smallTalkKind(text: string): SmallTalkKind | null {
   const t = normalise(text);
   if (!t) return null;
-  return PATTERNS.find(([, re]) => re.test(t))?.[0] ?? null;
+  const hit = PATTERNS.find(([, re]) => re.test(t))?.[0];
+  if (hit) return hit;
+  // The word bank's phrases, also with a friendly word after ("thanks mate", "hey everyone").
+  const core = t.replace(/[,!]/g, '').replace(/\s+(mate|bro|buddy|friend|pal|guys|everyone|all|there|man|dude|again|so much|a lot)$/, '');
+  return BANK.get(t) ?? BANK.get(core) ?? null;
 }
+
+/** Small talk from the word bank: phrase → kind. */
+const BANK = new Map<string, SmallTalkKind>(
+  (Object.entries(SMALL_TALK) as [SmallTalkKind, string[]][]).flatMap(([kind, phrases]) => phrases.map(p => [p, kind] as [string, SmallTalkKind])),
+);
 
 const isAmharic = (text: string) => /[ሀ-፿]/.test(text) || /^(selam|salam|tena yistilign|amesegnalehu|chaw)\b/i.test(text.trim());
 

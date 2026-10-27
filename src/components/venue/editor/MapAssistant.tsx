@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils';
 import { parseIntent, type MapAction } from '@/lib/assistant/intent';
 import { smallTalk, smallTalkKind } from '@/lib/assistant/smalltalk';
 import { knowledge } from '@/lib/assistant/knowledge';
-import { correct, matchNames, vocabulary } from '@/lib/assistant/language';
+import { PLACE_VOCABULARY, correct, matchNames, vocabulary } from '@/lib/assistant/language';
 import { brief, plan, suggestions, type Chip, type HealthItem, type Highlight, type MapState, type Plan, type Thing } from '@/lib/assistant/engine';
 
 type BaseState = Omit<MapState, 'last' | 'lastChange'>;
@@ -194,7 +194,7 @@ export default function MapAssistant(props: MapAssistantProps) {
     // Typos corrected against what the assistant knows and the map's names: tried when the words as typed aren't understood.
     const s0 = state();
     const names = s0 ? [...s0.rows.rooms.map(r => r.name), ...s0.rows.nodes.map(n => n.name), ...s0.rows.floors.map(f => f.name)].filter((x): x is string => !!x) : [];
-    const fixed = correct(said, vocabulary(EDITOR_WORDS, HINTS, names));
+    const fixed = correct(said, vocabulary(EDITOR_WORDS, HINTS, PLACE_VOCABULARY, names));
     const alt = fixed.changed ? fixed.text : null;
     // Greetings, thanks, "what can you do?": answered right away.
     const chat = smallTalk(said, s0) ?? (alt ? smallTalk(alt, s0) : null);

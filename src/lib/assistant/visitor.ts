@@ -62,6 +62,8 @@ export interface VisitorReply {
   memory: VisitorMemory;
   /** The message as understood, when typos were corrected ("where is the toilet"). */
   readAs?: string;
+  /** Not understood at all (counted, without the words, in the venue's Insights). */
+  missed?: true;
 }
 
 // ── Kinds of place people ask for by what they are ──────────────────────────
@@ -544,10 +546,10 @@ function notUnderstood(t: string, ctx: VisitorContext, mem: VisitorMemory): Visi
   if (loose.length) {
     return { text: `I’m not sure what you mean by “${t}”. Did you mean ${loose.map(p => p.name).join(' or ')}?`, actions: [], chips: loose.map(p => p.name), memory: { ...mem, offer: { placeIds: loose.map(p => p.id), then: 'show' } } };
   }
-  return reply(ctx, mem, vary(t, [
+  return { ...reply(ctx, mem, vary(t, [
     `I didn’t catch that. I can find any place in ${ctx.venue} and walk you there — try “where is the toilet?” or “take me to the café”.`,
     `Hmm, I’m not sure what you mean. Ask me where something is, how to get there, or what’s on a floor.`,
-  ]), [], examples(ctx));
+  ]), [], examples(ctx)), missed: true };
 }
 
 function examples(ctx: VisitorContext): string[] {

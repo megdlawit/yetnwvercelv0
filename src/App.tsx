@@ -12,6 +12,7 @@ import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import AdminLayout from "./pages/admin/AdminLayout";
 import AdminTools from "./pages/admin/AdminTools";
+import AdminInsightsPage from "./pages/admin/AdminInsights";
 import { Overview as AdminOverview, Approvals as AdminApprovals, Institutions as AdminInstitutions, Venues as AdminVenues, People as AdminPeople, Activity as AdminActivity } from "./pages/admin/AdminPages";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
@@ -34,6 +35,7 @@ import Media from "./pages/dashboard/Media";
 import EntryPoints from "./pages/dashboard/EntryPoints";
 import VenueSettings from "./pages/dashboard/VenueSettings";
 import Reports from "./pages/dashboard/Reports";
+import Insights from "./pages/dashboard/Insights";
 import Team from "./pages/dashboard/Team";
 import PublishSettings from "./pages/dashboard/PublishSettings";
 import { PlacesPage, AttractionsPage, ContentPage, QrPage } from "./pages/dashboard/ManagerPages";
@@ -90,6 +92,7 @@ const App = () => (
                 <Route path="qr" element={<QrPage />} />
                 <Route path="settings" element={<VenueSettings />} />
                 <Route path="reports" element={<Reports />} />
+                <Route path="insights" element={<Insights />} />
                 <Route path="team" element={<Team />} />
                 <Route path="publish" element={<PublishSettings />} />
               </Route>
@@ -101,6 +104,7 @@ const App = () => (
                 <Route path="venues" element={<AdminVenues />} />
                 <Route path="users" element={<AdminPeople />} />
                 <Route path="activity" element={<AdminActivity />} />
+                <Route path="insights" element={<AdminInsightsPage />} />
                 <Route path="tools/:tool" element={<AdminTools />} />
               </Route>
               <Route path="/admin/buildings" element={<Navigate to="/admin/tools/buildings" replace />} />

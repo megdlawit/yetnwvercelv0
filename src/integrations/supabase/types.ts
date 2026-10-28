@@ -1430,6 +1430,9 @@ export type Database = {
       layer_training_consent_current: { Args: { b: string }; Returns: boolean }
       publish_venue: { Args: { b: string }; Returns: string }
       unpublish_venue: { Args: { b: string }; Returns: undefined }
+      record_visit_events: { Args: { b: string; visit: string; device: string | null; source: string; events: Json }; Returns: number }
+      venue_insights: { Args: { b: string; since: string; until: string }; Returns: Json }
+      admin_insights: { Args: { since: string; until: string }; Returns: Json }
     }
     Enums: {
       [_ in never]: never

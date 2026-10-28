@@ -2,13 +2,13 @@
 
 import {
   LayoutDashboard, Map, PenTool, Square, MapPin, Layers, Landmark, CalendarDays, Route, Accessibility,
-  BookOpen, Compass, Images, Megaphone, DoorOpen, QrCode, Settings2, Users, Globe, Flag,
+  BookOpen, Compass, Images, Megaphone, DoorOpen, QrCode, Settings2, Users, Globe, Flag, BarChart3,
 } from 'lucide-react';
 import type { ContentKind } from '@/lib/venue/places';
 
 export interface NavItem { label: string; icon: typeof Map; to?: string; editor?: true }
 export const NAV: { title: string; items: NavItem[] }[] = [
-  { title: 'Overview', items: [{ label: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' }] },
+  { title: 'Overview', items: [{ label: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' }, { label: 'Insights', icon: BarChart3, to: '/dashboard/insights' }] },
   {
     title: 'My venue', items: [
       { label: 'View Map', icon: Map, to: '/dashboard/map' },
@@ -56,7 +56,7 @@ export const NAV: { title: string; items: NavItem[] }[] = [
  */
 export interface Section { label: string; icon: typeof Map; hint: string; tabs: { label: string; to: string }[] }
 export const SECTIONS: Section[] = [
-  { label: 'Home', icon: LayoutDashboard, hint: 'How your venue is doing', tabs: [{ label: 'Home', to: '/dashboard' }] },
+  { label: 'Home', icon: LayoutDashboard, hint: 'How your venue is doing', tabs: [{ label: 'Home', to: '/dashboard' }, { label: 'Insights', to: '/dashboard/insights' }] },
   { label: 'Map', icon: Map, hint: 'See and edit your map', tabs: [
     { label: 'Your map', to: '/dashboard/map' }, { label: 'Floors', to: '/dashboard/floors' }, { label: 'Areas', to: '/dashboard/areas' },
   ] },

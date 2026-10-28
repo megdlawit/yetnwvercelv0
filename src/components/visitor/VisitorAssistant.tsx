@@ -7,13 +7,15 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowUp, Sparkles, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
-import { visitorReply, type VisitorAction, type VisitorContext, type VisitorMemory } from '@/lib/assistant/visitor';
+import { visitorReply, type VisitorAction, type VisitorContext, type VisitorMemory, type VisitorReply } from '@/lib/assistant/visitor';
 
 interface Msg { id: number; who: 'me' | 'guide'; text: string; chips?: string[]; readAs?: string }
 
-export default function VisitorAssistant({ context, onAction, onClose, className }: {
+export default function VisitorAssistant({ context, onAction, onReply, onClose, className }: {
   context: VisitorContext;
   onAction: (a: VisitorAction) => void;
+  /** Each answer, as it's given (the venue's Insights count whether it was understood). */
+  onReply?: (r: VisitorReply) => void;
   onClose: () => void;
   className?: string;
 }) {
@@ -41,6 +43,7 @@ export default function VisitorAssistant({ context, onAction, onClose, className
     memory.current = r.memory;
     setMsgs(m => [...m.slice(-40), { id: ++ids.current, who: 'me', text: said }, { id: ++ids.current, who: 'guide', text: r.text, chips: r.chips, readAs: r.readAs }]);
     r.actions.forEach(a => onAction(a));
+    onReply?.(r);
   };
 
   const lastId = msgs[msgs.length - 1]?.id;

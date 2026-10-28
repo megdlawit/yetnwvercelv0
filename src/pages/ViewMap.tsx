@@ -28,6 +28,7 @@ import { VISITOR_CATEGORIES, collections as buildCollections, metresBetween, rec
 import { useCurrentOutdoorVenue, useSiblingVenues } from '@/components/venue/useOutdoorVenues';
 import { CATEGORY_COLORS, PX_PER_METER, type Place, type VisitorPosition } from '@/components/visitor/types';
 import { useVisitorVenue, resolveEntry } from '@/components/visitor/useVisitorVenue';
+import { useVisitInsights, visitSource } from '@/components/visitor/useVisitInsights';
 import { useSavedPlaces } from '@/components/visitor/useSavedPlaces';
 import { useGps, useStepCounter, metresTo, STRIDE_M } from '@/components/visitor/usePositioning';
 import { planAngleDeg, snapToPaths, stepForward, type Segment } from '@/lib/venue/pdr';
@@ -277,6 +278,33 @@ export default function ViewMap() {
   const collections = useMemo(() => buildCollections(places, content, { pxPerMeter: PX_PER_METER }), [places, content]);
   const results = useMemo(() => searchVenue(query, places, content), [query, places, content]);
 
+  // ── Insights: anonymous counts for the venue's team (never for previews or "do not track") ──
+  const [arrivedBy] = useState(() => visitSource(params));
+  const insights = useVisitInsights(buildingId, !preview && !previewing, arrivedBy);
+  const counted = useRef<{ qr?: boolean; route?: string | null }>({});
+  useEffect(() => {
+    if (!insights || !qrStart || counted.current.qr) return;
+    counted.current.qr = true;
+    insights.track({ kind: 'qr', place: qrStart, name: placeById.get(qrStart)?.name ?? null });
+  }, [insights, qrStart, placeById]);
+  useEffect(() => {
+    const p = selected ? placeById.get(selected) : null;
+    if (insights && p) insights.track({ kind: 'place', place: p.id, name: p.name });
+  }, [insights, selected]); // eslint-disable-line react-hooks/exhaustive-deps -- once per place opened
+  useEffect(() => {
+    const key = navigating ? selected : null;
+    if (!insights || key === counted.current.route) return;
+    counted.current.route = key;
+    const p = key ? placeById.get(key) : null;
+    if (p) insights.track({ kind: 'route', place: p.id, name: p.name });
+  }, [insights, navigating, selected]); // eslint-disable-line react-hooks/exhaustive-deps -- once per route started
+  // A search counts once it has settled (not every letter).
+  useEffect(() => {
+    if (!insights || query.trim().length < 2) return;
+    const t = setTimeout(() => insights.track({ kind: 'search', query, ok: results.places.length + results.content.length > 0 }), 1500);
+    return () => clearTimeout(t);
+  }, [insights, query]); // eslint-disable-line react-hooks/exhaustive-deps -- results follow the query
+
   const theme = themeOf(building?.theme);
   const themeVars = useMemo<CSSProperties | undefined>(() => {
     if (document.documentElement.classList.contains('dark')) return undefined;
@@ -335,6 +363,8 @@ export default function ViewMap() {
   const stopTracking = () => { gps.stop(); stepCounter.stop(); };
   const startGuidance = async () => {
     setGuiding(true);
+    const target = selected ? placeById.get(selected) : null;
+    insights?.track({ kind: 'guide', place: target?.id ?? null, name: target?.name ?? null });
     stepCounter.reset();
     lastSteps.current = 0;
     seedPdrAt(start);
@@ -350,6 +380,7 @@ export default function ViewMap() {
     setFromId(p.nodeId);
     setFloorId(p.floorId);
     seedPdrAt(p.nodeId);   // you're exactly here now
+    insights?.track({ kind: 'qr', place: p.nodeId, name: placeById.get(p.nodeId)?.name ?? null });
     toast.success(`You're at ${placeById.get(p.nodeId)?.name ?? 'this spot'}`);
   };
   const enterVenue = (id: string) => {
@@ -358,6 +389,7 @@ export default function ViewMap() {
   };
   const share = async (p: Place) => {
     const url = `${location.origin}/venue/${buildingId}?place=${p.id}`;
+    insights?.track({ kind: 'share', place: p.id, name: p.name });
     try {
       if (navigator.share) await navigator.share({ title: p.name, text: `${p.name} at ${building?.name}`, url });
       else { await navigator.clipboard.writeText(url); toast.success('Link copied'); }
@@ -587,6 +619,7 @@ export default function ViewMap() {
       <AnimatePresence>
         {asking && building && (
           <VisitorAssistant context={askContext} onAction={onAsk} onClose={() => setAsking(false)}
+            onReply={r => insights?.track({ kind: 'ask', ok: !r.missed })}
             className={isDesktop ? 'fixed bottom-4 right-4 z-40 h-[min(560px,75vh)] w-[380px]' : 'fixed inset-x-2 bottom-[68px] z-40 h-[58vh]'} />
         )}
       </AnimatePresence>

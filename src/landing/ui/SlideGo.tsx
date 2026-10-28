@@ -32,7 +32,7 @@ export function SlideGo({ label, onDone }: Props) {
     if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowRight') { e.preventDefault(); finish(); }
   };
   const p = max() ? x / max() : 0;
-  const spring = 'duration-[350ms] ease-[cubic-bezier(.2,.9,.3,1.2)]';
+  const spring = '[transition-duration:350ms] [transition-timing-function:cubic-bezier(.2,.9,.3,1.2)]';
 
   return (
     <div ref={track}

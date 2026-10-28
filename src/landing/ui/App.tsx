@@ -232,13 +232,13 @@ export default function App() {
 
       {/* landmark name tags (positioned every frame by the engine) */}
       {out && (
-        <div className={`pointer-events-none absolute inset-0 z-[2] overflow-hidden transition-opacity duration-[900ms]${hide}`}>
+        <div className={`pointer-events-none absolute inset-0 z-[2] overflow-hidden transition-opacity [transition-duration:900ms]${hide}`}>
           {PLACES.map((p: any, i: number) => (
             <button key={p.n} ref={e => { Rf.lab[i] = e; }} aria-label={p.en}
               onClick={() => A.pick(i)} onMouseEnter={() => { Z.hov = i; }} onMouseLeave={() => { Z.hov = null; }}
               style={{ '--c': p.c, '--t': p.tc || '#fff', visibility: 'hidden' } as CSSProperties}
-              className={`group/pin absolute left-0 top-0 z-[2] cursor-pointer border-0 bg-transparent p-0 text-left text-[clamp(13px,.95vw,15px)] font-extrabold leading-[1.12] text-ink transition-opacity duration-[250ms] will-change-transform hover:!z-[9999] is-dim:opacity-40 is-hv:pointer-events-auto ${active === i ? 'on pointer-events-auto' : ''}`}>
-              <span className="flex origin-left -translate-x-2 scale-[.96] flex-col gap-px whitespace-nowrap rounded-xl bg-white/95 py-[7px] pl-[11px] pr-[13px] opacity-0 shadow-[0_10px_24px_rgba(20,40,25,.18)] transition-[opacity,transform] duration-200 ease-[cubic-bezier(.2,.9,.3,1.2)] group-hover/pin:translate-x-0 group-hover/pin:scale-100 group-hover/pin:opacity-100 group-[.hv]/pin:translate-x-0 group-[.hv]/pin:scale-100 group-[.hv]/pin:opacity-100 group-[.on]/pin:translate-x-0 group-[.on]/pin:scale-100 group-[.on]/pin:opacity-100">
+              className={`group/pin absolute left-0 top-0 z-[2] cursor-pointer border-0 bg-transparent p-0 text-left text-[clamp(13px,.95vw,15px)] font-extrabold leading-[1.12] text-ink transition-opacity [transition-duration:250ms] will-change-transform hover:!z-[9999] is-dim:opacity-40 is-hv:pointer-events-auto ${active === i ? 'on pointer-events-auto' : ''}`}>
+              <span className="flex origin-left -translate-x-2 scale-[.96] flex-col gap-px whitespace-nowrap rounded-xl bg-white/95 py-[7px] pl-[11px] pr-[13px] opacity-0 shadow-[0_10px_24px_rgba(20,40,25,.18)] transition-[opacity,transform] duration-200 [transition-timing-function:cubic-bezier(.2,.9,.3,1.2)] group-hover/pin:translate-x-0 group-hover/pin:scale-100 group-hover/pin:opacity-100 group-[.hv]/pin:translate-x-0 group-[.hv]/pin:scale-100 group-[.hv]/pin:opacity-100 group-[.on]/pin:translate-x-0 group-[.on]/pin:scale-100 group-[.on]/pin:opacity-100">
                 <b className="text-[13.5px] font-bold leading-[1.2] text-ink">{p.en.replace('Ethiopian ', '').replace('Unity ', '')}</b>
                 <small className="flex items-center gap-1 text-[11px] font-semibold leading-[1.2] text-[#6b7168]">{I_WALKER}{p.mn} min walk</small>
               </span>
@@ -256,7 +256,7 @@ export default function App() {
 
       {out && st < 0 && Z.mode === 'out' && !cur && !Z.explored && (
         <div role="note"
-          className={`pointer-events-none absolute bottom-[clamp(18px,4vh,40px)] left-[62%] z-[4] flex -translate-x-1/2 animate-[cin_.6s_.4s_both] items-center gap-2.5 rounded-full bg-ink/[.92] py-2.5 pl-3 pr-[18px] text-[13.5px] font-semibold text-white shadow-[0_12px_30px_rgba(15,61,38,.28)] transition-opacity duration-[900ms] por:bottom-4 por:left-1/2 por:max-w-[calc(100vw-32px)] por:whitespace-nowrap por:py-2 por:pl-2.5 por:pr-3.5 por:text-xs p440:hidden ls:hidden${hide}`}>
+          className={`pointer-events-none absolute bottom-[clamp(18px,4vh,40px)] left-[62%] z-[4] flex -translate-x-1/2 animate-[cin_.6s_.4s_both] items-center gap-2.5 rounded-full bg-ink/[.92] py-2.5 pl-3 pr-[18px] text-[13.5px] font-semibold text-white shadow-[0_12px_30px_rgba(15,61,38,.28)] transition-opacity [transition-duration:900ms] por:bottom-4 por:left-1/2 por:max-w-[calc(100vw-32px)] por:whitespace-nowrap por:py-2 por:pl-2.5 por:pr-3.5 por:text-xs p440:hidden ls:hidden${hide}`}>
           <span className="grid h-7 w-7 animate-[tap_1.6s_ease-in-out_infinite] place-items-center rounded-full bg-lime text-ink por:h-6 por:w-6">{I_HAND}</span>
           Drag to rotate · scroll to zoom · tap a landmark
         </div>
@@ -273,7 +273,7 @@ export default function App() {
             <div className="mt-[9px] font-news text-[27px] font-semibold leading-[1.02] tracking-[-.015em] text-ink">{OUT_STAGES[st].t}</div>
             <div className="mt-[3px] text-[13px] font-medium leading-[1.4] text-[#46544b]">{OUT_STAGES[st].s}</div>
             <div className="mt-[11px] flex gap-1">
-              {[0, 1, 2, 3].map(i => <i key={i} className={`h-[3px] flex-1 rounded-sm transition-colors duration-[400ms] ${i <= st ? 'bg-ink' : 'bg-ink/[.13]'}`} />)}
+              {[0, 1, 2, 3].map(i => <i key={i} className={`h-[3px] flex-1 rounded-sm transition-colors [transition-duration:400ms] ${i <= st ? 'bg-ink' : 'bg-ink/[.13]'}`} />)}
             </div>
             {st < 3
               ? <em className="mt-[9px] flex animate-[hint_1.8s_ease-in-out_infinite] items-center gap-1.5 text-[11.5px] font-medium not-italic text-[#5b665f]">Scroll to keep moving{I_DOWN}</em>
@@ -291,7 +291,7 @@ export default function App() {
       {/* indoor: turn-by-turn HUD (state classes near/off/done/pause/side are toggled by the engine) */}
       {!out && Z.hud && Z.route && (
         <div ref={e => { Rf.hud = e; }} role="status" aria-live="polite"
-          className="group/hud absolute left-1/2 top-[clamp(82px,11vh,106px)] z-[8] w-[min(440px,calc(100vw-32px))] -translate-x-1/2 animate-[hudin_.5s_both] rounded-[22px] border border-white/80 bg-[rgba(255,253,248,.8)] px-3.5 pb-3 pt-[11px] text-ink shadow-[0_16px_40px_rgba(30,20,10,.18)] backdrop-blur-[18px] backdrop-saturate-150 transition-[background,color,transform,left] duration-[350ms] is-side:left-[clamp(16px,2.5vw,40px)] is-side:translate-x-0 is-near:scale-[1.035] is-near:bg-ink/[.92] is-near:text-white is-off:bg-[rgba(255,246,228,.92)] por:top-[72px] por:is-side:hidden">
+          className="group/hud absolute left-1/2 top-[clamp(82px,11vh,106px)] z-[8] w-[min(440px,calc(100vw-32px))] -translate-x-1/2 animate-[hudin_.5s_both] rounded-[22px] border border-white/80 bg-[rgba(255,253,248,.8)] px-3.5 pb-3 pt-[11px] text-ink shadow-[0_16px_40px_rgba(30,20,10,.18)] backdrop-blur-[18px] backdrop-saturate-150 transition-[background,color,transform,left] [transition-duration:350ms] is-side:left-[clamp(16px,2.5vw,40px)] is-side:translate-x-0 is-near:scale-[1.035] is-near:bg-ink/[.92] is-near:text-white is-off:bg-[rgba(255,246,228,.92)] por:top-[72px] por:is-side:hidden">
           <div className="mb-[9px] flex items-center gap-2 text-[9.5px] font-bold tracking-[.14em] text-moss group-[.near]/hud:text-white/70">
             <span className={DOT_BLUE} />{L.pos}<span className="flex-1" />
             {langToggle(false, 'lang')}
@@ -329,7 +329,7 @@ export default function App() {
       <div ref={e => { Rf.door = e; }} className="pointer-events-none absolute inset-0 z-[7] opacity-0" />
 
       {/* header */}
-      <header className={`pointer-events-none absolute inset-x-0 top-0 z-[12] flex items-center justify-between px-[clamp(18px,2.5vw,42px)] py-[clamp(14px,2.6vh,26px)] transition-opacity duration-[900ms] [&>*]:pointer-events-auto por:px-4 por:py-3.5 p360:p-3 ls:px-[18px] ls:py-2.5${hide}`}>
+      <header className={`pointer-events-none absolute inset-x-0 top-0 z-[12] flex items-center justify-between px-[clamp(18px,2.5vw,42px)] py-[clamp(14px,2.6vh,26px)] transition-opacity [transition-duration:900ms] [&>*]:pointer-events-auto por:px-4 por:py-3.5 p360:p-3 ls:px-[18px] ls:py-2.5${hide}`}>
         <a href="#" className="flex items-center gap-3.5 text-[clamp(24px,2.6vw,34px)] font-bold tracking-[-.03em] text-ink no-underline por:gap-2.5 por:text-2xl p360:gap-2 p360:text-xl ls:text-[22px]">
           <span className="grid h-[clamp(40px,3vw,50px)] w-[clamp(40px,3vw,50px)] place-items-center rounded-xl bg-ink text-2xl font-bold tracking-[-.04em] text-white por:h-[38px] por:w-[38px] por:text-xl p360:h-8 p360:w-8 p360:rounded-[9px] p360:text-[17px] ls:h-[34px] ls:w-[34px] ls:text-lg">in</span>
           Indoor
@@ -456,7 +456,7 @@ export default function App() {
         <div aria-label="Floor" className="absolute bottom-[clamp(20px,5vh,56px)] left-[clamp(20px,3.4vw,58px)] z-[8] flex animate-[cin2_.4s_both] flex-col-reverse gap-1.5 text-[10.5px] font-bold tracking-[.14em] por:bottom-auto por:left-3.5 por:top-[200px]">
           {[0, 1].map(f => {
             const on = Z.floor === f, nxt = f === 1 && !on && (beat === 'eggup' || beat === 'climb');
-            return <span key={f} className={`rounded-full px-3 py-[7px] text-center transition-colors duration-[400ms] ${on ? 'bg-ink text-white' : nxt ? 'bg-white/75 text-ink shadow-[inset_0_0_0_1.5px_var(--lime)]' : 'bg-white/75 text-sub'}`}>{f ? L.upper : L.ground}</span>;
+            return <span key={f} className={`rounded-full px-3 py-[7px] text-center transition-colors [transition-duration:400ms] ${on ? 'bg-ink text-white' : nxt ? 'bg-white/75 text-ink shadow-[inset_0_0_0_1.5px_var(--lime)]' : 'bg-white/75 text-sub'}`}>{f ? L.upper : L.ground}</span>;
           })}
         </div>
       )}
@@ -469,7 +469,7 @@ export default function App() {
 
       {/* map controls */}
       {out && st < 0 && Z.mode === 'out' && (
-        <div className={`absolute bottom-[clamp(90px,19vh,200px)] right-[clamp(14px,1.6vw,28px)] z-[4] flex flex-col gap-3 transition-opacity duration-[900ms] por:bottom-4 por:right-3 por:gap-2 ph640:bottom-2.5 ph640:right-2.5 ph640:gap-1.5 ls:bottom-3 ls:gap-1.5${hide}`}>
+        <div className={`absolute bottom-[clamp(90px,19vh,200px)] right-[clamp(14px,1.6vw,28px)] z-[4] flex flex-col gap-3 transition-opacity [transition-duration:900ms] por:bottom-4 por:right-3 por:gap-2 ph640:bottom-2.5 ph640:right-2.5 ph640:gap-1.5 ls:bottom-3 ls:gap-1.5${hide}`}>
           <button aria-label="Reset view" onClick={A.reset} className={`${CTL_BTN} relative ph700:hidden`}>
             <span ref={e => { Rf.comp = e; }} className="relative grid place-items-center transition-transform duration-200">
               <svg width={22} height={22} viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l3.2 9H8.8z" fill="#d9483b" /><path d="M12 21l-3.2-9h6.4z" fill="#b9c0bb" /></svg>
@@ -487,8 +487,8 @@ export default function App() {
       )}
 
       {/* journey progress */}
-      <div className={`pointer-events-none absolute right-3.5 top-1/2 z-[4] h-[120px] w-[3px] -translate-y-1/2 overflow-hidden rounded-[3px] bg-ink/15 transition-opacity duration-[900ms] por:hidden ls:hidden${hide}`}>
-        <i style={{ height: prog * 100 + '%' }} className="block w-full bg-ink transition-[height] duration-[600ms]" />
+      <div className={`pointer-events-none absolute right-3.5 top-1/2 z-[4] h-[120px] w-[3px] -translate-y-1/2 overflow-hidden rounded-[3px] bg-ink/15 transition-opacity [transition-duration:900ms] por:hidden ls:hidden${hide}`}>
+        <i style={{ height: prog * 100 + '%' }} className="block w-full bg-ink transition-[height] [transition-duration:600ms]" />
       </div>
     </div>
   );

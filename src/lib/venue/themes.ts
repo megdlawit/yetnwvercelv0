@@ -44,3 +44,32 @@ export function hexToHslVar(hex: string): string {
 }
 
 export const themeOf =(id: string | null | undefined): VenueTheme => THEMES[(id as ThemeId) in THEMES ? (id as ThemeId) : 'park'];
+
+/** "#0f5e3a" and "#ffffff" mixed: t = 0 is a, t = 1 is b. */
+export function mixHex(a: string, b: string, t: number): string {
+  const p = (h: string) => { const v = parseInt(h.replace('#', ''), 16); return [v >> 16 & 255, v >> 8 & 255, v & 255]; };
+  const [x, y] = [p(a), p(b)];
+  return `#${x.map((c, i) => Math.round(c + (y[i] - c) * t).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** "#0f5e3a" at 40%: "rgb(15 94 58 / 0.4)". */
+export function alphaHex(hex: string, a: number): string {
+  const v = parseInt(hex.replace('#', ''), 16);
+  return `rgb(${v >> 16 & 255} ${v >> 8 & 255} ${v & 255} / ${a})`;
+}
+
+/**
+ * The plan-building animation's colours, from the venue's theme: a deep board
+ * in the theme's own colour (green for Park, earth for Heritage, navy for
+ * Modern), light walls, rooms in the path colour and paths in the route colour.
+ */
+export function buildPalette(t: VenueTheme) {
+  return {
+    board: mixHex(t.primary, '#000000', 0.55), boardDark: mixHex(t.primary, '#000000', 0.72),
+    grid: alphaHex(t.path, 0.16), scan: alphaHex(t.path, 0.28),
+    wall: mixHex(t.wall, '#ffffff', 0.6), wallLayer: alphaHex(t.path, 0.55),
+    roomFill: alphaHex(t.path, 0.18), roomStroke: alphaHex(t.path, 0.5),
+    route: t.route, routeGlow: alphaHex(t.route, 0.32), routeLight: mixHex(t.route, '#ffffff', 0.55), routeDot: mixHex(t.route, '#ffffff', 0.2),
+  };
+}
+export type BuildPalette = ReturnType<typeof buildPalette>;

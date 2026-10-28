@@ -9,6 +9,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}", "packages/indoor-core/src/**/*.test.ts"],
+    // Local harnesses on real drawings (gitignored): run one by name, never with the suite.
+    exclude: ["**/node_modules/**", "src/__scratch__/**"],
   },
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src"), "@ethi/indoor-core/react": path.resolve(__dirname, "./packages/indoor-core/src/react.tsx"), "@ethi/indoor-core": path.resolve(__dirname, "./packages/indoor-core/src") },

@@ -11,7 +11,7 @@ const FOG = 'absolute rounded-full opacity-90 blur-[60px] will-change-transform'
 
 /** Animated letters: each one is moved by CSS vars the animation loop writes (--y entrance, --px/--h push-aside). */
 const LETTER =
-  'inline-block opacity-0 transition-colors duration-[250ms] is-lit:text-[#6fd24e] ' +
+  'inline-block opacity-0 transition-colors [transition-duration:250ms] is-lit:text-[#6fd24e] ' +
   '[transform:translate(var(--px,0px),calc(var(--y,0px)_+_var(--h,0px)))]';
 
 function Letters({ text, measure }: { text: string; measure?: boolean }) {
@@ -189,7 +189,7 @@ export function Intro({ onReveal, onHero, onDone }: Props) {
   TARGET.forEach(([s, italic]) => [...s].forEach(ch => {
     if (ch !== ' ') morphSlots.push(
       <span key={morphSlots.length} data-m=""
-        className={'absolute inline-block whitespace-pre text-[#5fd03e] opacity-0 transition-colors duration-[450ms] will-change-transform ' +
+        className={'absolute inline-block whitespace-pre text-[#5fd03e] opacity-0 transition-colors [transition-duration:450ms] will-change-transform ' +
           (italic ? `${ITALIC} is-fin:text-leaf` : 'is-fin:text-ink')} />);
   }));
 

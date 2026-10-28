@@ -31,6 +31,9 @@ import { buildPart, partsFromDrawing } from '@/lib/cad/floorParts';
 import type { PathGraphResult } from '@/lib/dxf/generatePathGraph';
 import { CATEGORY_LABELS, type CadDrawing, type Category, type LayerMapping } from '@/lib/cad/types';
 import LayerReviewPanel from '@/components/venue/LayerReviewPanel';
+import FloorsFound from '@/components/venue/FloorsFound';
+import { useVenueTheme } from '@/components/venue/useVenueTheme';
+import { buildPalette, type BuildPalette } from '@/lib/venue/themes';
 import { useLayerLabeling, type LabelSource } from '@/lib/cad/layerLabels/useLayerLabeling';
 import { aiContribution, blocking } from '@/lib/cad/layerLabels/review';
 import { prepareLayerLabels, savePendingLabels, type PendingLabels } from '@/lib/cad/layerLabels/save';
@@ -100,6 +103,8 @@ function detectUnits(d: CadDrawing, arcs: ReturnType<typeof quarterArcs>): Units
 const tick = () => new Promise(r => setTimeout(r, 70));
 
 export default function CadImportDialog({ open, onOpenChange, buildingId, floorId, pxPerMeter, onImported, onViewIn3D, onStartTour, onImportAsFloors }: Props) {
+  // The build animation is drawn in the venue's own theme colours.
+  const palette = buildPalette(useVenueTheme(buildingId));
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [stage, setStage] = useState<Stage>('pick');
@@ -394,7 +399,7 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
           </ul>
         )}
 
-        {stage === 'saving' && built && <BuildAnimation venue={built} step={buildStep} paths={paths} />}
+        {stage === 'saving' && built && <BuildAnimation venue={built} step={buildStep} paths={paths} palette={palette} />}
 
         {stage === 'review' && drawing && built && raw && (
           <div className="grid md:grid-cols-[1fr_300px] gap-4">
@@ -488,43 +493,40 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
 
               <TabsContent value="layers">
                 {(aiReview || aiWaiting || aiStuck) ? <LayerReviewPanel labeling={labeling} buildingId={buildingId} /> : <>
-                <div className="rounded-xl border overflow-hidden">
-                  <table className="w-full text-xs">
-                    <thead className="bg-muted/50 text-muted-foreground">
-                      <tr><th className="text-left font-medium px-3 py-2">CAD layer</th><th className="text-left font-medium px-2 py-2">Contents</th><th className="text-left font-medium px-2 py-2">Yet New object</th><th className="text-right font-medium px-3 py-2">Confidence</th></tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {layers.map(l => {
-                        const c = l.counts;
-                        const contents = [
-                          c.lines + c.open && `${c.lines + c.open} lines`, c.closed && `${c.closed} shapes`, c.texts && `${c.texts} text`,
-                          c.inserts && `${c.inserts} blocks`, c.circles + c.arcs && `${c.circles + c.arcs} arcs`,
-                        ].filter(Boolean).join(' · ') || 'empty';
-                        const changed = mapping[l.name] !== l.suggested;
-                        return (
-                          <tr key={l.name} className={cn(mapping[l.name] === 'ignore' && 'text-muted-foreground')}>
-                            <td className="px-3 py-1.5 font-mono max-w-[160px] truncate" title={l.name}>{l.name}</td>
-                            <td className="px-2 py-1.5 text-muted-foreground">{contents}{l.blocks[0] && <span className="block text-[10px]">{l.blocks.join(', ')}</span>}</td>
-                            <td className="px-2 py-1.5">
-                              <select value={mapping[l.name]} title={l.reason}
-                                onChange={e => setMapping(p => ({ ...p, [l.name]: e.target.value as Category }))}
-                                className="rounded-md border bg-background px-2 py-1 text-xs">
-                                {CATEGORIES.map(cat => <option key={cat} value={cat}>{CATEGORY_LABELS[cat]}</option>)}
-                              </select>
-                            </td>
-                            <td className="px-3 py-1.5 text-right" title={l.reason}>
-                              {changed ? <span className="text-primary font-medium">You set</span> : (
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span className="h-1.5 w-10 rounded-full bg-muted overflow-hidden"><span className={cn('block h-full', l.confidence >= 0.8 ? 'bg-primary' : l.confidence >= 0.55 ? 'bg-amber-500' : 'bg-muted-foreground/40')} style={{ width: `${l.confidence * 100}%` }} /></span>
-                                  <span className="tabular-nums w-8">{Math.round(l.confidence * 100)}%</span>
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div className="max-h-[52vh] overflow-auto rounded-2xl border bg-card">
+                  <ul className="divide-y">
+                    {layers.map(l => {
+                      const c = l.counts;
+                      const contents = [
+                        c.lines + c.open && `${c.lines + c.open} lines`, c.closed && `${c.closed} shapes`, c.texts && `${c.texts} text`,
+                        c.inserts && `${c.inserts} blocks`, c.circles + c.arcs && `${c.circles + c.arcs} arcs`,
+                      ].filter(Boolean).join(' · ') || 'empty';
+                      const changed = mapping[l.name] !== l.suggested;
+                      const off = mapping[l.name] === 'ignore';
+                      return (
+                        <li key={l.name} className={cn('grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-xs', off && 'bg-muted/30')}>
+                          <span className={cn('h-2.5 w-2.5 rounded-full', CATEGORY_DOT[mapping[l.name]])} />
+                          <span className="min-w-0">
+                            <span className={cn('block truncate font-mono text-[12px]', off && 'text-muted-foreground')} title={l.name}>{l.name}</span>
+                            <span className="block truncate text-[10px] text-muted-foreground" title={l.blocks.join(', ')}>{contents}{l.blocks[0] ? ` · ${l.blocks.slice(0, 2).join(', ')}` : ''}</span>
+                          </span>
+                          <span className="flex items-center gap-2" title={l.reason}>
+                            {changed ? <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">You set</span> : (
+                              <span className="hidden items-center gap-1.5 sm:inline-flex">
+                                <span className="h-1.5 w-10 overflow-hidden rounded-full bg-muted"><span className={cn('block h-full', l.confidence >= 0.8 ? 'bg-primary' : l.confidence >= 0.55 ? 'bg-amber-500' : 'bg-muted-foreground/40')} style={{ width: `${l.confidence * 100}%` }} /></span>
+                                <span className="w-8 tabular-nums text-[11px] text-muted-foreground">{Math.round(l.confidence * 100)}%</span>
+                              </span>
+                            )}
+                            <select value={mapping[l.name]} aria-label={`What ${l.name} becomes`}
+                              onChange={e => setMapping(p => ({ ...p, [l.name]: e.target.value as Category }))}
+                              className="h-8 w-32 rounded-lg border bg-background px-2 text-xs">
+                              {CATEGORIES.map(cat => <option key={cat} value={cat}>{CATEGORY_LABELS[cat]}</option>)}
+                            </select>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
                 <p className="mt-2 text-[11px] text-muted-foreground">Hover a suggestion to see why it was chosen. Layers set to Ignore aren't imported.</p>
                 </>}
@@ -538,23 +540,8 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
                   <p className="mt-1 text-xs text-muted-foreground">We found no doors and no room names. If it is a floor plan, check which layers hold the walls and doors. Otherwise choose another file.</p>
                 </div>
               )}
-              {multiFloor && (
-                <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm">
-                  <p className="font-medium">We found {floorsOn.length} floors</p>
-                  <ul className="mt-1.5 space-y-0.5 text-xs">
-                    {floorsOn.map(f => <li key={f.key} className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-primary" /> {f.name}</li>)}
-                  </ul>
-                  {floors.length > floorsOn.length && (
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">
-                      Left out: {floors.length - floorsOn.length === 1 ? 'a plan' : `${floors.length - floorsOn.length} plans`} that may not be a floor (the roof, the site or another building) — you can add {floors.length - floorsOn.length === 1 ? 'it' : 'them'} in the next step.
-                    </p>
-                  )}
-                  {floorsOn.some(f => f.note?.startsWith('The sheet has no floor titles')) && (
-                    <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-400">The sheet has no floor titles, so the floors are named in order, left to right. Check them in the next step.</p>
-                  )}
-                  <p className="mt-1.5 text-[11px] text-muted-foreground">Elevations, sections and the site plan are not floors and are left out. Below: the {floorsOn[0].name.toLowerCase()}.</p>
-                </div>
-              )}
+              {multiFloor && <FloorsFound floors={floors} />}
+              {multiFloor && <p className="px-1 text-[11px] text-muted-foreground">Preview: the {floorsOn[0].name.toLowerCase()}.</p>}
               <ImportPreview venue={multiFloor && firstFloorPreview ? firstFloorPreview : built} />
               <div className="space-y-2 rounded-xl border p-3">
                 {drawing.format === 'pdf' ? (
@@ -620,7 +607,7 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
 
         {stage === 'done' && summary && built && (
           <div className="grid gap-4 sm:grid-cols-[220px_1fr]">
-            <BuildAnimation venue={built} step={BUILD_STEPS.length} paths={paths} compact />
+            <BuildAnimation venue={built} step={BUILD_STEPS.length} paths={paths} palette={palette} compact />
           <ul className="rounded-xl border divide-y text-sm">
             {[
               ['Imported from', summary.format],
@@ -715,7 +702,6 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
 const BUILD_STEPS = ['Laying the walls', 'Shaping the rooms', 'Placing doors, stairs and objects', 'Building walkable paths', 'Raising it into 3D'] as const;
 /** How long each build step plays (ms); the paths get the most time. */
 const STEP_MS = [1100, 650, 650, 1700, 1300] as const;
-const PATH_COLOR = 'hsl(199 89% 48%)';
 
 /** Draw order for the paths: outward from the entrance (or a door), like they're being walked. */
 function pathWave(venue: BuiltVenue, g: PathGraphResult) {
@@ -739,12 +725,12 @@ function pathWave(venue: BuiltVenue, g: PathGraphResult) {
 }
 
 /**
- * The plan building itself, on a blueprint: walls sweep in, rooms fill,
+ * The plan building itself, on a board in the venue's theme colours: walls sweep in, rooms fill,
  * objects pop in, then the real walkable paths grow out from the entrance
  * and start to flow — and finally the plan tilts up and its walls rise into
  * 3D. Paced by `step` (which part of BUILD_STEPS is under way).
  */
-function BuildAnimation({ venue, step, paths, compact = false }: { venue: BuiltVenue; step: number; paths: PathGraphResult | null; compact?: boolean }) {
+export function BuildAnimation({ venue, step, paths, palette: c, compact = false }: { venue: BuiltVenue; step: number; paths: PathGraphResult | null; palette: BuildPalette; compact?: boolean }) {
   const pts = [...venue.walls.flatMap(w => [{ x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }]), ...venue.rooms.flatMap(r => r.polygon)];
   const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
   const minX = Math.min(...xs, 0), minY = Math.min(...ys, 0), w = (Math.max(...xs, 1) - minX) || 1, h = (Math.max(...ys, 1) - minY) || 1;
@@ -785,7 +771,8 @@ function BuildAnimation({ venue, step, paths, compact = false }: { venue: BuiltV
         @keyframes build-up { from { transform: translateZ(0); opacity: 0 } }
         @keyframes build-scan { from { transform: translateX(-30%) } to { transform: translateX(330%) } }
       `}</style>
-      <div className={cn('relative overflow-hidden rounded-2xl border bg-[#0b2540] dark:bg-[#071a2e]', compact ? 'aspect-square' : 'aspect-[16/9]')}>
+      <div className={cn('relative overflow-hidden rounded-2xl border', compact ? 'aspect-square' : 'aspect-[16/9]')}
+        style={{ background: `radial-gradient(120% 90% at 50% 35%, ${c.board}, ${c.boardDark})` }}>
         <div className="absolute inset-0" style={{ perspective: '1100px' }}>
           <div className="absolute inset-0" style={{
             transformStyle: 'preserve-3d', transformOrigin: '50% 55%',
@@ -795,15 +782,15 @@ function BuildAnimation({ venue, step, paths, compact = false }: { venue: BuiltV
             <svg viewBox={viewBox} className="absolute inset-0 h-full w-full">
               <defs>
                 <pattern id="build-grid" width={Math.max(w, h) / 24} height={Math.max(w, h) / 24} patternUnits="userSpaceOnUse">
-                  <path d={`M ${Math.max(w, h) / 24} 0 L 0 0 0 ${Math.max(w, h) / 24}`} fill="none" stroke="rgb(125 211 252 / .14)" strokeWidth={sw * 0.5} />
+                  <path d={`M ${Math.max(w, h) / 24} 0 L 0 0 0 ${Math.max(w, h) / 24}`} fill="none" stroke={c.grid} strokeWidth={sw * 0.5} />
                 </pattern>
               </defs>
               <rect x={minX - pad * 4} y={minY - pad * 4} width={w + pad * 8} height={h + pad * 8} fill="url(#build-grid)" />
               {shown(1) && venue.rooms.map((r, i) => (
-                <polygon key={i} points={r.polygon.map(p => `${p.x},${p.y}`).join(' ')} fill="rgb(52 211 153 / .16)" stroke="rgb(52 211 153 / .45)" strokeWidth={sw}
+                <polygon key={i} points={r.polygon.map(p => `${p.x},${p.y}`).join(' ')} fill={c.roomFill} stroke={c.roomStroke} strokeWidth={sw}
                   style={{ animation: anim(`build-fill .5s ease-out ${Math.min(i * 0.05, 0.5)}s both`) }} />
               ))}
-              {shown(0) && walls('#e0f2fe', sw * 1.8, true)}
+              {shown(0) && walls(c.wall, sw * 1.8, true)}
 
               {/* The walkable paths, grown from the entrance outward, then flowing. */}
               {shown(3) && paths && paths.edges.map((e, i) => {
@@ -812,9 +799,9 @@ function BuildAnimation({ venue, step, paths, compact = false }: { venue: BuiltV
                 const d = edgeDelay(e.from, e.to).toFixed(3);
                 return (
                   <g key={i}>
-                    <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} pathLength={1} strokeDasharray={1} stroke={PATH_COLOR} strokeOpacity={0.3} strokeWidth={sw * 4.5} strokeLinecap="round"
+                    <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} pathLength={1} strokeDasharray={1} stroke={c.routeGlow} strokeWidth={sw * 4.5} strokeLinecap="round"
                       style={{ animation: anim(`build-draw .35s ease-out ${d}s both`) }} />
-                    <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} pathLength={1} strokeDasharray={1} stroke="#7dd3fc" strokeWidth={sw * 1.6} strokeLinecap="round"
+                    <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} pathLength={1} strokeDasharray={1} stroke={c.routeLight} strokeWidth={sw * 1.6} strokeLinecap="round"
                       style={{ animation: anim(`build-draw .35s ease-out ${d}s both`) }} />
                     {!compact && (
                       <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} strokeDasharray={`${sw * 1.5} ${sw * 4.5}`} stroke="#ffffff" strokeWidth={sw * 1.1} strokeLinecap="round"
@@ -826,10 +813,10 @@ function BuildAnimation({ venue, step, paths, compact = false }: { venue: BuiltV
               {shown(3) && paths && paths.nodes.map((p, i) => (p.isHallway ? null : (
                 <g key={i}>
                   {!compact && (
-                    <circle cx={p.x} cy={p.y} r={sw * 3} fill="none" stroke="#7dd3fc" strokeWidth={sw * 0.8}
+                    <circle cx={p.x} cy={p.y} r={sw * 3} fill="none" stroke={c.routeLight} strokeWidth={sw * 0.8}
                       style={{ transformBox: 'fill-box', transformOrigin: 'center', animation: `build-ring 1.2s ease-out ${((wave?.depth[i] ?? 0) / (wave?.max ?? 1) * PATH_S + 0.3).toFixed(3)}s both` }} />
                   )}
-                  <circle cx={p.x} cy={p.y} r={sw * 2.4} fill="#38bdf8" stroke="#e0f2fe" strokeWidth={sw * 0.6}
+                  <circle cx={p.x} cy={p.y} r={sw * 2.4} fill={c.routeDot} stroke={c.wall} strokeWidth={sw * 0.6}
                     style={{ transformBox: 'fill-box', transformOrigin: 'center', animation: anim(`build-pop .4s ease-out ${((wave?.depth[i] ?? 0) / (wave?.max ?? 1) * PATH_S + 0.25).toFixed(3)}s both`) }} />
                 </g>
               )))}
@@ -843,13 +830,13 @@ function BuildAnimation({ venue, step, paths, compact = false }: { venue: BuiltV
             {raised && Array.from({ length: layers }, (_, k) => (
               <svg key={k} viewBox={viewBox} className="absolute inset-0 h-full w-full pointer-events-none"
                 style={{ transform: `translateZ(${((k + 1) * 34) / layers}px)`, animation: `build-up .8s cubic-bezier(.3,.7,.3,1) ${(0.3 + k * 0.05).toFixed(2)}s both` }}>
-                {walls(k === layers - 1 ? '#ffffff' : 'rgb(125 211 252 / .55)', sw * (k === layers - 1 ? 2.2 : 2), false)}
+                {walls(k === layers - 1 ? '#ffffff' : c.wallLayer, sw * (k === layers - 1 ? 2.2 : 2), false)}
               </svg>
             ))}
           </div>
         </div>
         {!compact && step < 3 && (
-          <div className="pointer-events-none absolute inset-y-0 w-1/4 bg-gradient-to-r from-transparent via-sky-300/25 to-transparent" style={{ animation: 'build-scan 1.5s ease-in-out infinite' }} />
+          <div className="pointer-events-none absolute inset-y-0 w-1/4" style={{ background: `linear-gradient(90deg, transparent, ${c.scan}, transparent)`, animation: 'build-scan 1.5s ease-in-out infinite' }} />
         )}
       </div>
       {!compact && (
@@ -867,6 +854,12 @@ function BuildAnimation({ venue, step, paths, compact = false }: { venue: BuiltV
     </div>
   );
 }
+
+/** Each kind's colour in the layer list (as in the AI review). */
+const CATEGORY_DOT: Record<Category, string> = {
+  walls: 'bg-slate-700 dark:bg-slate-300', doors: 'bg-amber-500', windows: 'bg-sky-400', rooms: 'bg-emerald-500', stairs: 'bg-rose-500',
+  elevators: 'bg-blue-600', furniture: 'bg-orange-800/80 dark:bg-orange-400/80', trees: 'bg-green-600', labels: 'bg-violet-500', ignore: 'bg-muted-foreground/30',
+};
 
 const FEATURE_COLORS: Record<string, string> = {
   door: '#d97706', window: '#38bdf8', stairs: '#e05a47', elevator: '#3b6fe0', entrance: '#16a34a',

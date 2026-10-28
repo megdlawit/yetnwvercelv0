@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Building, ShieldCheck, Map as MapIcon, Users, MapPin, Footprints, Bookmark, Mail, Check, X, Eye, LayoutGrid, MoreHorizontal,
-  PenTool, Globe, CloudOff, Star, History, Inbox, Ban, RotateCcw, ShieldPlus, ShieldMinus, Clock, ArrowRight, Sparkles,
+  PenTool, Globe, CloudOff, Star, History, Inbox, Ban, RotateCcw, ShieldPlus, ShieldMinus, Clock, ArrowRight, Sparkles, BadgeCheck, Landmark, Flag,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,8 +21,9 @@ import { INSTITUTION_KINDS, isInstitutionKind } from '@/lib/accounts';
 import { useAdminConsole } from './AdminLayout';
 import {
   useAdminQuery, adminActions, openInstitutionDashboard,
-  type AdminActivity, type AdminInstitution, type AdminUser, type AdminVenue, type InstitutionStatus, type VisitorStats,
+  type AdminActivity, type AdminInstitution, type AdminUser, type AdminVenue, type AdminVerificationRequest, type InstitutionStatus, type VisitorStats,
 } from './useAdmin';
+import { STATUS_INFO, trustLevelOf } from '@/lib/venue/trust';
 import { Empty, Loading, Mark, Stat, StatusChip, VenueChip, describe, matches, timeAgo, useNoteDialog } from './parts';
 
 const kindLabel = (k: string | null) => (k && isInstitutionKind(k) ? INSTITUTION_KINDS[k].label : k ?? '—');
@@ -55,7 +56,7 @@ export function Overview() {
   const venues = useAdminQuery<AdminVenue[]>('admin_venues');
   const activity = useAdminQuery<AdminActivity[]>('admin_activity', { lim: 12 });
   const o = overview;
-  const waiting = (o?.institutions_pending ?? 0) + (o?.venues_pending ?? 0);
+  const waiting = (o?.institutions_pending ?? 0) + (o?.venues_pending ?? 0) + (o?.verifications_pending ?? 0);
   const pendingInst = (institutions.data ?? []).filter(i => i.status === 'pending').slice(0, 4);
   const pendingVenues = (venues.data ?? []).filter(v => v.review_status === 'pending').slice(0, 4);
   const hour = new Date().getHours();
@@ -68,7 +69,7 @@ export function Overview() {
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat icon={ShieldCheck} label="Waiting for your approval" value={o ? waiting : '—'} tone={waiting ? 'attention' : 'good'}
-          sub={o ? `${o.institutions_pending} institution${o.institutions_pending === 1 ? '' : 's'} · ${o.venues_pending} publish request${o.venues_pending === 1 ? '' : 's'}` : undefined}
+          sub={o ? `${o.institutions_pending} institution${o.institutions_pending === 1 ? '' : 's'} · ${o.venues_pending} publish request${o.venues_pending === 1 ? '' : 's'}${o.verifications_pending ? ` · ${o.verifications_pending} verification${o.verifications_pending === 1 ? '' : 's'}` : ''}` : undefined}
           onClick={() => navigate('/admin/approvals')} />
         <Stat icon={Building} label="Institutions" value={o?.institutions ?? '—'} sub={o ? `${o.new_institutions_30d} new in 30 days${o.institutions_suspended ? ` · ${o.institutions_suspended} suspended` : ''}` : undefined} onClick={() => navigate('/admin/institutions')} />
         <Stat icon={MapIcon} label="Venues live" value={o ? `${o.venues_published} / ${o.venues}` : '—'} sub={o ? `${o.publishes_30d} publishes in 30 days · ${o.places.toLocaleString('en')} places` : undefined} onClick={() => navigate('/admin/venues')} />
@@ -172,7 +173,8 @@ export function Approvals() {
   const [busy, setBusy] = useState<string | null>(null);
   const pendingInst = (institutions.data ?? []).filter(i => i.status === 'pending');
   const pendingVenues = (venues.data ?? []).filter(v => v.review_status === 'pending');
-  const refresh = () => { void institutions.reload(); void venues.reload(); reloadOverview(); };
+  const verifications = useAdminQuery<AdminVerificationRequest[]>('admin_verification_queue');
+  const refresh = () => { void institutions.reload(); void venues.reload(); void verifications.reload(); reloadOverview(); };
 
   const decideInst = async (i: AdminInstitution, status: InstitutionStatus, note?: string) => {
     setBusy(i.id);
@@ -187,6 +189,15 @@ export function Approvals() {
     try {
       await adminActions.reviewVenue(v.id, approve, note);
       toast.success(approve ? `${v.name} is live` : `Publishing ${v.name} declined`);
+      refresh();
+    } catch (e) { fail(e); } finally { setBusy(null); }
+  };
+
+  const decideVerification = async (r: AdminVerificationRequest, approve: boolean, note?: string) => {
+    setBusy(r.id);
+    try {
+      await adminActions.decideVerification(r.id, approve, note);
+      toast.success(approve ? `${r.place_name ?? r.venue_name} is ${r.level} now` : 'Verification declined');
       refresh();
     } catch (e) { fail(e); } finally { setBusy(null); }
   };
@@ -243,6 +254,39 @@ export function Approvals() {
                       <X className="mr-1.5 h-4 w-4" /> Decline
                     </Button>
                     <Button size="sm" disabled={busy === v.id} onClick={() => void decideVenue(v, true)}><Check className="mr-1.5 h-4 w-4" /> Approve & publish</Button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+
+        <Panel title={<>Verification requests <span className="ml-1 rounded-full bg-muted px-2 text-xs">{verifications.data?.length ?? 0}</span></>} icon={BadgeCheck} bodyClassName="px-2 pb-2">
+          {verifications.needsMigration ? (
+            <Empty icon={BadgeCheck} title="Not set up yet" text="Run the 20261028090000_place_trust migration to turn on verification requests." />
+          ) : verifications.loading && !verifications.data ? <Loading /> : !verifications.data?.length ? (
+            <Empty icon={Check} title="No requests waiting" text="Teams ask from Venue Settings → Trust & verification. Check their details, then verify. Verification is free and never sold." />
+          ) : (
+            <ul className="divide-y">
+              {verifications.data.map(r => (
+                <li key={r.id} className="flex flex-wrap items-center gap-3 px-3 py-3.5">
+                  <span className="grid h-11 w-11 place-items-center rounded-xl bg-emerald-500/10 text-emerald-700">{r.level === 'official' ? <Landmark className="h-5 w-5" /> : <BadgeCheck className="h-5 w-5" />}</span>
+                  <span className="min-w-[220px] flex-1">
+                    <span className="block font-semibold">{r.place_name ? `${r.place_name} · ${r.venue_name}` : r.venue_name} <span className="font-normal text-muted-foreground">wants to be</span> {STATUS_INFO[r.level].label}</span>
+                    <span className="block text-xs text-muted-foreground">{r.institution_name ?? '—'} · asked {timeAgo(r.requested_at)}{r.requested_by_name ? ` by ${r.requested_by_name}` : ''} · now {STATUS_INFO[trustLevelOf(r.current_level)].label}{r.is_published ? '' : ' · not published'}</span>
+                    <span className="mt-1 block text-xs text-muted-foreground">Source: {r.source || 'not given'} · Responsible: {r.responsible_party || 'not given'}{r.open_reports ? <> · <span className="text-amber-700">{r.open_reports} open report{r.open_reports === 1 ? '' : 's'}</span></> : null}</span>
+                    {r.note && <span className="mt-1 block whitespace-pre-line rounded-lg bg-muted/60 px-2 py-1 text-xs">“{r.note}”</span>}
+                  </span>
+                  <span className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="ghost" asChild><a href={`/venue/${r.building_id}${r.is_published ? '' : '?preview=1'}`} target="_blank" rel="noreferrer"><Eye className="mr-1.5 h-4 w-4" /> Look</a></Button>
+                    <Button size="sm" variant="outline" disabled={busy === r.id}
+                      onClick={() => notes.ask({ title: 'Decline this verification?', text: 'Say what is missing — the team sees your note in Venue Settings and can ask again.', confirm: 'Decline', danger: true, run: n => decideVerification(r, false, n) })}>
+                      <X className="mr-1.5 h-4 w-4" /> Decline
+                    </Button>
+                    <Button size="sm" disabled={busy === r.id}
+                      onClick={() => notes.ask({ title: `Mark ${r.place_name ?? r.venue_name} ${r.level}?`, text: 'Visitors see the badge with today’s date. Note how you checked it (kept in the activity log).', confirm: r.level === 'official' ? 'Mark official' : 'Verify', run: n => decideVerification(r, true, n) })}>
+                      <Check className="mr-1.5 h-4 w-4" /> {r.level === 'official' ? 'Mark official' : 'Verify'}
+                    </Button>
                   </span>
                 </li>
               ))}
@@ -336,6 +380,15 @@ export function Venues() {
     try { await adminActions.setVenueLive(v.id, on); toast.success(on ? `${v.name} published` : `${v.name} taken offline`); void q.reload(); reloadOverview(); }
     catch (e) { fail(e); }
   };
+  const notes = useNoteDialog();
+  const trust = async (v: AdminVenue, level: 'listed' | 'verified' | 'official', note?: string) => {
+    try { await adminActions.setTrust(v.id, level, note); toast.success(level === 'listed' ? `${v.name}: verification removed` : `${v.name} is ${level} now`); void q.reload(); reloadOverview(); }
+    catch (e) { fail(e); }
+  };
+  const suspend = async (v: AdminVenue, on: boolean, note?: string) => {
+    try { await adminActions.suspendVenue(v.id, on, note); toast.success(on ? `${v.name} suspended — offline` : `${v.name}: suspension lifted — the team can publish again`); void q.reload(); reloadOverview(); }
+    catch (e) { fail(e); }
+  };
   const feature = async (v: AdminVenue, rank: number) => {
     try { await adminActions.setHomeRank(v.id, rank); toast.success(rank > 0 ? `${v.name} featured on the home page` : `${v.name} no longer featured`); void q.reload(); }
     catch (e) { fail(e); }
@@ -343,7 +396,8 @@ export function Venues() {
 
   return (
     <>
-      <PageHeader title="Venues" description="Every venue on the platform. Look at any of them, put one online or offline, or feature it on the home page." />
+      <PageHeader title="Venues" description="Every venue on the platform. Look at any of them, put one online or offline, verify it, suspend it, or feature it on the home page." />
+      {notes.dialog}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {([['all', 'All'], ['live', 'Live'], ['review', 'In review'], ['draft', 'Drafts']] as const).map(([id, label]) => (
           <button key={id} onClick={() => setFilter(id)} className={cn('rounded-full border px-3 py-1.5 text-sm', filter === id ? 'border-primary bg-primary/10 font-semibold text-primary' : 'hover:bg-muted')}>{label}</button>
@@ -361,7 +415,15 @@ export function Venues() {
                   <td className="py-3">{v.institution_name ?? '—'}{v.institution_status && v.institution_status !== 'approved' && <span className="ml-1.5"><StatusChip status={v.institution_status} /></span>}</td>
                   <td className="py-3 text-muted-foreground">{v.floors} {v.layout === 'site' ? 'zone' : 'floor'}{v.floors === 1 ? '' : 's'} · {v.places} places{v.placed ? ' · on world map' : ''}</td>
                   <td className="py-3 text-muted-foreground">{v.published_at ? timeAgo(v.published_at) : 'Never'}</td>
-                  <td className="py-3"><VenueChip live={v.is_published} review={v.review_status} /></td>
+                  <td className="py-3">
+                    <span className="flex flex-wrap items-center gap-1">
+                      {v.suspended_at ? <span className={cn('rounded-full px-2.5 py-0.5 text-[11px] font-semibold', STATUS_INFO.suspended.cls)} title={v.suspend_note ?? undefined}>Suspended</span>
+                        : v.archived_at ? <span className={cn('rounded-full px-2.5 py-0.5 text-[11px] font-semibold', STATUS_INFO.archived.cls)}>Archived</span>
+                        : <VenueChip live={v.is_published} review={v.review_status} />}
+                      {trustLevelOf(v.trust_level) !== 'listed' && <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold', STATUS_INFO[trustLevelOf(v.trust_level)].cls)}>{STATUS_INFO[trustLevelOf(v.trust_level)].label}</span>}
+                      {v.open_reports ? <span className="flex items-center gap-0.5 text-[11px] text-amber-700" title="Open visitor reports"><Flag className="h-3 w-3" />{v.open_reports}</span> : null}
+                    </span>
+                  </td>
                   <td className="py-3 pr-3">
                     <DropdownMenu>
                       <DropdownMenuTrigger className="grid h-8 w-8 place-items-center rounded-lg hover:bg-muted" aria-label={`Actions for ${v.name}`}><MoreHorizontal className="h-4 w-4" /></DropdownMenuTrigger>
@@ -377,6 +439,13 @@ export function Venues() {
                         {v.home_rank > 0
                           ? <DropdownMenuItem onSelect={() => void feature(v, 0)}><Star className="mr-2 h-4 w-4" /> Stop featuring</DropdownMenuItem>
                           : <DropdownMenuItem onSelect={() => void feature(v, 10)}><Star className="mr-2 h-4 w-4" /> Feature on the home page</DropdownMenuItem>}
+                        <DropdownMenuSeparator />
+                        {trustLevelOf(v.trust_level) !== 'verified' && <DropdownMenuItem onSelect={() => notes.ask({ title: `Verify ${v.name}?`, text: 'Visitors see “Verified” with today’s date. Note how you checked it.', confirm: 'Verify', run: n => trust(v, 'verified', n) })}><BadgeCheck className="mr-2 h-4 w-4" /> Mark verified</DropdownMenuItem>}
+                        {trustLevelOf(v.trust_level) !== 'official' && <DropdownMenuItem onSelect={() => notes.ask({ title: `Mark ${v.name} official?`, text: 'Only when the responsible authority confirmed it. Note who and how.', confirm: 'Mark official', run: n => trust(v, 'official', n) })}><Landmark className="mr-2 h-4 w-4" /> Mark official</DropdownMenuItem>}
+                        {trustLevelOf(v.trust_level) !== 'listed' && <DropdownMenuItem onSelect={() => notes.ask({ title: `Remove verification from ${v.name}?`, text: 'It goes back to Listed. Say why — the team sees your note.', confirm: 'Remove', danger: true, run: n => trust(v, 'listed', n) })}><ShieldMinus className="mr-2 h-4 w-4" /> Remove verification</DropdownMenuItem>}
+                        {v.suspended_at
+                          ? <DropdownMenuItem onSelect={() => void suspend(v, false)}><RotateCcw className="mr-2 h-4 w-4" /> Lift suspension</DropdownMenuItem>
+                          : <DropdownMenuItem className="text-destructive" onSelect={() => notes.ask({ title: `Suspend ${v.name}?`, text: 'It goes offline now, and the team can’t publish it until you lift the suspension. Tell them why.', confirm: 'Suspend', danger: true, run: n => suspend(v, true, n) })}><Ban className="mr-2 h-4 w-4" /> Suspend venue</DropdownMenuItem>}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </td>

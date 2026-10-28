@@ -2,7 +2,7 @@
 
 import {
   LayoutDashboard, Map, PenTool, Square, MapPin, Layers, Landmark, CalendarDays, Route, Accessibility,
-  BookOpen, Compass, Images, Megaphone, DoorOpen, QrCode, Settings2, Users, Globe,
+  BookOpen, Compass, Images, Megaphone, DoorOpen, QrCode, Settings2, Users, Globe, Flag,
 } from 'lucide-react';
 import type { ContentKind } from '@/lib/venue/places';
 
@@ -16,6 +16,7 @@ export const NAV: { title: string; items: NavItem[] }[] = [
       { label: 'Areas', icon: Square, to: '/dashboard/areas' },
       { label: 'Places', icon: MapPin, to: '/dashboard/places' },
       { label: 'Floors', icon: Layers, to: '/dashboard/floors' },
+      { label: 'Reports', icon: Flag, to: '/dashboard/reports' },
     ],
   },
   {
@@ -61,6 +62,7 @@ export const SECTIONS: Section[] = [
   ] },
   { label: 'Places', icon: MapPin, hint: 'What visitors can find', tabs: [
     { label: 'All places', to: '/dashboard/places' }, { label: 'Attractions', to: '/dashboard/attractions' }, { label: 'Accessibility', to: '/dashboard/accessibility' },
+    { label: 'Reports', to: '/dashboard/reports' },
   ] },
   { label: "What's on", icon: CalendarDays, hint: 'Events, tours and stories', tabs: [
     { label: 'Events', to: '/dashboard/events' }, { label: 'Tours', to: '/dashboard/tours' }, { label: 'Stories', to: '/dashboard/stories' },

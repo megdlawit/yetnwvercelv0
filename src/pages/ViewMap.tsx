@@ -34,7 +34,8 @@ import { planAngleDeg, snapToPaths, stepForward, type Segment } from '@/lib/venu
 import { useGuidance } from '@/components/visitor/useGuidance';
 import { useStreetDirections } from '@/components/visitor/useStreetDirections';
 import { useGeofences } from '@/components/visitor/useGeofences';
-import { PlaceDetail, type DistanceOf } from '@/components/visitor/PlaceViews';
+import { PlaceDetail, TrustLine, type DistanceOf } from '@/components/visitor/PlaceViews';
+import ReportProblem, { type ReportTarget } from '@/components/visitor/ReportProblem';
 import { ContentDetail, ContentRowButton } from '@/components/visitor/ContentViews';
 import { CategoryChips, CategoryList, CollectionView, DiscoverHome, ExploreView, SearchResults } from '@/components/visitor/BrowseViews';
 import { DirectionsPanel, GuidanceCard } from '@/components/visitor/NavigationViews';
@@ -75,6 +76,7 @@ export default function ViewMap() {
   const [mode, setMode] = useState<'2d' | '3d' | 'outdoor'>('2d');
   const [tab, setTab] = useState<'discover' | 'explore'>('discover');
   const [query, setQuery] = useState('');
+  const [reportFor, setReportFor] = useState<ReportTarget | null>(null);
   const [category, setCategory] = useState<VisitorCategory | null>(null);
   const [collectionId, setCollectionId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -409,6 +411,7 @@ export default function ViewMap() {
         onBack={() => setSelected(null)} onNavigate={() => setNavigating(true)} onShare={() => share(sel)}
         onExplore={() => { setFocus(n => n + 1); if (mode === 'outdoor') setMode('3d'); setSnap('peek'); }}
         saved={saved.has(sel.id)} onSave={() => toast.success(saved.toggle(sel) ? `Saved ${sel.name}` : 'Removed from saved')}
+        onReport={() => setReportFor({ buildingId: building.id, poiId: sel.poiId ?? null, nodeId: sel.id, name: sel.name })}
         onStreetDirections={anchor && sel.gps ? () => { setStreetTo(sel.gps); gps.start(); setShowStreetRoute(true); setMode('outdoor'); setSnap('peek'); } : undefined}
         stories={linked.length ? <div className="space-y-1.5">{linked.map(c => <ContentRowButton key={c.id} c={c} onOpen={() => setOpenContent(c.id)} />)}</div> : null} />;
     }
@@ -439,7 +442,7 @@ export default function ViewMap() {
             <p className="truncate text-[11px] text-muted-foreground">
               {!building.is_published ? <span className="text-amber-600">Preview — not published yet</span>
                 : previewing ? <span className="text-amber-600">Preview — includes unpublished changes</span>
-                : `${places.length} places${whatsOn.length ? ` · ${whatsOn.length} on today` : ''}`}
+                : <>{places.length} places{whatsOn.length ? ` · ${whatsOn.length} on today` : ''} {building.trust_level && building.trust_level !== 'listed' && <>· <TrustLine compact trust={building} /></>}</>}
             </p>
           </div>
         </div>
@@ -610,6 +613,7 @@ export default function ViewMap() {
       )}
 
       <QrScanDialog open={scanOpen} onOpenChange={setScanOpen} onResult={onScanned} />
+      <ReportProblem target={reportFor} published={building.is_published} onClose={() => setReportFor(null)} />
       {startSheet && (
         <StartSheet venueName={building.name} entranceName={(accessibleEntrance ?? entrances[0])?.name ?? null}
           onLocate={() => { closeStartSheet(); startTracking().then(ok => ok && toast.success('Following you — walk and watch the blue dot')); }}

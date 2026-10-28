@@ -20,6 +20,7 @@ import ThemePicker from '@/components/venue/dashboard/ThemePicker';
 import GeoPlacer from '@/components/venue/dashboard/GeoPlacer';
 import HeroSettings from '@/components/venue/dashboard/HeroSettings';
 import IndoorMapSettings from '@/components/venue/dashboard/IndoorMapSettings';
+import TrustPanel from '@/components/venue/dashboard/TrustPanel';
 import { anchorOf } from '@/lib/venue/geoVenue';
 import { uploadImage } from '@/components/venue/dashboard/upload';
 import { InstitutionMark } from '@/components/dashboard/DashboardLayout';
@@ -96,6 +97,11 @@ export default function VenueSettings() {
           <Panel title="Theme" bodyClassName="px-5 pb-5"><ThemePicker data={data} onChanged={reload} /></Panel>
         </div>
         <div className="space-y-6">
+          <div id="trust" className="scroll-mt-24">
+            <Panel title="Trust & verification" bodyClassName="px-5 pb-5">
+              <TrustPanel building={b} institutionStatus={(ws.institution as { status?: string } | null)?.status} canArchive={ws.institution?.role !== 'editor'} onSaved={reload} />
+            </Panel>
+          </div>
           <InstitutionProfile />
           {ws.institution?.role !== 'editor' && (
             <Panel title="Danger zone" bodyClassName="px-5 pb-5">

@@ -369,6 +369,99 @@ export type Database = {
         }
         Relationships: []
       }
+      verification_requests: {
+        Row: {
+          id: string
+          building_id: string
+          poi_id: string | null
+          level: string
+          note: string | null
+          status: string
+          requested_by: string | null
+          requested_at: string
+          decided_by: string | null
+          decided_at: string | null
+          decision_note: string | null
+        }
+        Insert: {
+          id?: string
+          building_id: string
+          poi_id?: string | null
+          level?: string
+          note?: string | null
+          status?: string
+          requested_by?: string | null
+          requested_at?: string
+          decided_by?: string | null
+          decided_at?: string | null
+          decision_note?: string | null
+        }
+        Update: {
+          id?: string
+          building_id?: string
+          poi_id?: string | null
+          level?: string
+          note?: string | null
+          status?: string
+          requested_by?: string | null
+          requested_at?: string
+          decided_by?: string | null
+          decided_at?: string | null
+          decision_note?: string | null
+        }
+        Relationships: []
+      }
+      place_reports: {
+        Row: {
+          id: string
+          building_id: string
+          poi_id: string | null
+          node_id: string | null
+          place_name: string | null
+          kind: string
+          message: string | null
+          contact: string | null
+          reporter_id: string | null
+          status: string
+          resolved_by: string | null
+          resolved_at: string | null
+          resolution_note: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          building_id: string
+          poi_id?: string | null
+          node_id?: string | null
+          place_name?: string | null
+          kind: string
+          message?: string | null
+          contact?: string | null
+          reporter_id?: string | null
+          status?: string
+          resolved_by?: string | null
+          resolved_at?: string | null
+          resolution_note?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          building_id?: string
+          poi_id?: string | null
+          node_id?: string | null
+          place_name?: string | null
+          kind?: string
+          message?: string | null
+          contact?: string | null
+          reporter_id?: string | null
+          status?: string
+          resolved_by?: string | null
+          resolved_at?: string | null
+          resolution_note?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
       venue_snapshots: {
         Row: {
           building_id: string
@@ -600,6 +693,16 @@ export type Database = {
       }
       buildings: {
         Row: {
+          trust_level: string
+          source: string | null
+          responsible_party: string | null
+          checked_at: string | null
+          verified_at: string | null
+          verified_by: string | null
+          trust_note: string | null
+          archived_at: string | null
+          suspended_at: string | null
+          suspend_note: string | null
           tagline: string | null
           cover_url: string | null
           hero_view: string
@@ -624,6 +727,16 @@ export type Database = {
           version: number
         }
         Insert: {
+          trust_level?: string
+          source?: string | null
+          responsible_party?: string | null
+          checked_at?: string | null
+          verified_at?: string | null
+          verified_by?: string | null
+          trust_note?: string | null
+          archived_at?: string | null
+          suspended_at?: string | null
+          suspend_note?: string | null
           tagline?: string | null
           cover_url?: string | null
           hero_view?: string
@@ -648,6 +761,16 @@ export type Database = {
           version?: number
         }
         Update: {
+          trust_level?: string
+          source?: string | null
+          responsible_party?: string | null
+          checked_at?: string | null
+          verified_at?: string | null
+          verified_by?: string | null
+          trust_note?: string | null
+          archived_at?: string | null
+          suspended_at?: string | null
+          suspend_note?: string | null
           tagline?: string | null
           cover_url?: string | null
           hero_view?: string
@@ -870,6 +993,13 @@ export type Database = {
       }
       pois: {
         Row: {
+          trust_level: string
+          source: string | null
+          responsible_party: string | null
+          checked_at: string | null
+          verified_at: string | null
+          verified_by: string | null
+          trust_note: string | null
           accessibility: Json
           custom_type: string | null
           floor_id: string | null
@@ -900,6 +1030,13 @@ export type Database = {
           description_am: string | null
         }
         Insert: {
+          trust_level?: string
+          source?: string | null
+          responsible_party?: string | null
+          checked_at?: string | null
+          verified_at?: string | null
+          verified_by?: string | null
+          trust_note?: string | null
           accessibility?: Json
           custom_type?: string | null
           floor_id?: string | null
@@ -930,6 +1067,13 @@ export type Database = {
           description_am?: string | null
         }
         Update: {
+          trust_level?: string
+          source?: string | null
+          responsible_party?: string | null
+          checked_at?: string | null
+          verified_at?: string | null
+          verified_by?: string | null
+          trust_note?: string | null
           accessibility?: Json
           custom_type?: string | null
           floor_id?: string | null

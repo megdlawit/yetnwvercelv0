@@ -31,7 +31,7 @@ type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; badge?
 const NAV: { title: string; items: NavItem[] }[] = [
   { title: 'Control center', items: [
     { to: '/admin', label: 'Overview', icon: LayoutDashboard },
-    { to: '/admin/approvals', label: 'Approvals', icon: ShieldCheck, badge: o => (o ? o.institutions_pending + o.venues_pending : 0) },
+    { to: '/admin/approvals', label: 'Approvals', icon: ShieldCheck, badge: o => (o ? o.institutions_pending + o.venues_pending + (o.verifications_pending ?? 0) : 0) },
     { to: '/admin/institutions', label: 'Institutions', icon: Building },
     { to: '/admin/venues', label: 'Venues', icon: MapIcon },
     { to: '/admin/users', label: 'People', icon: Users },

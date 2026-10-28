@@ -5,6 +5,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import {
   ArrowLeft, Star, Clock, Accessibility, Check, Navigation, Footprints, Share2, Bookmark, BookmarkCheck, Telescope, Layers, ChevronRight,
+  ShieldCheck, Flag,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -12,6 +13,7 @@ import { polygonArea } from '@/lib/cad/geometry';
 import { roomOutline } from '@/lib/venue/features';
 import { ACCESSIBILITY_LABELS, hoursSummary, openStatus, type Accessibility as PlaceAccessibility, type OpeningHours } from '@/lib/venue/places';
 import { VISITOR_CATEGORIES } from '@/lib/venue/discover';
+import { trustBadge, type TrustFields } from '@/lib/venue/trust';
 import { CATEGORY_COLORS, CATEGORY_ICONS, PX_PER_METER, type Place } from './types';
 
 export type DistanceOf = (p: Place) => { metres: number; minutes: number } | null;
@@ -72,13 +74,15 @@ export function PlaceCard({ p, onOpen, distance }: { p: Place; onOpen: () => voi
   );
 }
 
-export function PlaceDetail({ p, multiFloor, distance, hasElevator, stories, onBack, onNavigate, onShare, onExplore, saved, onSave, onStreetDirections }: {
+export function PlaceDetail({ p, multiFloor, distance, hasElevator, stories, onBack, onNavigate, onShare, onExplore, saved, onSave, onStreetDirections, onReport }: {
   p: Place; multiFloor: boolean; distance: DistanceOf; hasElevator: boolean;
   stories: ReactNode; onBack: () => void; onNavigate: () => void; onShare: () => void;
   /** Fly the map to this place (Explore = look around; Navigate = get there). */
   onExplore: () => void; saved: boolean; onSave: () => void;
   /** Walking directions along the streets from where you are (outdoor map), when offered. */
   onStreetDirections?: () => void;
+  /** Tell the venue's team something here is wrong. */
+  onReport?: () => void;
 }) {
   const d = distance(p);
   const st = openStatus(p.hours);
@@ -136,6 +140,7 @@ export function PlaceDetail({ p, multiFloor, distance, hasElevator, stories, onB
         </div>
 
         {p.description && <p className="whitespace-pre-line text-[15px] leading-relaxed">{p.description}</p>}
+        {p.trust && <TrustLine trust={p.trust} />}
         <PlaceHours hours={p.hours} />
         <PlaceAccess access={p.access} />
         {stories && <div className="space-y-1.5"><p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Events & stories here</p>{stories}</div>}
@@ -150,6 +155,30 @@ export function PlaceDetail({ p, multiFloor, distance, hasElevator, stories, onB
             <Footprints className="h-3.5 w-3.5" /> Walking directions from where you are
           </button>
         )}
+        {onReport && (
+          <button onClick={onReport} className="flex w-full items-center justify-center gap-1.5 pt-1 text-xs text-muted-foreground hover:text-foreground hover:underline">
+            <Flag className="h-3.5 w-3.5" /> Something wrong here? Report a problem
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Verified / Official, and when the details were last checked. Featured never shows here: it isn't trust. */
+export function TrustLine({ trust, compact }: { trust: TrustFields; compact?: boolean }) {
+  const t = trustBadge(trust);
+  if (!t) return null;
+  const strong = t.level !== 'listed';
+  if (compact) {
+    return strong ? <span className="inline-flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400" title={t.detail ?? undefined}><ShieldCheck className="h-3 w-3" /> {t.label}</span> : null;
+  }
+  return (
+    <div className={cn('flex gap-3 rounded-2xl p-3', strong ? 'bg-emerald-50 dark:bg-emerald-950/40' : 'bg-muted/50')}>
+      <ShieldCheck className={cn('mt-0.5 h-4 w-4 shrink-0', strong ? 'text-emerald-600' : 'text-muted-foreground')} />
+      <div className="space-y-0.5 text-sm">
+        {strong && <p className="font-semibold text-emerald-800 dark:text-emerald-300">{t.label}</p>}
+        {t.detail && <p className="text-xs text-muted-foreground">{t.detail}</p>}
       </div>
     </div>
   );

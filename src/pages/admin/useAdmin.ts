@@ -9,6 +9,8 @@ export type InstitutionStatus = 'pending' | 'approved' | 'rejected' | 'suspended
 export interface AdminOverview {
   institutions: number; institutions_pending: number; institutions_suspended: number; venues: number; venues_published: number;
   venues_pending: number; team_members: number; platform_admins: number; places: number; new_institutions_30d: number; publishes_30d: number;
+  /** Since migration 20261028090000 (absent before it). */
+  verifications_pending?: number; venues_verified?: number; reports_open?: number;
 }
 export interface VisitorStats { visitors: number; with_email: number; saves: number; visits: number; steps: number }
 export interface AdminInstitution {
@@ -20,6 +22,13 @@ export interface AdminVenue {
   id: string; name: string; institution_id: string | null; institution_name: string | null; institution_status: InstitutionStatus | null; layout: string;
   is_published: boolean; published_at: string | null; review_status: 'none' | 'pending' | 'rejected'; review_requested_at: string | null;
   review_note: string | null; home_rank: number; floors: number; places: number; placed: boolean; updated_at: string | null;
+  /** Since migration 20261028090000. */
+  trust_level?: string; verified_at?: string | null; archived_at?: string | null; suspended_at?: string | null; suspend_note?: string | null; open_reports?: number;
+}
+export interface AdminVerificationRequest {
+  id: string; building_id: string; venue_name: string; institution_name: string | null; institution_status: InstitutionStatus | null;
+  poi_id: string | null; place_name: string | null; level: 'verified' | 'official'; note: string | null; requested_at: string;
+  requested_by_name: string | null; current_level: string; source: string | null; responsible_party: string | null; is_published: boolean; open_reports: number;
 }
 export interface AdminUser {
   user_id: string; username: string | null; display_name: string | null; email: string | null; created_at: string; last_sign_in_at: string | null;
@@ -61,6 +70,9 @@ export const adminActions = {
   setVenueLive: (b: string, live: boolean) => rpc<void>('admin_set_venue_live', { b, live }),
   setHomeRank: (b: string, rank: number) => rpc<void>('admin_set_home_rank', { b, rank }),
   setPlatformAdmin: (u: string, make: boolean) => rpc<void>('admin_set_platform_admin', { u, make }),
+  decideVerification: (req: string, approve: boolean, note?: string) => rpc<void>('admin_decide_verification', { req, approve, note: note ?? null }),
+  setTrust: (b: string, level: 'listed' | 'verified' | 'official', note?: string, poi?: string) => rpc<void>('admin_set_trust', { b, poi: poi ?? null, level, note: note ?? null }),
+  suspendVenue: (b: string, suspend: boolean, note?: string) => rpc<void>('admin_suspend_venue', { b, suspend, note: note ?? null }),
 };
 
 /** Open an institution's own dashboard (support view) in this tab. */

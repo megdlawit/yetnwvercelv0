@@ -33,6 +33,7 @@ import AccessibilityPage from "./pages/dashboard/AccessibilityPage";
 import Media from "./pages/dashboard/Media";
 import EntryPoints from "./pages/dashboard/EntryPoints";
 import VenueSettings from "./pages/dashboard/VenueSettings";
+import Reports from "./pages/dashboard/Reports";
 import Team from "./pages/dashboard/Team";
 import PublishSettings from "./pages/dashboard/PublishSettings";
 import { PlacesPage, AttractionsPage, ContentPage, QrPage } from "./pages/dashboard/ManagerPages";
@@ -88,6 +89,7 @@ const App = () => (
                 <Route path="entry-points" element={<EntryPoints />} />
                 <Route path="qr" element={<QrPage />} />
                 <Route path="settings" element={<VenueSettings />} />
+                <Route path="reports" element={<Reports />} />
                 <Route path="team" element={<Team />} />
                 <Route path="publish" element={<PublishSettings />} />
               </Route>

@@ -5,6 +5,7 @@ import { Landmark, Flower2, Baby, Coffee, Bath, SquareParking, DoorOpen, Info } 
 import type { Room } from '@/data/types';
 import type { Accessibility } from '@/lib/venue/places';
 import type { DiscoverPlace, VisitorCategory } from '@/lib/venue/discover';
+import type { TrustFields } from '@/lib/venue/trust';
 
 export const PX_PER_METER = 40;
 
@@ -24,6 +25,8 @@ export interface Place extends DiscoverPlace {
   /** The institution's own category and kind for it (as the control center shows them). */
   poiCategory?: string | null;
   poiSubcategory?: string | null;
+  /** How sure the details are: verified / official, and when they were last checked. */
+  trust?: TrustFields;
 }
 
 export interface Floor {

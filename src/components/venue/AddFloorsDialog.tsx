@@ -18,6 +18,7 @@ import { celebrateBuild } from '@/lib/celebrate';
 import { extOf } from '@/lib/cad/readFile';
 import { buildPart, fillLevels, oneFloorPerFile, orderBasements, partsFromFile, type FloorPart } from '@/lib/cad/floorParts';
 import { commitVenue } from '@/lib/cad/commitVenue';
+import { alignFloors, spotsOf, verticalLinks, type FloorNodes } from '@/lib/cad/stackFloors';
 import type { BuiltVenue } from '@/lib/cad/buildVenue';
 import type { LayerMapping } from '@/lib/cad/types';
 
@@ -49,6 +50,8 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
   const [error, setError] = useState<string | null>(null);
   const [emptyName, setEmptyName] = useState('');
   const [created, setCreated] = useState<{ id: string; name: string }[]>([]);
+  /** What the import did between floors: lined up, linked by stairs and lifts — or what to do by hand. */
+  const [stackNote, setStackNote] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const one = area.one.toLowerCase(), many = area.many.toLowerCase();
@@ -129,7 +132,15 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
     const ordered = [...chosen].sort((a, b) => a.level - b.level);
     setStatus(Object.fromEntries(ordered.map(r => [r.key, 'waiting'])));
     const made: { id: string; name: string }[] = [];
-    for (const r of ordered) {
+    // On top of each other: each plan moved over the floor next to it (sheets draw them side by
+    // side). An IFC / 3D model's levels already share one frame.
+    const box = (r: Row) => JSON.stringify(r.drawing.bounds);
+    const sharedFrame = ordered.every(r => box(r) === box(ordered[0]));
+    const { built: stacked, shifts } = sharedFrame
+      ? { built: ordered.map(r => r.built), shifts: ordered.map(() => ({ dx: 0, dy: 0, fit: 1, moved: false })) }
+      : alignFloors(ordered.map(r => ({ level: r.level, built: r.built })), pxPerMeter);
+    const saved: { floorId: string; level: number; name: string; built: BuiltVenue }[] = [];
+    for (const [k, r] of ordered.entries()) {
       setStatus(s => ({ ...s, [r.key]: 'building' }));
       try {
         let floorId = r.target;
@@ -139,10 +150,11 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
           floorId = data.id;
         }
         await Promise.all([
-          commitVenue(supabase, buildingId, floorId, r.built, `${r.drawing.format}-import`, pxPerMeter),
+          commitVenue(supabase, buildingId, floorId, stacked[k], `${r.drawing.format}-import`, pxPerMeter),
           new Promise(res => setTimeout(res, 550)), // let each floor land
         ]);
         made.push({ id: floorId, name: r.name.trim() || `${area.one} ${r.level}` });
+        saved.push({ floorId, level: r.level, name: r.name.trim() || `${area.one} ${r.level}`, built: stacked[k] });
         setStatus(s => ({ ...s, [r.key]: 'done' }));
       } catch (err) {
         console.error('Adding floor failed:', err);
@@ -151,9 +163,44 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
       }
     }
     setCreated(made);
+    const notLined = ordered.filter((_, k) => !sharedFrame && k > 0 && !shifts[k].moved).map(r => r.name);
+    setStackNote(await linkFloors(saved, notLined).catch(err => { console.error('Linking floors failed:', err); return 'The floors were added, but linking their stairs and lifts failed — connect them in the map editor.'; }));
     if (made.length) celebrateBuild();
     setStage('done');
     await onDone(made);
+  };
+
+  /**
+   * Stairs and lifts that line up between neighbouring floors, linked (stairs; lifts step-free),
+   * from the nearest place on each floor. Says what it did, and which floors still need it by hand.
+   */
+  const linkFloors = async (saved: { floorId: string; level: number; name: string; built: BuiltVenue }[], notLined: string[]): Promise<string | null> => {
+    if (saved.length < 2) return null;
+    const { data: nodes, error: e } = await supabase.from('nodes').select('id, x, y, floor_id').in('floor_id', saved.map(f => f.floorId));
+    if (e) throw new Error(e.message);
+    const floorsWithNodes: FloorNodes[] = saved.map(f => ({
+      floorId: f.floorId, level: f.level, spots: spotsOf(f.built),
+      nodes: (nodes ?? []).filter(n => n.floor_id === f.floorId).map(n => ({ id: n.id, x: n.x, y: n.y })),
+    }));
+    const links = verticalLinks(floorsWithNodes, pxPerMeter);
+    if (links.length) {
+      const rows = links.map(l => ({ building_id: buildingId, from_node: l.from, to_node: l.to, weight: Math.round(15 * pxPerMeter), source: 'floors-import',
+        connection: l.kind, accessible: l.kind === 'elevator' }));
+      let { error: insErr } = await supabase.from('edges').insert(rows);
+      // A database before migration 20260930160000 has no connection / accessible columns.
+      if (insErr && /connection|accessible|column/i.test(insErr.message)) ({ error: insErr } = await supabase.from('edges').insert(rows.map(({ connection: _c, accessible: _a, ...r }) => r)));
+      if (insErr) throw new Error(insErr.message);
+    }
+    const sorted = [...saved].sort((a, b) => a.level - b.level);
+    const unlinked = sorted.slice(1).filter((f, i) => f.level - sorted[i].level === 1 && !links.some(l => l.toFloor === f.floorId))
+      .map(f => `${sorted[sorted.indexOf(f) - 1].name} and ${f.name}`);
+    const stairs = links.filter(l => l.kind === 'stairs').length, lifts = links.length - stairs;
+    const parts = [
+      links.length ? `Linked ${[stairs ? `${stairs} stair${stairs === 1 ? '' : 's'}` : '', lifts ? `${lifts} lift${lifts === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ')} between the ${many.toLowerCase()} — directions go up and down.` : '',
+      unlinked.length ? `No stairs or lifts line up between ${unlinked.join('; ')} — connect them in the map editor, or tell the assistant “connect the floors via the stairs”.` : '',
+      notLined.length ? `${notLined.join(', ')} didn't line up with the ${one.toLowerCase()} below (a different plan?) — check ${notLined.length === 1 ? 'it' : 'them'} in 3D.` : '',
+    ].filter(Boolean);
+    return parts.join(' ') || null;
   };
 
   const addEmpty = async () => {
@@ -181,7 +228,7 @@ export default function AddFloorsDialog({ open, onOpenChange, buildingId, floors
           <DialogDescription>
             {stage === 'review' ? `Check each ${one}'s name and level. Nothing is saved until you add them.`
               : stage === 'building' ? `Each ${one} gets its walls, rooms, doors and walkable paths, then lands on the building.`
-              : stage === 'done' ? 'Directions now cross between them by stairs and lifts. Open any one in the map editor to fine-tune it.'
+              : stage === 'done' ? `${stackNote ?? ''} Open any one in the map editor to fine-tune it.`.trim()
               : `Bring the plans you already have — however they're saved.`}
           </DialogDescription>
         </DialogHeader>

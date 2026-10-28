@@ -6,6 +6,9 @@
 
 import type { CadDrawing, Category } from './types';
 
+/** A floor plan's outline on the sheet (drawing units). */
+export interface PlanBox { minX: number; minY: number; maxX: number; maxY: number }
+
 export interface LayerInfo {
   name: string;
   counts: { lines: number; closed: number; open: number; texts: number; inserts: number; circles: number; arcs: number };
@@ -28,6 +31,8 @@ const NAME_RULES: [RegExp, Category][] = [
   // Electrical, hidden and drafting-only layers aren't part of a visitor's map; an "out door
   // walk way" is a walkway, not doors. DIAMENSION is a common misspelling.
   [/(^|[^A-Z])E-[A-Z]|LIGHTING|\bLAMPS?\b|SOCKET|SWITCH|EARTH|TELEPHONE|ELECTR|CALLOUT|(^|[^A-Z])HIDDEN|\bHIDD\b|PROP-?LINE|\bSYMBOL|\bARROW|DIAMEN|OUT\s*DOOR|WALK\s*WAY/i, 'ignore'],
+  // The NCS "-IDEN" (identification) and "-NMBR" layers are the names and numbers of things: S-STRS-IDEN is text, not stairs.
+  [/[-_ ]IDEN\b|[-_ ](NMBR|NUMB|TAGS?)\b/i, 'labels'],
   // TÜR / TUR only as a word (German "door"): FURNITUR, STRUCTUR are not doors.
   [/DOOR|PORTE|(^|[^A-Z])T[ÜU]R\b|TUER|IFCDOOR|KAPI|PUERTA/i, 'doors'],
   [/WIND|GLAZ|FENSTER|FEN[EÊ]TRE|IFCWINDOW|CURTAIN|PENCERE|VENTANA|(^|[^A-Z])WIN($|[^A-Z])/i, 'windows'],
@@ -39,12 +44,13 @@ const NAME_RULES: [RegExp, Category][] = [
   [/FURN|FIRNTUR|FERNIT|FIXT|FIXIT|SANITAR|SANR|\bFUR\b|\bFRN\b|EQPM|EQUIP|CHAIR|TABLE|DESK|BENCH|SEAT|MOBIL|IFCFURN|CASEWORK|NOI.?THAT|THIET.?BI|MUEBLE/i, 'furniture'],
   [/ROOM|SPACE|AREA|ZONE|RAUM|PI[EÈ]CE|IFCSPACE|POLY.*ROOM/i, 'rooms'],
   [/TEXT|\bTEX\b|TEXET|ANNO|LABEL|NAME|TAG|TXT|IDEN|NOTE/i, 'labels'],
-  [/WALL|\bWAL\b|\bWAL\d|\bMUR|MURS|WAND|W[ÄA]NDE|PARTITION|PRTN|IFCWALL|COLUM|COLON|\bCOLS?\b|STRUCT|DUVAR|PARED|MURO/i, 'walls'],
+  [/WALL|\bWAL\b|\bWAL\d|\bMUR|MURS|WAND|W[ÄA]NDE|PARTITION|PRTN|IFCWALL|COLUM|COLON|\bCOLS?\b|STRUCT|DUVAR|PARED|MURO|(^|[-_ $])CONCRETE$|^R\.?C\.?$/i, 'walls'],
 ];
 
 // Block names decide individual inserts too (a "DOOR-900" block on layer 0 is still a door).
 const BLOCK_RULES: [RegExp, Category][] = [
   [/DOOR|PORTE|T[ÜU]R|DR\d/i, 'doors'],
+  [/^COL(UMN)?S?\b|[-_ ]COL(UMN)?S?$/i, 'walls'],
   [/WIND|FENSTER|FEN[EÊ]TRE|WIN\d/i, 'windows'],
   [/STAIR|TREPP|ESCAL/i, 'stairs'],
   [/ELEV|LIFT|AUFZUG|ASCENS/i, 'elevators'],
@@ -60,7 +66,12 @@ export function categoryFromBlock(block: string): Category | null {
   return BLOCK_RULES.find(([re]) => re.test(block))?.[1] ?? null;
 }
 
-export function classifyLayers(d: CadDrawing): LayerInfo[] {
+/**
+ * `plans`: where the floor plans are on the sheet, when it holds other drawings too. A layer
+ * drawn (almost) only outside them is part of an elevation, section, site plan or title block:
+ * it becomes nothing on the floor map, whatever its name says.
+ */
+export function classifyLayers(d: CadDrawing, opts: { plans?: PlanBox[] } = {}): LayerInfo[] {
   const byLayer = new Map<string, LayerInfo>();
   const blockCounts = new Map<string, Map<string, number>>();
   const info = (name: string) => {
@@ -72,7 +83,14 @@ export function classifyLayers(d: CadDrawing): LayerInfo[] {
     return l;
   };
   for (const name of d.layers) info(name);
+  const plans = opts.plans?.length ? opts.plans : null;
+  const inPlans = new Map<string, number>();
+  const outside = new Set<string>();
   for (const e of d.entities) {
+    if (plans) {
+      const p = e.kind === 'LINE' ? e.a : e.kind === 'POLYLINE' ? e.pts[0] : e.kind === 'TEXT' || e.kind === 'INSERT' ? e.pos : e.center;
+      if (p && plans.some(b => p.x >= b.minX && p.x <= b.maxX && p.y >= b.minY && p.y <= b.maxY)) inPlans.set(e.layer, (inPlans.get(e.layer) ?? 0) + 1);
+    }
     const c = info(e.layer).counts;
     if (e.kind === 'LINE') c.lines++;
     else if (e.kind === 'POLYLINE') { if (e.closed) c.closed++; else c.open++; }
@@ -100,6 +118,14 @@ export function classifyLayers(d: CadDrawing): LayerInfo[] {
     const hint = d.layerHints?.[l.name];
     if (hint) { l.suggested = hint.category; l.confidence = hint.confidence; l.reason = hint.reason; continue; }
 
+    const inside = plans ? (inPlans.get(l.name) ?? 0) / total : 1;
+    if (inside < 0.15) {
+      outside.add(l.name);
+      l.suggested = 'ignore'; l.confidence = inside < 0.05 ? 0.85 : 0.7;
+      l.reason = `${Math.round(inside * 100)}% of it is inside the floor plans — the rest is elevations, sections or the site`;
+      continue;
+    }
+
     if (byName) {
       l.suggested = byName;
       l.confidence = 0.92;
@@ -111,6 +137,10 @@ export function classifyLayers(d: CadDrawing): LayerInfo[] {
         else { l.confidence = 0.45; l.reason += ', but it has no closed outlines'; }
       }
       if (byName === 'labels' && c.texts === 0) { l.confidence = 0.4; l.reason += ', but it has no text'; }
+      // "WALL" holding 19 texts and 4 outlines: the walls' labels, not walls.
+      if (byName !== 'labels' && byName !== 'ignore' && c.texts >= 3 && c.texts >= total * 0.75) {
+        l.suggested = 'labels'; l.confidence = 0.75; l.reason = `Named like ${byName} but holds mostly text — their labels`;
+      }
       continue;
     }
     if (blockCat && c.inserts >= geometry) {
@@ -132,7 +162,7 @@ export function classifyLayers(d: CadDrawing): LayerInfo[] {
   // almost always the walls (common when everything is on layer "0").
   if (!layers.some(l => l.suggested === 'walls')) {
     const busiest = layers
-      .filter(l => l.suggested === 'ignore' || l.suggested === 'rooms')
+      .filter(l => (l.suggested === 'ignore' || l.suggested === 'rooms') && !outside.has(l.name))
       .sort((a, b) => (b.counts.lines + b.counts.open + b.counts.closed) - (a.counts.lines + a.counts.open + a.counts.closed))[0];
     if (busiest && busiest.counts.lines + busiest.counts.open + busiest.counts.closed > 0) {
       busiest.suggested = 'walls'; busiest.confidence = 0.55; busiest.reason = 'Most line work in the drawing';

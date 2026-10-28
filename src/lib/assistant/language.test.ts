@@ -17,7 +17,7 @@ describe('how people type', () => {
 
   it('corrects typos towards words it knows, and leaves other words and numbers alone', () => {
     const v = vocabulary('where is the toilet nearest elevator take me to directions', ['Conference Room 2', 'Cafeteria']);
-    expect(correct('wher is the toilt', v)).toEqual({ text: 'where is the toilet', changed: true });
+    expect(correct('wher is the toilt', v)).toEqual({ text: 'where is the toilet', changed: true, typos: true });
     expect(correct('nearst elevater', v).text).toBe('nearest elevator');
     expect(correct('take me to the cafetria', v).text).toBe('take me to the cafeteria');
     expect(correct('is there a lovely garden', v).text).toBe('is there a lovely garden');   // not "nearest"/"elevator"
@@ -78,7 +78,7 @@ describe('English slang in the floor editor', () => {
 
   it('leaves plain requests alone', () => {
     const v = vocabulary('connect room', ['Room 1', 'Room 2']);
-    expect(correct('connect room 1 and room 2', v)).toEqual({ text: 'connect room 1 and room 2', changed: false });
+    expect(correct('connect room 1 and room 2', v)).toEqual({ text: 'connect room 1 and room 2', changed: false, typos: false });
     expect(correct('flip to 3d', v).text).toBe('flip to 3d');
   });
 });

@@ -96,7 +96,7 @@ export const CHAT: Record<string, string> = { ...pairs(MORE_CHAT), ...pairs(`
   kinda:kind_of sorta:sort_of dunno:do_not_know dno:do_not_know idk:i_do_not_know idc:i_do_not_care ikr:i_know
   tho:though thru:through tru:true rly:really rlly:really rli:really srsly:seriously sry:sorry srry:sorry soz:sorry
   nvm:never_mind nm:never_mind np:no_problem nps:no_problem npp:no_problem
-  rn:right_now asap:now atm:at_the_moment b4:before l8r:later l8:late gr8:great m8:mate str8:straight 2day:today 2nite:tonight
+  rn:right_now asap:now b4:before l8r:later l8:late gr8:great m8:mate str8:straight 2day:today 2nite:tonight
   tmrw:tomorrow tmr:tomorrow tmrrw:tomorrow  2moro:tomorrow 2morrow:tomorrow ystrdy:yesterday
   dat:that dis:this dem:them dey:they der:there da:the dese:these dose:those
   n:and  nd:and  

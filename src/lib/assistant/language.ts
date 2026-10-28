@@ -16,7 +16,8 @@ export function normalize(text: string): string {
   // "heyyy", "connnect", "pleeease": a letter held down is one letter too many.
   s = s.replace(/(\p{L})\1{2,}/gu, '$1$1');
   for (const [re, to] of CONTRACTIONS) s = s.replace(re, to);
-  s = s.replace(/[^\p{L}\p{N}'\s-]+/gu, ' ').replace(/(^|\s)'+|'+(?=\s|$)/g, ' ');
+  // Punctuation goes, but not a decimal point or comma: "2.5 m" stays 2.5.
+  s = s.replace(/[^\p{L}\p{N}'\s.,-]+/gu, ' ').replace(/(?<!\d)[.,]|[.,](?!\d)/g, ' ').replace(/(^|\s)'+|'+(?=\s|$)/g, ' ');
   // "room12" → "room 12", "2nd" stays: letters then digits are split only after a word of 3+ letters.
   s = s.replace(/\b([a-z]{3,})(\d+)\b/g, '$1 $2');
   // "wheel-chair", "check-in": a hyphen between letters is a space (then joined below if it's one word).
@@ -24,6 +25,10 @@ export function normalize(text: string): string {
   const words = s.split(/\s+/).filter(w => w && !FILLER_WORDS.has(w)).flatMap(w => (SPELLED_OUT[w] ?? w).split(' '));
   return joinCompounds(words).join(' ').replace(/\s+/g, ' ').trim();
 }
+
+/** Lower case with punctuation gone, but nothing written out: to tell whether normalize changed the words. */
+export const plainWords = (text: string) =>
+  text.toLowerCase().replace(/[^\p{L}\p{N}'\s.,-]+/gu, ' ').replace(/(?<!\d)[.,]|[.,](?!\d)/g, ' ').replace(/\s+/g, ' ').trim();
 
 /** "good bye" → "goodbye", "rest room" → "restroom": two words that are written as one. */
 function joinCompounds(words: string[]): string[] {
@@ -109,7 +114,7 @@ const VERB_RULES: [RegExp, string][] = [
   [new RegExp(`^(?:${v('rotate')}) (.+?) (?:by )?(\\d+)(?: degrees| deg)?$`), 'rotate $1 $2 degrees'],
   [new RegExp(`^(?:${v('bigger')}) (.+)$`), 'make $1 bigger'],
   [new RegExp(`^(?:${v('smaller')}) (.+)$`), 'make $1 smaller'],
-  [new RegExp(`^(?:${v('show')}) (.+)$`), 'show $1'],
+  [new RegExp(`^(?:${v('show')}) (?!fit$|to fit$)(.+)$`), 'show $1'],
 ];
 
 /** The request with its slang said plainly ("nuke the bench" → "remove the bench"); `slang` when anything changed. */
@@ -151,7 +156,7 @@ const SHORTHANDS: Record<string, string> = {
   yea: 'yes', yeah: 'yes', ye: 'yes', yah: 'yes', yass: 'yes', yas: 'yes', yup: 'yes', yep: 'yes', nah: 'no', naw: 'no', nope: 'no',
   okie: 'ok', oki: 'ok', okies: 'ok', aight: 'alright', ight: 'alright', gr8: 'great', l8r: 'later', ppl: 'people', cya: 'bye', thanku: 'thanks',
   sumthin: 'something', smth: 'something', sth: 'something', somethin: 'something', nothin: 'nothing', everythin: 'everything',
-  bout: 'about', abt: 'about', prolly: 'probably',
+  bout: 'about', abt: 'about', prolly: 'probably', tak: 'take', tke: 'take', tll: 'tell', tel: 'tell', bak: 'back', bck: 'back', instaed: 'instead', lets: 'let us',
   pic: 'picture', nr: 'near', nxt: 'next', fl: 'floor', flr: 'floor', lvl: 'level', rm: 'room', rms: 'rooms', bldg: 'building',
 };
 
@@ -198,25 +203,47 @@ export function editDistance(a: string, b: string, max = Infinity): number {
 const allowed = (len: number) => (len <= 3 ? 0 : len <= 6 ? 1 : 2);
 
 /** Names of rooms, amenities and objects from the word bank: spelling is corrected towards these too. */
-export const PLACE_VOCABULARY: string[] = [...Object.values(PLACE_WORDS).flat(), ...OBJECT_WORDS];
+export const PLACE_VOCABULARY: readonly string[] = Object.freeze([...Object.values(PLACE_WORDS).flat(), ...OBJECT_WORDS]);
 
 /** A vocabulary to correct towards: the assistant's phrases plus names (each name's words). */
 export function vocabulary(...lists: (Iterable<string> | string)[]): Set<string> {
   const v = new Set<string>();
-  for (const l of lists) for (const item of typeof l === 'string' ? [l] : l) for (const w of normalize(item).split(' ')) if (w) v.add(w);
+  for (const l of lists) for (const w of wordsOf(l)) v.add(w);
   return v;
+}
+
+// Each list's words, normalized once: the fixed word lists are the same for every message.
+const wordCache = new Map<string, string[]>();
+const listCache = new WeakMap<object, string[]>();
+function wordsOf(l: Iterable<string> | string): string[] {
+  if (typeof l === 'string') {
+    let w = wordCache.get(l);
+    if (!w) { w = normalize(l).split(' ').filter(Boolean); if (wordCache.size > 500) wordCache.clear(); wordCache.set(l, w); }
+    return w;
+  }
+  const cached = listCache.get(l as object);
+  if (cached) return cached;
+  const out = [...l].flatMap(wordsOf);
+  if (Array.isArray(l) && Object.isFrozen(l)) listCache.set(l, out);
+  return out;
 }
 
 /**
  * Each word that isn't known but is a typo away from exactly one best known word becomes that
  * word. `changed`: whether anything was corrected (so the assistant can say what it read).
  */
-export function correct(text: string, vocab: Set<string>): { text: string; changed: boolean } {
+export function correct(text: string, vocab: Set<string>): { text: string; changed: boolean; typos: boolean } {
   const fixed = fixWords(normalize(text).split(' ').filter(Boolean), vocab);
   // Slang is said plainly once the typos are fixed ("nuek the bench" → "nuke the bench" → "remove the bench").
   const plain = plainSlang(fixed.text);
-  return { text: plain.text, changed: fixed.changed || plain.slang };
+  // `typos`: a word was misspelled (not just shorthand or slang said plainly).
+  return { text: plain.text, changed: fixed.changed || plain.slang, typos: fixed.changed };
 }
+
+const LONG_FILLER = [...FILLER_WORDS].filter(w => w.length >= 6);
+
+/** Two-letter words that may be a piece of words run together ("takemeto"); others ("de", "ct") are typo debris. */
+const SHORT_PIECES = new Set(['to', 'me', 'is', 'in', 'on', 'at', 'up', 'of', 'my', 'an', 'go', 'do', 'it', 'us', 'we', 'by', 'no', 'so', 'hi', 'or', 'be', 'as', 'if']);
 
 function fixWords(words: string[], vocab: Set<string>): { text: string; changed: boolean } {
   let changed = false;
@@ -226,24 +253,46 @@ function fixWords(words: string[], vocab: Set<string>): { text: string; changed:
     const known = MISSPELLINGS[w];
     if (known && !vocab.has(w)) { changed = true; return known; }
     if (isWord(w) || /\d/.test(w) || !/^[a-z'-]+$/.test(w)) return w;
-    // Words run together ("whereis", "groundfloor", "nearesttoilet"): split before any typo is guessed.
-    const parts = splitGlued(w, isWord);
-    if (parts) { changed = true; return parts.join(' '); }
-    // A three-letter word may be a longer word missing a letter ("rom" for "room"), nothing else.
-    const short = w.length === 3;
-    const max = short ? 1 : allowed(w.length);
-    if (!max) return w;
-    let best: string | null = null, bd = max + 1, tie = false;
-    for (const v of vocab) {
-      if (Math.abs(v.length - w.length) > max || /\d/.test(v) || (short && (v.length !== 4 || v[0] !== w[0]))) continue;
-      const dd = editDistance(w, v, max) + (v[0] === w[0] ? 0 : 0.5);   // first letters are rarely wrong
-      if (dd < bd) { bd = dd; best = v; tie = false; } else if (dd === bd && v !== best) tie = true;
-    }
-    if (!best || tie || bd > max) return w;
+    // A misspelt filler word ("actally", "basicaly") goes, as the word itself would have.
+    if (w.length >= 6 && LONG_FILLER.some(f => editDistance(w, f, 1) <= 1)) { changed = true; return ''; }
+    // Words run together ("whereis", "groundfloor", "nearesttoilet") — unless the word is one slip
+    // from a known word ("connectde" is "connected", not "connect de").
+    const parts = splitGlued(w, x => isWord(x) && (x.length > 2 || SHORT_PIECES.has(x)));
+    const typo = nearestWord(w, vocab);
+    if (parts && !(typo && typo.dist <= 1 && w.length >= 6)) { changed = true; return parts.join(' '); }
+    if (!typo) return w;
     changed = true;
-    return best;
+    return typo.word;
   });
-  return { text: out.join(' '), changed };
+  return { text: out.filter(Boolean).join(' '), changed };
+}
+
+/** The one known word a typo is closest to (a tie is no answer); three-letter words only grow by a letter ("rom" → room). */
+function nearestWord(w: string, vocab: Set<string>): { word: string; dist: number } | null {
+  const short = w.length === 3;
+  const max = short ? 1 : allowed(w.length);
+  if (!max) return null;
+  let best: string | null = null, bd = max + 1, tie = false;
+  for (const v of byLength(vocab, w.length, max)) {
+    if (/\d/.test(v) || (short && (v.length !== 4 || v[0] !== w[0]))) continue;
+    const dd = editDistance(w, v, max) + (v[0] === w[0] ? 0 : 0.5);   // first letters are rarely wrong
+    if (dd < bd) { bd = dd; best = v; tie = false; } else if (dd === bd && v !== best) tie = true;
+  }
+  return best && !tie && bd <= max ? { word: best, dist: bd } : null;
+}
+
+/** The vocabulary's words by length, built once per vocabulary: a typo is only compared with words of about its length. */
+const lengthIndex = new WeakMap<Set<string>, Map<number, string[]>>();
+function byLength(vocab: Set<string>, len: number, max: number): string[] {
+  let idx = lengthIndex.get(vocab);
+  if (!idx) {
+    idx = new Map();
+    for (const v of vocab) (idx.get(v.length) ?? idx.set(v.length, []).get(v.length)!).push(v);
+    lengthIndex.set(vocab, idx);
+  }
+  const out: string[] = [];
+  for (let n = len - max; n <= len + max; n++) out.push(...(idx.get(n) ?? []));
+  return out;
 }
 
 /**

@@ -30,7 +30,7 @@ describe('words from the bank, understood', () => {
   it('common misspellings', () => {
     expect(correct('wher is the resturant', v).text).toBe('where is the restaurant');
     expect(correct('the elevater is beside the libary', v).text).toBe('the elevator is beside the library');
-    expect(correct('definately seperate', v)).toEqual({ text: 'definitely separate', changed: true });
+    expect(correct('definately seperate', v)).toEqual({ text: 'definitely separate', changed: true, typos: true });
   });
 
   it('chat spellings and noise', () => {

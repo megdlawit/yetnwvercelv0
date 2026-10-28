@@ -12,10 +12,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Check, ChevronDown, ChevronUp, Loader2, Sparkles, Undo2, X, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { parseIntent, type MapAction } from '@/lib/assistant/intent';
-import { smallTalk, smallTalkKind } from '@/lib/assistant/smalltalk';
-import { knowledge } from '@/lib/assistant/knowledge';
-import { PLACE_VOCABULARY, correct, matchNames, vocabulary } from '@/lib/assistant/language';
+import type { MapAction } from '@/lib/assistant/intent';
+import { readEditorRequest } from '@/lib/assistant/editorRead';
+import { smallTalkKind } from '@/lib/assistant/smalltalk';
+import { matchNames } from '@/lib/assistant/language';
 import { brief, plan, suggestions, type Chip, type HealthItem, type Highlight, type MapState, type Plan, type Thing } from '@/lib/assistant/engine';
 
 type BaseState = Omit<MapState, 'last' | 'lastChange'>;
@@ -56,12 +56,6 @@ const HINTS = ['Connect Room 1 and Room 2', 'Add a 6 by 4 m meeting room here', 
 /** Edits that only change what's on screen (or can't be taken back from here). */
 const NOT_UNDOABLE = new Set(['undo', 'redo', 'show', 'view', 'fit', 'floor', 'setting', 'tool', 'select_all', 'select_none', 'open', 'publish']);
 const nextFrame = () => new Promise<void>(r => requestAnimationFrame(() => setTimeout(r, 30)));
-/** What the editor understands, as words: typos are corrected towards these and the map's names. */
-const EDITOR_WORDS = `connect disconnect join link unlink block unblock walkable walk path paths add put place create make draw move shift drag rename call
-  name remove delete erase undo redo show hide find where fix everything check health problems accessible wheelchair step free rotate turn resize
-  bigger smaller wider narrower longer shorter duplicate copy select all none floor floors upstairs downstairs room rooms restroom toilet elevator
-  lift stairs entrance exit door doors window windows wall walls corridor hallway cafe kitchen office meeting reception lobby height high tall
-  metres meters degrees left right up down near next beside between behind publish open save view zoom fit type kind called named here this it`;
 /** Things to say, for "Did you mean…?" when a message isn't understood. */
 const KNOWN_REQUESTS = [...HINTS, 'Undo', 'Redo', 'Check the map', 'Show the 2nd floor', 'Add a restroom here', 'Remove this', 'Rename this to ', 'Connect the floors with the stairs', 'Make this wheelchair accessible', 'Publish'];
 
@@ -191,27 +185,16 @@ export default function MapAssistant(props: MapAssistantProps) {
     }
     if (pending) { setMsgs(p => p.map(x => (x.preview ? { ...x, preview: undefined } : x))); onHighlight(null); queue.current = []; }
     say({ who: 'me', text: said });
-    // Typos corrected against what the assistant knows and the map's names: tried when the words as typed aren't understood.
+    // Small talk, questions about Yet New, then the request — as typed or with its typos fixed (editorRead.ts).
     const s0 = state();
-    const names = s0 ? [...s0.rows.rooms.map(r => r.name), ...s0.rows.nodes.map(n => n.name), ...s0.rows.floors.map(f => f.name)].filter((x): x is string => !!x) : [];
-    const fixed = correct(said, vocabulary(EDITOR_WORDS, HINTS, PLACE_VOCABULARY, names));
-    const alt = fixed.changed ? fixed.text : null;
-    // Greetings, thanks, "what can you do?": answered right away.
-    const chat = smallTalk(said, s0) ?? (alt ? smallTalk(alt, s0) : null);
-    if (chat) { say({ who: 'map', text: chat.reply, tone: 'info', chips: chat.chips.length ? chat.chips : undefined }); return; }
-    // "What's a room?", "how do I publish?": what Yet New is and does, answered from what it really does.
-    const known = knowledge(said) ?? (alt ? knowledge(alt) : null);
-    if (known) { say({ who: 'map', text: known.reply, tone: 'info', chips: known.chips.length ? known.chips : undefined }); return; }
+    const read = readEditorRequest(said, s0, HINTS);
+    if (read.kind === 'talk') { say({ who: 'map', text: read.reply.reply, tone: 'info', chips: read.reply.chips.length ? read.reply.chips : undefined }); return; }
     setBusy(true);
     try {
-      // The corrected reading first: corrections only move unknown words to the map's names and the
-      // assistant's own words, and "conect rom 1…" parses as typed but names no place.
-      const fromAlt = alt ? parseIntent(alt) : null;
-      const actions = fromAlt ?? parseIntent(said);
-      if (fromAlt) say({ who: 'map', text: `I read that as “${alt}”.`, tone: 'info' });
-      if (!actions) {
+      if (read.kind === 'actions' && read.readAs) say({ who: 'map', text: `I read that as “${read.readAs}”.`, tone: 'info' });
+      if (read.kind === 'unknown') {
         // Not understood: the closest things it can do, to tap.
-        const close = matchNames(alt ?? said, KNOWN_REQUESTS, x => x).filter(x => x.score >= 45).slice(0, 3).map(x => x.item);
+        const close = matchNames(read.text, KNOWN_REQUESTS, x => x).filter(x => x.score >= 45).slice(0, 3).map(x => x.item);
         say({
           who: 'map', tone: 'info',
           text: close.length ? 'I’m not sure what you mean — did you mean one of these?' : "I didn't quite get that. You can say things like \"Connect Room 1 and Room 2\", \"Add a restroom here\" or \"Fix everything\".",
@@ -219,7 +202,7 @@ export default function MapAssistant(props: MapAssistantProps) {
         });
         return;
       }
-      await run(actions);
+      await run(read.actions);
     } finally { setBusy(false); }
   };
 

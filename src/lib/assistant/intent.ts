@@ -56,6 +56,35 @@ export const TOOL_WORDS: Record<string, string> = {
   trim: 'trim', extend: 'extend', split: 'split', join: 'join', offset: 'offset',
 };
 
+/**
+ * Every word the phrases below understand. Typos are corrected towards these ("grdi" → grid,
+ * "liev" → live, "distacne" → distance), so a request typed fast still reads. intent.test.ts
+ * checks this list against the phrases, so a new phrase can't leave its words out.
+ */
+export const PARSER_WORDS = `about above access accessibility accessible accessibly across actually add added afternoon all alright also amharic
+  and another any anything are area around auto away back basement bathroom bathrooms bed behind below bench benches
+  beside between big bigger bird bit block both boulder brick bring building bush bushes cad call called can carpet
+  ceiling change changes check clear clockwise clone close closer concrete conference connect connected connection
+  connects continue copy corridor could count counter create created cut delete describe deselect details disconnect
+  distance door doors doorway down downstairs draw drawing drop duplicate dwg dxf east edit editor elevator elevators
+  entire entrance entrances entry erase errors escalator evening every everything exit exits extra eye fact far farther
+  file find fit fix flat floor floors flower flowers for fountain free from front full further garden gate get give
+  glass goes good grab grass great grid half hallway have health height heights hello help here hey hide high how image
+  import info insert inside instead into issues its join just keyboard kindly know lamp large larger last lawn left let
+  lets level levels lift lifts light like line link linked links list little live locate location lot made main make
+  many map marble mark meant measure meeting meters metres mind mistakes mode more morning move much must name named
+  near nearer need network never new next north not nothing now object objects off office offices okay one onto open
+  our out outdoor over overview palm path paths perspective pick pin place places plan plant planter plaster please pls
+  plz pond pool position post pot problems publish put quarter question quick ramp reachable ready real really
+  reception redo remove rename repair restroom restrooms return revert review rid right rock room rooms rotate route
+  routes runs salam same satellite scale screen seat seating see selam select selection set shortcuts should show shrub
+  size sketch slightly smaller snap some south spin split spot staircase staircases stairs stairway started step steps
+  stone stop storage store storey story street supposed svg switch take tall tell test thanks that the them then there
+  these thick thickness thing things this those three through tile time tiny toggle toilet toilets tool top touch tour
+  tree trees turn twice undo unlink unselect upload upstairs use using utility venue via view visitors walk walkable
+  walking walkway wall walls want was water way west what whatever wheelchair wheelchairs where which whole will window
+  with wood world would wrong you zoom`;
+
 /** Room kinds the editor knows ("meeting room" → meeting). */
 export const ROOM_KINDS: [RegExp, string][] = [
   [/rest ?room|toilet|wc|bathroom|lavatory|washroom/, 'restroom'], [/reception|front desk|info(rmation)?( desk)?|lobby/, 'reception'],
@@ -141,26 +170,27 @@ export function fixTypos(text: string): string {
 /** Misspellings that are never a real word or name: safe to fix before parsing. */
 const fixPhrases = (text: string) => text.replace(/\b(nxet|enxt|nexr|netx|nexy) to\b/gi, 'next to').replace(/\b(rihgt|rigth|rgiht|rght|riht) (here|there)\b/gi, 'right $2');
 
-export function parseIntent(input: string): MapAction[] | null {
+/** `names`: the map's names, when known — they tell where one name ends ("call Main Gate Book Shop instead"). */
+export function parseIntent(input: string, names: readonly string[] = []): MapAction[] | null {
   const typed = fixPhrases(clean(stripSocial(input.replace(/\s+/g, ' '))));
   if (!typed) return null;
-  const asTyped = parseText(typed);
+  const asTyped = parseText(typed, names);
   if (asTyped) return asTyped;
   const fixed = fixTypos(typed);
-  return fixed !== typed ? parseText(fixed) : null;
+  return fixed !== typed ? parseText(fixed, names) : null;
 }
 
-function parseText(text: string): MapAction[] | null {
+function parseText(text: string, names: readonly string[]): MapAction[] | null {
   // Several requests in one: "add a reception near the entrance and connect it to room 1".
   const parts = text.split(/\s*(?:,?\s+and then\s+|;\s*|\.\s+|,?\s+then\s+|\s+and\s+(?=(?:connect|add|move|rename|remove|delete|make|link|put)\b))/i).filter(Boolean);
   if (parts.length > 1) {
-    const all = parts.map(one);
+    const all = parts.map(p => one(p, names));
     return all.every(Boolean) ? all.flat() as MapAction[] : null;
   }
-  return one(text);
+  return one(text, names);
 }
 
-function one(raw: string): MapAction[] | null {
+function one(raw: string, names: readonly string[]): MapAction[] | null {
   const t = clean(raw).replace(/^((please|can you|could you|i want to|i'd like to|let's|lets|now|ok|okay|also|and|then|great|thanks),?\s+)+/i, '').replace(/\s+please$/i, '');
   const l = t.toLowerCase();
   // Names keep the capitals they were typed with ("Room 1"), matching runs on lower case.
@@ -224,7 +254,12 @@ function one(raw: string): MapAction[] | null {
     return [{ op: 'walkable', target: R(m[1]) }];
   }
 
-  // Rename.
+  // Rename. "call Main Gate Book Shop instead": the map's names say where the old name ends.
+  if ((m = l.match(/^(?:call|name|rename) (.+) (?:instead|from now on)$/))) {
+    const said = m[1];
+    const known = [...names].map(n => n.toLowerCase()).filter(n => said.startsWith(`${n} `)).sort((a, b) => b.length - a.length)[0];
+    if (known) return [{ op: 'rename', target: R(known), name: titleCase(clean(t.slice(l.indexOf(said) + known.length + 1, l.indexOf(said) + said.length))) }];
+  }
   if ((m = l.match(/^(?:rename|call|name) (.+?) (?:to|as) (.+)$/)) || (m = l.match(/^(.+?) should be (?:called|named) (.+)$/)) || (m = l.match(/^change the name of (.+?) to (.+)$/))) {
     return [{ op: 'rename', target: R(m[1]), name: titleCase(clean(t.slice(t.toLowerCase().lastIndexOf(m[2])))) }];
   }
@@ -263,7 +298,9 @@ function editorOne(t: string, l: string, R: (s: string) => string): MapAction[] 
   if (/^(publish( (it|the map|the venue|my map|my venue|(the |my )?changes|now))?( for visitors)?|(make|put) (it|the map|the venue|my map) live( for visitors| now)?|go live( now)?)$/.test(l)) return [{ op: 'publish' }];
 
   // Views and the camera.
-  if ((m = l.match(/^(?:switch to |show(?: me)?(?: it)?(?: in)? |go to |open |view(?: it)? in |see (?:it )?in )?(?:the )?(2d|3d|split)(?: view| mode| screen)?$/))) return [{ op: 'view', mode: m[1] as ViewMode }];
+  if ((m = l.match(/^(?:switch (?:back )?to |show(?: me)?(?: it)?(?: in)? |go (?:back )?to |back to |return to |open |view(?: it)? in |see (?:it )?in |change to |put it in )?(?:the )?(2d|3d|split)(?: view| mode| screen| please)?$/))) return [{ op: 'view', mode: m[1] as ViewMode }];
+  if (/^(flat|top down|top-down|plan|from above)( view)?$/.test(l)) return [{ op: 'view', mode: '2d' }];
+  if (/^(3d|three d|perspective|bird'?s? eye)( view)?$/.test(l)) return [{ op: 'view', mode: '3d' }];
   if (/^(fit|zoom to fit|fit (the )?(plan|map|floor|everything)|show (me )?(the )?(whole|entire|full) (plan|map|floor)|zoom (all the way )?out|see everything)$/.test(l)) return [{ op: 'fit' }];
   if ((m = l.match(/^(?:go|move|switch|take me) (up|down)(?:stairs| a floor| one floor)?$/)) || (m = l.match(/^(?:go )?(upstairs|downstairs)$/))) return [{ op: 'go_floor', floor: m[1].startsWith('up') ? 'up' : 'down' }];
   if ((m = l.match(/^(?:go to|open|switch to|show(?: me)?|edit) (?:the )?((?:floor|level) ?\w+(?: floor)?|basement|\w+ floor)$/))) return [{ op: 'go_floor', floor: m[1].replace(/ floor$/, '').replace(/^(floor|level) ?/, '') }];
@@ -275,6 +312,7 @@ function editorOne(t: string, l: string, R: (s: string) => string): MapAction[] 
   }
   if ((m = l.match(/^(show|hide|toggle) (?:the )?(grid|snap(?:ping)?)$/))) return [{ op: 'setting', setting: m[2] === 'grid' ? 'grid' : 'snap', on: m[1] === 'toggle' ? null : m[1] === 'show' }];
   if ((m = l.match(/^(?:i want to |let me |i'll |i will |time to )?(?:draw|sketch|use the|pick the|select the|switch to the) (?:a |an |some |the )?(\w+)(?: tool)?$/)) && TOOL_WORDS[m[1]]) return [{ op: 'tool', tool: TOOL_WORDS[m[1]] }];
+  if ((m = l.match(/^(?:(?:use|pick|grab|give me|open|i need|switch to|select) (?:the |a )?)?(\w+) tool$/)) && TOOL_WORDS[m[1]]) return [{ op: 'tool', tool: TOOL_WORDS[m[1]] }];
   if (/^(measure|let me measure)$/.test(l)) return [{ op: 'tool', tool: 'measure' }];
   if (/^select (all|everything)( on this floor)?$/.test(l)) return [{ op: 'select', target: 'all' }];
   if (/^(deselect|clear (the )?selection|select nothing|unselect)( all| everything)?$/.test(l)) return [{ op: 'select', target: 'none' }];
@@ -323,7 +361,7 @@ function editorOne(t: string, l: string, R: (s: string) => string): MapAction[] 
 
   // Kinds: "make room 3 a restroom", "this is the reception", "room 2 is a meeting room".
   if ((m = l.match(/^(?:make|set|mark|change|turn) (.+?) (?:as |to be |into |to )?(?:a |an |the )?(office|meeting room|meeting|conference room|entrance|stairs|staircase|elevator|lift|restroom|toilet|bathroom|reception|utility room|utility|storage)(?: room)?$/)) ||
-      (m = l.match(/^(.+?) (?:is|should be) (?:actually |really |meant to be )?(?:a |an |the )?(office|meeting room|conference room|entrance|stairs|staircase|elevator|lift|restroom|toilet|bathroom|reception|utility room|storage)$/))) {
+      (m = l.match(/^(.+?) (?:is|should be|was supposed to be|is supposed to be) (?:actually |really |meant to be |in fact )?(?:a |an |the )?(office|meeting room|meeting|conference room|entrance|stairs|staircase|elevator|lift|restroom|toilet|bathroom|reception|utility room|utility|storage|store room)$/))) {
     return [{ op: 'set_type', target: R(m[1]), kind: roomKind(m[2]) ?? m[2] }];
   }
 

@@ -224,8 +224,13 @@ export default function CadImportDialog({ open, onOpenChange, buildingId, floorI
       buildVenue(area, m, { unitsPerMeter: u.perMeter, pxPerMeter, flipY: d.flipY, fix }); // walls, rooms, doors…
       setDone(7); await tick(); setDone(8); await tick();
       setSheet(d); setAreas(found); setAreaIdx(0); setLayers(ls); setMapping(m);
-      // The AI labels the whole file, so the rules' second opinion is for the whole file too.
-      const hints = Object.fromEntries(classifyLayers(d).map(l => [l.name, { category: l.suggested, confidence: l.confidence, reason: l.reason }]));
+      // The AI labels the whole file, so the rules' second opinion is for the whole file too —
+      // knowing where the floor plans are, so layers drawn only in elevations or sections are left out.
+      const whole = classifyLayers(d);
+      const wallLayers = new Set(whole.filter(l => l.suggested === 'walls').map(l => l.name));
+      const plans = found.length > 1 ? findFloorPlans(d, layer => wallLayers.has(layer), u.perMeter, arcs) : [];
+      const hints = Object.fromEntries((plans.length > 1 ? classifyLayers(d, { plans }) : whole)
+        .map(l => [l.name, { category: l.suggested, confidence: l.confidence, reason: l.reason }]));
       if (d.format === 'dxf') setLabelSource({ blob: f, fileName: f.name, hints });
       else if (d.format === 'dwg' && d.convertedDxf) {
         setLabelSource({ blob: new Blob([d.convertedDxf], { type: 'application/dxf' }), fileName: f.name.replace(/\.dwg$/i, '.dxf'), hints });

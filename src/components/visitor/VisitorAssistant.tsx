@@ -59,15 +59,15 @@ export default function VisitorAssistant({ context, onAction, onClose, className
       <div ref={list} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3" aria-live="polite">
         {msgs.map(m => (
           <div key={m.id} className={cn('flex flex-col', m.who === 'me' ? 'items-end' : 'items-start')}>
-            <div className={cn('max-w-[85%] whitespace-pre-line rounded-2xl px-3 py-2 text-sm leading-snug',
+            <div className={cn('ma-in max-w-[85%] whitespace-pre-line rounded-2xl px-3 py-2 text-sm leading-snug',
               m.who === 'me' ? 'rounded-br-md bg-primary text-primary-foreground' : 'rounded-bl-md bg-muted text-foreground')}>
               {m.readAs && <span className="mb-0.5 block text-[11px] italic text-muted-foreground">I read: “{m.readAs}”</span>}
               {m.text}
             </div>
             {m.chips?.length && m.id === lastId ? (
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
+              <div className="ma-in mt-1.5 flex flex-wrap gap-1.5">
                 {m.chips.map(c => (
-                  <button key={c} onClick={() => send(c)} className="rounded-full border border-primary/30 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10">{c}</button>
+                  <button key={c} onClick={() => { send(c); input.current?.focus(); }} className="rounded-full border border-primary/30 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10">{c}</button>
                 ))}
               </div>
             ) : null}

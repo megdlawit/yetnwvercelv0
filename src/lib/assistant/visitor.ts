@@ -66,7 +66,7 @@ export interface VisitorReply {
 
 // ── Kinds of place people ask for by what they are ──────────────────────────
 
-interface Kind { id: string; label: string; words: RegExp; test: (p: VisitorPlace) => boolean }
+interface Kind { id: string; label: string; words: RegExp; test: (p: VisitorPlace) => boolean; /** Asked for when there's none of this kind ("tickets" → the help desk). */ fallback?: string }
 /** Amharic words for kinds of place, read as their English (\b doesn't work with Amharic letters). */
 const AMHARIC: [RegExp, string][] = [
   [/ሽንት ቤት|ሽንትቤት|መጸዳጃ(?: ቤት)?|ሽንት/g, 'toilet'], [/ሊፍት|አሳንሰር/g, 'elevator'], [/ደረጃ/g, 'stairs'], [/መውጫ/g, 'exit'], [/መግቢያ|በር/g, 'entrance'],
@@ -74,21 +74,24 @@ const AMHARIC: [RegExp, string][] = [
 ];
 const has = (re: RegExp) => (p: VisitorPlace) => re.test(p.name) || re.test(p.typeLabel ?? '');
 const KINDS: Kind[] = [
-  { id: 'restroom', label: 'restroom', words: /\b(toilets?|restrooms?|bathrooms?|washrooms?|lavatory|lavatories|ladies|gents|wc|pee|poop|ሽንት|መጸዳጃ)\b/,
+  { id: 'restroom', label: 'restroom', words: /\b(toilets?|restrooms?|bathrooms?|washrooms?|lavatory|lavatories|ladies|gents|wc|pee|poop|wash (?:my |our )?hands|mens room|womens room|ladies room|powder room|ሽንት|መጸዳጃ)\b/,
     test: p => p.category === 'restrooms' || p.roomType === 'restroom' || /toilet|\bwc\b|restroom|bath|lavator|ሽንት|መጸዳጃ/i.test(p.name) },
   { id: 'elevator', label: 'elevator', words: /\b(elevators?|lifts?|ሊፍት)\b/, test: p => p.roomType === 'elevator' || has(/\blift|elevat|ሊፍት/i)(p) },
   { id: 'stairs', label: 'stairs', words: /\b(stairs?|staircase|stairway|steps|ደረጃ)\b/, test: p => p.roomType === 'stairs' || has(/stair|ደረጃ/i)(p) },
-  { id: 'exit', label: 'exit', words: /\b(exits?|way out|emergency exit|መውጫ)\b/, test: p => p.category === 'entrances' || has(/exit|entr|gate|መውጫ|መግቢያ/i)(p) },
-  { id: 'entrance', label: 'entrance', words: /\b(entrances?|entry|way in|main door|gates?|reception|lobby|መግቢያ)\b/, test: p => p.category === 'entrances' || has(/entr|gate|lobby|reception|መግቢያ/i)(p) },
-  { id: 'food', label: 'place to eat or drink', words: /\b(food|eat|eating|hungry|thirsty|drink|drinks|coffee|cafe|cafes|cafeteria|restaurants?|snacks?|lunch|breakfast|dinner|juice|tea|ቡና|ምግብ|ካፌ)\b/,
+  { id: 'parking', label: 'parking', words: /\b(parking|park my car|car park|garage|(?:i|we) parked|did (?:i|we) park|my car|leave (?:my|the|our) car|put (?:my|the|our) car|parking lot|parking space|parking spot|ማቆሚያ|ፓርኪንግ)\b/, test: p => p.category === 'parking' || has(/parking|car park|garage/i)(p) },
+  { id: 'exit', label: 'exit', words: /\b(exits?|way out|emergency exit|get out|leave|leaving|መውጫ)\b/, test: p => p.category === 'entrances' || has(/exit|entr|gate|መውጫ|መግቢያ/i)(p) },
+  { id: 'entrance', label: 'entrance', words: /\b(entrances?|entry|way in|main door|gates?|lobby|መግቢያ)\b/, test: p => p.category === 'entrances' || has(/entr|gate|lobby|መግቢያ/i)(p) },
+  { id: 'food', label: 'place to eat or drink', words: /\b(food|food court|eat|eating|hungry|starving|famished|peckish|thirsty|drink|drinks|coffee|cafe|cafes|cafeteria|canteen|restaurants?|snacks?|bite|lunch|breakfast|dinner|juice|tea|macchiato|ቡና|ምግብ|ካፌ)\b/,
     test: p => p.category === 'food' || has(/caf|coffee|restaurant|food|kitchen|canteen|bar\b|juice|ቡና|ምግብ/i)(p) },
-  { id: 'parking', label: 'parking', words: /\b(parking|park my car|car park|garage|ማቆሚያ|ፓርኪንግ)\b/, test: p => p.category === 'parking' || has(/park/i)(p) },
-  { id: 'info', label: 'help desk', words: /\b(information|info desk|help desk|reception|front desk|tickets?|ticket office)\b/, test: has(/info|reception|desk|ticket/i) },
+  { id: 'tickets', label: 'ticket office', words: /\b(tickets?|ticket office|box office)\b/, test: has(/ticket|box office/i), fallback: 'info' },
+  { id: 'info', label: 'help desk', words: /\b(information|info|info desk|help desk|reception|front desk|ask someone|ask (?:a |the )?staff|staff|staff member|someone who works here|works here|who works|guide desk)\b/, test: has(/info|reception|desk|ticket/i) },
+  { id: 'shop', label: 'shop', words: /\b(shops?|store|stores|souvenirs?|gifts?|boutique|shopping)\b/, test: has(/shop|store|gift|souvenir|boutique|market/i) },
+  { id: 'animals', label: 'animals', words: /\b(zoo|animals?|lions?|wildlife|birds?|monkeys?|zebras?|giraffes?)\b/, test: has(/zoo|animal|wildlife|bird|lion|aviary/i) },
   { id: 'prayer', label: 'prayer room', words: /\b(pray|prayer|prayer room|mosque|chapel|masjid)\b/, test: has(/pray|chapel|mosque|masjid/i) },
-  { id: 'atm', label: 'ATM', words: /\b(atm|cash|bank|money)\b/, test: has(/\batm\b|bank|cash/i) },
-  { id: 'firstaid', label: 'first aid', words: /\b(first aid|clinic|nurse|doctor|medical|pharmacy|hurt|injured)\b/, test: has(/first aid|clinic|nurse|medical|pharmac|health/i) },
+  { id: 'atm', label: 'ATM', words: /\b(atm|cash|cash machine|bank|money|withdraw)\b/, test: has(/\batm\b|bank|cash/i) },
+  { id: 'firstaid', label: 'first aid', words: /\b(first aid|clinic|nurse|doctor|medical|medicine|pharmacy|hurt|injured|sick|bleeding|ambulance)\b/, test: has(/first aid|clinic|nurse|medical|pharmac|health/i) },
   { id: 'kids', label: 'place for children', words: /\b(kids?|children|child|playground|play area|baby|nursery)\b/, test: p => p.category === 'family' || has(/kid|child|play|baby|nursery/i)(p) },
-  { id: 'garden', label: 'garden', words: /\b(gardens?|park|nature|flowers?|outside|outdoors)\b/, test: p => p.category === 'gardens' || has(/garden|park/i)(p) },
+  { id: 'garden', label: 'garden', words: /\b(gardens?|nature|flowers?|roses?|plants?|outside|outdoors|green space)\b/, test: p => p.category === 'gardens' || has(/garden/i)(p) },
 ];
 
 /** The assistant's own words: typos are corrected towards these and the venue's names. */
@@ -100,6 +103,29 @@ const OWN_WORDS = `where is are find show me take bring guide lead walk get go r
   hello hi hey good morning afternoon evening bye goodbye please sorry nice great welcome doing going looking need want would like
   could can should start again yes no okay cancel list everything recommend visit see something interesting close closest`;
 
+/**
+ * Every other word the phrases and kinds of place below use ("souvenirs", "starving", "quickest"):
+ * typos are corrected towards these too, and a word the guide understands is never "corrected"
+ * into another. visitor.test.ts checks the list against the phrases.
+ */
+export const VISITOR_WORDS = `above accessible activities all aloud ambulance amharic animals another any area around ask assistance attractions
+  audio away baby bank bathrooms below best birds bit bite bleeding blue bored boutique box boys breakfast building buy
+  cafes canteen car cash change chapel child closed concerts cool court describe desk did different dinner direct
+  disability disabled doctor does door dot drinks easiest eat eating eight eighteen eighth elevators eleven emergency
+  english entrances entry excuse exhibitions exits facilit famished famous fastest feel female fifteen fifth five
+  floors flowers for four fourteen fourth free from front fun garage gardens gates gentlemen gents gifts giraffes girls
+  give got green hands happens have head hurt ideas info injured inside juice know ladies lady language lavatories
+  lavatory leave leaving let lets lifts link lions little locate location long lost lot lunch macchiato machine main
+  make male man many masjid may medical medicine member men mens might minutes moment money monkeys more mosque move
+  must nature neither new next nine nineteen ninth none nope not now nurse nursery office one other our out outdoors
+  outside park parked path peckish pee performances pharmacy plants play poop popular position powder pram pray
+  programme put quickest read really recommendations rest restaurants right roses salam search second seeing selam send
+  seven seventeen seventh share shopping shops shortest shows shut sick sights sit six sixteen sixth small snacks some
+  someone souvenirs space speak special spot staff stairway starving step steps store stores stroller suggest
+  suggestions switch talk tea ten tenth the they thing things third thirteen three ticket tickets till times tired top
+  twelve twenty two until use venue visiting voice walking wash washrooms well whats wheelchair when who wildlife will
+  wish with withdraw woman women womens wonder works worth wrong yeah yep yet your zebras zoo`;
+
 // ── The conversation ─────────────────────────────────────────────────────────
 
 export function visitorReply(said: string, ctx: VisitorContext, memory: VisitorMemory = {}): VisitorReply {
@@ -107,7 +133,7 @@ export function visitorReply(said: string, ctx: VisitorContext, memory: VisitorM
   const am = /[ሀ-፿]/.test(raw);
   const base = normalize(raw);
   if (!base) return reply(ctx, memory, 'Ask me anything about this place — like “where is the toilet?”', [], examples(ctx));
-  const vocab = vocabulary(OWN_WORDS, PLACE_VOCABULARY, ctx.places.map(p => p.name), ctx.floors.map(f => f.name), ctx.content.map(c => c.title));
+  const vocab = vocabulary(OWN_WORDS, VISITOR_WORDS, PLACE_VOCABULARY, ctx.places.map(p => p.name), ctx.floors.map(f => f.name), ctx.content.map(c => c.title));
   const fixed = correct(base, vocab);
   const t = stripPolite(fixed.text);
   const readAs = fixed.changed ? fixed.text : undefined;
@@ -119,7 +145,7 @@ export function visitorReply(said: string, ctx: VisitorContext, memory: VisitorM
 function stripPolite(t: string) {
   let s = t;
   for (let i = 0; i < 3; i++) {
-    s = s.replace(/^(hi|hello|hey|selam|salam|excuse me|sorry|please|ok|okay|so|um|uh|well|hey there|good (morning|afternoon|evening)|can you tell me|could you tell me|do you know|i want to know|i wonder)\b\s*/, '');
+    s = s.replace(/^(hi|hello|hey|selam|salam|excuse me|sorry|please|ok|okay|so|um|uh|well|hey there|good (morning|afternoon|evening)|can you tell me|could you tell me|do you know|can you please|could you please|can you|could you|would you|will you|i want to know|i wonder)\b\s*/, '');
   }
   return s.replace(/\s*\b(please|thanks|thank you|thx)$/, '').trim() || t;
 }
@@ -140,9 +166,20 @@ function understand(t: string, raw: string, am: boolean, ctx: VisitorContext, me
 
   // Small talk: "how are you doing", "thanks", "who are you"…
   const talk = smallTalkKind(t) ?? smallTalkKind(raw);
-  if (talk && !/\b(where|take|find|toilet|room)\b/.test(t)) return chat(talk, t, am, ctx, mem);
+  if (talk && !/\b(where|take|find|toilet|room)\b/.test(t) && !KINDS.some(k => k.id !== 'info' && k.words.test(t)) && !/\bworks here\b/.test(t)) return chat(talk, t, am, ctx, mem);
+  // "I need help", "help me", "can you help": what the guide can do.
+  if (/^((?:i|we) need (?:some )?help|help me|help us|can you help(?: me| us)?|please help|i need assistance)$/.test(t)) return chat('help', t, am, ctx, mem);
 
   let m: RegExpMatchArray | null;
+  // The venue itself: "is the park open?", "when does Unity Park close?" — not a place in it.
+  if ((m = t.match(/^(?:is|are) (.+?) open(?: now| today| right now| yet)?$|^when (?:does|do|is|will) (.+?) (?:open|close|closing|opening|shut)$|^what time (?:does|do|is|will) (.+?) (?:open|close|shut)$/))
+    && isVenue(m[1] ?? m[2] ?? m[3], ctx)) {
+    return reply(ctx, mem, `I don’t have ${ctx.venue}’s opening hours in the map — the venue’s page or the entrance will have them. Places inside with their own hours, I can tell you about: try “is the café open?”`, [], examples(ctx));
+  }
+  // "how do I get out?", "get me out of here", "I want to leave": the way to the nearest exit.
+  if (/^(how (?:do|can) (?:i|we) (?:get|go) out|get (?:me|us) out(?: of here)?|(?:i|we) (?:want|need|would like) to (?:leave|get out|go out|exit)|how (?:do|can) (?:i|we) leave|where do (?:i|we) leave|let me out)$/.test(t)) {
+    return toKind(KINDS.find(k => k.id === 'exit')!, ctx, mem, 'route', am);
+  }
   // "from the entrance to room 12"
   if ((m = t.match(/^(?:(?:how (?:do|can) i (?:get|go) )|(?:directions? |route |way |take me |go ))?from (.+?) to (.+)$/))) {
     const from = findPlace(m[1], ctx, mem), to = findPlace(m[2], ctx, mem);
@@ -150,7 +187,7 @@ function understand(t: string, raw: string, am: boolean, ctx: VisitorContext, me
     return unsure(to.place ? m[1] : m[2], to.place ? from : to, ctx, mem, 'route');
   }
   // Directions: "how do I get to…", "take me to…", "directions to…", "I want to go to…"
-  if ((m = t.match(/^(?:how (?:do|can|would|should|will) (?:i|we) (?:get|go|walk|reach|find my way|make my way) (?:to )?|how to (?:get|go|walk) (?:to )?|(?:can|could|would) you (?:please )?(?:take|bring|guide|lead|walk|show|direct|get) (?:me|us) (?:the way )?to |(?:take|bring|guide|lead|walk|direct|get) (?:me|us) (?:the way )?to |show (?:me|us) the way to |(?:give me )?directions? (?:to|for) |(?:the )?(?:best )?(?:way|route|path) to |navigate (?:me )?to |(?:i|we) (?:want|need|would like|wish) to (?:go|get|walk) to |let us go to |(?:go|head|walk) to |get me to )(.+)$/))) {
+  if ((m = t.match(/^(?:how (?:do|can|would|should|will) (?:i|we) (?:get|go|walk|reach|find my way|make my way) (?:to )?|how to (?:get|go|walk) (?:to )?|(?:can|could|would) you (?:please )?(?:take|bring|guide|lead|walk|show|direct|get) (?:me|us) (?:the way )?to |(?:take|bring|guide|lead|walk|direct|get) (?:me|us) (?:the way )?to |show (?:me|us) the way to |(?:give me )?directions? (?:to|for) |(?:what is |whats |show me )?(?:the )?(?:best |fastest |quickest |shortest |easiest )?(?:way|route|path) (?:to get )?to |which way (?:is it )?(?:to )?|which way is |help (?:me|us) (?:get|go|find my way|find the way) to |navigate (?:me )?to |route (?:me|us) to |show (?:me|us) how to (?:get|go) to |tell (?:me|us) how to (?:get|go) to |(?:i|we) (?:want|need|would like|wish) to (?:go|get|walk) to |let us go to |(?:go|head|walk) to |get me to )(.+)$/))) {
     return toPlace(m[1], ctx, mem, 'route', am);
   }
   // "take me there", "directions", "go", "let's go", "navigate"
@@ -172,8 +209,8 @@ function understand(t: string, raw: string, am: boolean, ctx: VisitorContext, me
     return reply(ctx, mem, f ? `You’re looking at the ${floorLabel(f.name)}.` : 'Which place do you mean?', [], []);
   }
   // Opening hours: "is the café open?", "when does the museum close?"
-  if ((m = t.match(/^(?:is|are) (.+?) open(?: now| today| right now| yet)?$|^when (?:does|do|is|will) (.+?) (?:open|close|closing|opening|shut)$|^(?:what are |what is )?(?:the )?(?:opening )?(?:hours|times|opening times) (?:of|for|at) (.+)$|^(?:is|are) (.+?) closed$/))) {
-    const phrase = m[1] ?? m[2] ?? m[3] ?? m[4];
+  if ((m = t.match(/^(?:is|are) (.+?) open(?: now| today| right now| yet| at the moment)?$|^when (?:does|do|is|will) (.+?) (?:open|close|closing|opening|shut)$|^(?:what are |what is )?(?:the )?(?:opening )?(?:hours|times|opening times|opening hours) (?:of|for|at) (.+)$|^(?:is|are) (.+?) closed(?: now| today)?$|^what time (?:does|do|is|will) (.+?) (?:open|close|shut|opening|closing)$|^(?:till|until|up to) what time is (.+?) open$|^until when is (.+?) open$|^(.+?) (?:opening )?hours$|^when is (.+?) open$/))) {
+    const phrase = m.slice(1).find(x => x != null)!;
     const r = /^(it|this|that|there|they)$/.test(phrase) && mem.lastPlaceId ? { place: byId(ctx, mem.lastPlaceId), maybe: [] } : findPlace(phrase, ctx, mem);
     if (!r.place) return unsure(phrase, r as Found, ctx, mem, 'show');
     return hoursOf(r.place, ctx, mem);
@@ -183,8 +220,8 @@ function understand(t: string, raw: string, am: boolean, ctx: VisitorContext, me
     if (last) return hoursOf(last, ctx, mem);
   }
   // How far: "how far is the café?", "is it far?"
-  if ((m = t.match(/^how far (?:is|to|away is|away are|are) (.+?)(?: from here| from me)?$|^is (.+?) far(?: from here)?$/))) {
-    const phrase = m[1] ?? m[2];
+  if ((m = t.match(/^how far (?:is|to|away is|away are|are) (.+?)(?: from here| from me)?$|^is (.+?) far(?: from here| away)?$|^how (?:long|many minutes)(?: does it take| will it take| is it)? (?:to walk |to get |to go |walking )?to (.+)$|^how (?:close|near) is (.+)$/))) {
+    const phrase = m.slice(1).find(x => x != null)!;
     const r = /^(it|this|that|there)$/.test(phrase) && mem.lastPlaceId ? { place: byId(ctx, mem.lastPlaceId), maybe: [] } : findPlace(phrase, ctx, mem);
     if (!r.place) return unsure(phrase, r as Found, ctx, mem, 'show');
     return howFar(r.place, ctx, mem);
@@ -194,15 +231,22 @@ function understand(t: string, raw: string, am: boolean, ctx: VisitorContext, me
     if (last) return howFar(last, ctx, mem);
   }
   // Floors: "what's on the 2nd floor?", "go to the ground floor", "upstairs"
-  if ((m = t.match(/^(?:what is|what are|what can i (?:see|find|do)|show me what is|what do you have|whats) (?:on|at|in) (?:the )?(.+)$/))) {
-    const f = floorFrom(m[1], ctx);
+  if ((m = t.match(/^(?:what is|what are|what can i (?:see|find|do)|show me what is|what do you have|whats) (?:on|at|in) (?:the )?(.+)$|^(?:what is|whats|what are|show me what is) (upstairs|downstairs|above|below)$/))) {
+    const f = m[1] ? floorFrom(m[1], ctx) : floorStep(m[2], ctx);
     if (f) return floorTour(f, ctx, mem);
+  }
+  // Just a floor: "floor 1", "level 2", "the basement", "upstairs".
+  if (floorFrom(t, ctx) && !findPlace(t, ctx, mem).place) return showFloor(floorFrom(t, ctx)!, ctx, mem);
+  if (/^(?:go |take me |bring me |head |move )?(?:down|up) (?:one|a|1) (?:floor|level)$/.test(t)) {
+    const f = floorStep(/\bdown\b/.test(t) ? 'down' : 'up', ctx);
+    if (!f) return reply(ctx, mem, /\bdown\b/.test(t) ? 'This is the lowest floor.' : 'This is the top floor.', [], []);
+    return showFloor(f, ctx, mem);
   }
   if ((m = t.match(/^(?:go|switch|change|take me|move|show(?: me)?|open) (?:up |down )?(?:to )?(?:the )?(.+)$/)) && floorFrom(m[1], ctx)) {
     const f = floorFrom(m[1], ctx)!;
     return reply(ctx, mem, `Here’s the ${floorLabel(f.name)}.`, [{ op: 'floor', floorId: f.id }], placesOn(f.id, ctx).slice(0, 3).map(p => `Where is ${p.name}?`));
   }
-  if (/^(go )?(upstairs|up|one floor up|next floor|floor up)$/.test(t) || /^(go )?(downstairs|down|one floor down|floor down)$/.test(t)) {
+  if (/^(go |take me |bring me |head )?(upstairs|up|one floor up|next floor|floor up)$/.test(t) || /^(go |take me |bring me |head )?(downstairs|down|one floor down|floor down)$/.test(t)) {
     const cur = ctx.floors.find(f => f.id === ctx.floorId);
     const sorted = [...ctx.floors].sort((a, b) => a.level - b.level);
     const i = sorted.findIndex(f => f.id === cur?.id);
@@ -211,20 +255,24 @@ function understand(t: string, raw: string, am: boolean, ctx: VisitorContext, me
     return reply(ctx, mem, `Here’s the ${floorLabel(f.name)}.`, [{ op: 'floor', floorId: f.id }], []);
   }
   // What's here: "what can I see?", "recommend something"
-  if (/^(what is (here|there|around|nearby|near me|in this (place|building|venue))|what can (i|we) (see|do|visit)( here)?|what (should|can) i (see|visit|do)|recommend( something| me something)?|any (suggestions|recommendations)|what do you have|list (all )?(the )?(places|rooms)|show (me )?(everything|all places|all the places)|what places are (here|there))$/.test(t)) {
+  if (/^(what is (here|there|around|nearby|near me|in this (place|building|venue))|what is there to (see|do)|what can (i|we) (see|do|visit)( here)?|what (should|can|must) (i|we) (see|visit|do)( here| first)?|recommend( something| me something| a place)?|any (suggestions|recommendations|ideas)|what do you (have|recommend|suggest)|list (all )?(the )?(places|rooms)|show (me )?(everything|all places|all the places|around)|what places are (here|there)|(give me |take me on |can i have )?a tour|show us around|(top|best|main|must see) (attractions|things( to see| to do)?|places|sights)|what is (fun|good|interesting|popular|famous)( here)?|what is worth (seeing|visiting)|i am (bored|new here)|first time here)$/.test(t)) {
     return overview(ctx, mem);
   }
-  // Events: "what's on today?", "any events?"
-  if (/\b(events?|happening|program|programme|concerts?|exhibitions?|shows?|activities|what is on|whats on)\b/.test(t) && !/\bfloor\b/.test(t)) {
+  // Events: "what's on today?", "any events?" ("show me…" is not a show).
+  if (/\b(events?|happening|program|programme|concerts?|exhibitions?|shows|performances?|activities|what is on|whats on)\b/.test(t) && !/\bfloor\b/.test(t)) {
     return events(ctx, mem);
   }
   // About a place: "what is the gallery?", "tell me about room 12"
-  if ((m = t.match(/^(?:what is|what are|tell me (?:more )?about|info(?:rmation)? (?:on|about)|more about|about|describe|what can i (?:do|see) (?:at|in)) (?:the )?(.+)$/))) {
+  if ((m = t.match(/^(?:what is (?:in|inside)|what is there (?:in|at)|what happens (?:in|at)|what can i (?:do|see) (?:at|in)|what is (?:special|interesting|cool|famous|good) about|tell me (?:something |a bit |a little |more )?about|what is|what are|info(?:rmation)? (?:on|about)|more about|about|describe) (?:the )?(.+)$/))) {
+    const r = findPlace(m[1], ctx, mem);
+    if (r.place) return describe(r.place, ctx, mem);
+  }
+  if ((m = t.match(/^(?:what is|what are) (?:the )?(.+?) (?:about|for|like)$/))) {
     const r = findPlace(m[1], ctx, mem);
     if (r.place) return describe(r.place, ctx, mem);
   }
   // Needs: "I need the toilet", "I'm hungry", "where can I eat?"
-  if ((m = t.match(/^(?:i|we) (?:need|want|am looking for|are looking for|would like|have to go to|need to go to|must go to|need to use) (?:a |an |the |some )?(.+)$|^(?:i am|we are|i feel|im) (hungry|thirsty|lost|tired)$|^where can (?:i|we) (eat|drink|park|pray|sit|rest|get food|get coffee|get cash|buy (?:a )?tickets?|wash my hands|pee|go to the toilet)$/))) {
+  if ((m = t.match(/^(?:i|we) (?:need|want|am looking for|are looking for|would like|have to go to|need to go to|must go to|need to use) (?:a |an |the |some )?(.+)$|^(?:i am|we are|i feel|im|i am so|i am really|we are so) (hungry|thirsty|lost|tired|starving|famished|peckish)$|^where can (?:i|we) (eat|drink|park|pray|sit|rest|get food|get coffee|get cash|buy (?:a )?tickets?|wash my hands|pee|go to the toilet)$/))) {
     const phrase = m[1] ?? m[2] ?? m[3];
     if (phrase === 'lost') return lost(ctx, mem);
     if (phrase === 'tired') return toKind(KINDS.find(k => k.id === 'food')!, ctx, mem, 'show', am);
@@ -234,6 +282,11 @@ function understand(t: string, raw: string, am: boolean, ctx: VisitorContext, me
   if ((m = t.match(/^(?:where (?:is|are|can i find|can we find|do i find|would i find|could i find)|where|find(?: me)?|show(?: me)?(?: where)?(?: is| are)?|locate|search(?: for)?|i am looking for|we are looking for|looking for|is there(?: a| an| any)?|are there(?: any)?|do you have(?: a| an| any)?|have you got(?: a| an| any)?|any|can you find(?: me)?|help me find) (.+)$/))
     || (m = t.match(/^(.+?) (?:የት ነው|የት አለ|የት ናቸው|የት ይገኛል)$/))) {
     return toPlace(m[1], ctx, mem, 'show', am);
+  }
+  // "where do I wash my hands?", "where should we pray?", "where could I sit down?": the place for it.
+  if ((m = t.match(/^where (?:do|can|should|could|would|might|may) (?:i|we) (?:go to )?(.+)$/))) {
+    const r = findPlace(m[1], ctx, mem);
+    if (r.place) return showPlace(r.place, ctx, mem, am, r.kind);
   }
   // Help with the map itself: "how do I change floor?", "what is the blue dot?"
   const how = appHelp(t);
@@ -251,29 +304,104 @@ function understand(t: string, raw: string, am: boolean, ctx: VisitorContext, me
 interface Found { place: VisitorPlace | null; maybe: VisitorPlace[]; kind?: Kind }
 
 function findPlace(phrase: string, ctx: VisitorContext, mem: VisitorMemory): Found {
-  const q = AMHARIC.reduce((s, [re, en]) => s.replace(re, en), phrase).replace(/^(the|a|an|some|any|my|our|your|nearest|closest|nearby|near) /, '').replace(/ (please|now|here|nearby|near me|around here|close by|closest|nearest)$/, '').trim();
+  const q = AMHARIC.reduce((s, [re, en]) => s.replace(re, en), phrase).replace(/^(the|a|an|some|any|my|our|your|nearest|closest|nearby|near) /, '')
+    .replace(/ (please|now|here|nearby|near me|around here|around|close by|closest|nearest|fast|quickly)$/, '').trim();
   if (/^(it|this|that|there|that place|this place)$/.test(q) && mem.lastPlaceId) return { place: byId(ctx, mem.lastPlaceId), maybe: [] };
-  const names = pick(matchNames(q, ctx.places, p => p.name));
+  const ranked = matchNames(q, ctx.places, p => p.name);
+  const names = pick(ranked);
   // A name said exactly beats a kind ("Café" the place, not any café).
   if (names.sure) return { place: names.sure, maybe: [] };
+  // Every word fits several names ("the gallery": Gallery 1 and Gallery 2): the nearest of them.
+  const all = ranked.filter(r => r.score >= 80 && q.split(' ').length < normalize(r.item.name).split(' ').length).map(r => r.item);
+  if (all.length > 1 && all.length === ranked.filter(r => r.score >= 80).length && !KINDS.some(k => k.words.test(q))) return { place: nearest(all, ctx), maybe: [] };
+  // "room twelve", "gallery one", "first gallery": the number written as words.
+  const digits = numbersAsDigits(q);
+  if (digits !== q) {
+    const again = pick(matchNames(digits, ctx.places, p => p.name));
+    if (again.sure) return { place: again.sure, maybe: [] };
+  }
   const kind = KINDS.find(k => k.words.test(q)) ?? kindOfCategory(q);
   if (kind) {
-    const of = ctx.places.filter(kind.test);
+    let of = ctx.places.filter(kind.test);
+    // "men's toilet", "ladies": the restroom for them, when the map says which is which.
+    if (kind.id === 'restroom') {
+      const men = /\b(men|mens|man|gents|gentlemen|male|boys)\b/.test(q), women = /\b(women|womens|woman|ladies|lady|female|girls)\b/.test(q);
+      const forThem = of.filter(p => (men ? /\b(men|mens|man|gents|gentlemen|male|boys)\b/i : /\b(women|womens|woman|ladies|lady|female|girls)\b/i).test(p.name));
+      if ((men || women) && forThem.length) of = forThem;
+    }
+    if (!of.length && kind.fallback) {
+      const fb = KINDS.find(k => k.id === kind.fallback)!;
+      of = ctx.places.filter(fb.test);
+      if (of.length) return { place: nearest(of, ctx), maybe: [], kind: fb };
+    }
     if (of.length) return { place: nearest(of, ctx), maybe: [], kind };
     return { place: null, maybe: [], kind };
+  }
+  if (!names.maybe.length) {
+    const described = byDescription(q, ctx);
+    if (described) return { place: described, maybe: [] };
   }
   return { place: null, maybe: names.maybe };
 }
 
+/** The one place whose description or type has every word asked for ("the paintings" → the gallery of paintings). */
+function byDescription(q: string, ctx: VisitorContext): VisitorPlace | null {
+  const stem = (w: string) => w.replace(/(ies)$/, 'y').replace(/(?<=\w{3})(es|s)$/, '');
+  const words = q.split(' ').filter(w => w.length >= 4 && !/^(where|what|place|room|some|thing|there|here|about|with)$/.test(w)).map(stem);
+  if (!words.length) return null;
+  const hits = ctx.places.filter(p => {
+    const text = normalize(`${p.description ?? ''} ${p.typeLabel ?? ''}`).split(' ').map(stem);
+    return words.every(w => text.includes(w));
+  });
+  return hits.length ? nearest(hits, ctx) : null;
+}
+
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13,
+  fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+};
+const ORDINAL_WORDS: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10 };
+/** "room twelve" → "room 12", "first gallery" → "gallery 1". */
+function numbersAsDigits(q: string): string {
+  const s = q.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b/g, w => String(NUMBER_WORDS[w]));
+  const m = s.match(/^(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth) (\w+)$/);
+  return m ? `${m[2]} ${ORDINAL_WORDS[m[1]]}` : s;
+}
+
 function kindOfCategory(q: string): Kind | undefined {
   const c = categoryFromQuery(q);
+  if (c === 'facilities' && !/^facilit/.test(q)) return undefined;
   return c ? { id: c, label: VISITOR_CATEGORIES[c].label.toLowerCase(), words: /$^/, test: p => p.category === c } : undefined;
 }
 
 function toPlace(phrase: string, ctx: VisitorContext, mem: VisitorMemory, then: 'show' | 'route', am: boolean): VisitorReply {
   const r = findPlace(phrase, ctx, mem);
   if (r.place) return then === 'route' ? routeTo(r.place, ctx, mem, am, undefined, r.kind) : showPlace(r.place, ctx, mem, am, r.kind);
+  // "take me to the ground floor", "go upstairs": a floor, not a place.
+  const f = floorFrom(phrase, ctx) ?? floorStep(phrase, ctx);
+  if (f) return showFloor(f, ctx, mem);
   return unsure(phrase, r, ctx, mem, then);
+}
+
+/** "upstairs" / "downstairs": the floor above or below the one on screen. */
+function floorStep(phrase: string, ctx: VisitorContext) {
+  const up = /^(upstairs|up|one floor up|next floor|floor up|the floor above|above)$/.test(phrase), down = /^(downstairs|down|one floor down|floor down|the floor below|below)$/.test(phrase);
+  if (!up && !down) return null;
+  const sorted = [...ctx.floors].sort((a, b) => a.level - b.level);
+  const i = sorted.findIndex(f => f.id === ctx.floorId);
+  return (up ? sorted[i + 1] : sorted[i - 1]) ?? null;
+}
+
+function showFloor(f: { id: string; name: string }, ctx: VisitorContext, mem: VisitorMemory): VisitorReply {
+  return reply(ctx, mem, `Here’s the ${floorLabel(f.name)}.`, [{ op: 'floor', floorId: f.id }], placesOn(f.id, ctx).slice(0, 3).map(p => `Where is ${p.name}?`));
+}
+
+/** The venue itself, not a place in it: "is the park open?", "when does Unity Park close?". */
+function isVenue(phrase: string, ctx: VisitorContext): boolean {
+  const q = normalize(phrase).replace(/^(the|this) /, '');
+  const v = normalize(ctx.venue);
+  const last = v.split(' ').pop() ?? '';
+  return q === v || /^(place|venue|building|here|it all)$/.test(q) || (q === last && last.length > 3 && !ctx.places.some(p => normalize(p.name) === q));
 }
 
 function toKind(kind: Kind, ctx: VisitorContext, mem: VisitorMemory, then: 'show' | 'route', am: boolean): VisitorReply {

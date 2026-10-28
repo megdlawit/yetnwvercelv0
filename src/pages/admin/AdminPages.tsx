@@ -6,12 +6,12 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Building, ShieldCheck, Map as MapIcon, Users, MapPin, Footprints, Bookmark, Mail, Check, X, Eye, LayoutGrid, MoreHorizontal,
-  PenTool, Globe, CloudOff, Star, History, Inbox, Ban, RotateCcw, ShieldPlus, ShieldMinus, Clock, ArrowRight, Sparkles, BadgeCheck, Landmark, Flag,
+  PenTool, Globe, CloudOff, Star, History, Inbox, Ban, RotateCcw, ShieldPlus, ShieldMinus, Clock, ArrowRight, Sparkles, BadgeCheck, Landmark, Flag, Shapes,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
@@ -25,6 +25,7 @@ import {
 } from './useAdmin';
 import { STATUS_INFO, trustLevelOf } from '@/lib/venue/trust';
 import { Empty, Loading, Mark, Stat, StatusChip, VenueChip, describe, matches, timeAgo, useNoteDialog } from './parts';
+import { ACCOUNT_TYPES, OversightDialog, accountLabel, canOversee, useAccountTypes, type AccountType } from './Oversight';
 
 const kindLabel = (k: string | null) => (k && isInstitutionKind(k) ? INSTITUTION_KINDS[k].label : k ?? '—');
 const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : 'Something went wrong');
@@ -309,6 +310,13 @@ export function Institutions() {
   const [search, setSearch] = useState('');
   const rows = useMemo(() => (q.data ?? []).filter(i => (filter === 'all' || i.status === filter) && matches(search || query, i.name, i.owner_username, i.owner_name, i.kind)), [q.data, filter, search, query]);
   const count = (s: InstitutionStatus) => (q.data ?? []).filter(i => i.status === s).length;
+  const accounts = useAccountTypes();
+  const [overseeing, setOverseeing] = useState<{ id: string; name: string } | null>(null);
+  const typeOf = (id: string) => accounts.types?.get(id) ?? 'venue';
+  const setType = async (i: AdminInstitution, t: AccountType) => {
+    try { await accounts.setType(i.id, t); toast.success(`${i.name} is a ${accountLabel(t).toLowerCase()} account now`); }
+    catch (e) { fail(e); }
+  };
   const set = async (i: AdminInstitution, s: InstitutionStatus, note?: string) => {
     try { await adminActions.setInstitutionStatus(i.id, s, note); toast.success(`${i.name}: ${s === 'approved' ? 'approved' : s === 'suspended' ? 'suspended — its venues are offline' : s}`); void q.reload(); reloadOverview(); }
     catch (e) { fail(e); }
@@ -316,8 +324,10 @@ export function Institutions() {
 
   return (
     <>
-      <PageHeader title="Institutions" description="Every institution on Yet New: its team, its venues and its standing." />
+      <PageHeader title="Institutions" description="Every institution on Yet New: its team, its venues, its standing and its kind of account — government and destination accounts can oversee others." />
       {notes.dialog}
+      <OversightDialog overseer={overseeing} institutions={(q.data ?? []).map(i => ({ id: i.id, name: i.name }))} grants={accounts.grants}
+        onClose={() => setOverseeing(null)} setOversight={accounts.setOversight} />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {(['all', 'pending', 'approved', 'suspended', 'rejected'] as const).map(s => (
           <button key={s} onClick={() => setFilter(s)} className={cn('rounded-full border px-3 py-1.5 text-sm', filter === s ? 'border-primary bg-primary/10 font-semibold text-primary' : 'hover:bg-muted')}>
@@ -333,7 +343,7 @@ export function Institutions() {
             <tbody className="divide-y">
               {rows.map(i => (
                 <tr key={i.id} className="hover:bg-muted/40">
-                  <td className="px-5 py-3"><span className="flex items-center gap-3"><Mark name={i.name} logo={i.logo_url} size={34} /><span><span className="block font-semibold">{i.name}</span><span className="block text-xs text-muted-foreground">{kindLabel(i.kind)} · joined {timeAgo(i.created_at)}</span></span></span></td>
+                  <td className="px-5 py-3"><span className="flex items-center gap-3"><Mark name={i.name} logo={i.logo_url} size={34} /><span><span className="block font-semibold">{i.name}</span><span className="block text-xs text-muted-foreground">{typeOf(i.id) !== 'venue' && <span className="mr-1 rounded bg-violet-100 px-1.5 py-px font-semibold text-violet-800 dark:bg-violet-950 dark:text-violet-300">{accountLabel(typeOf(i.id))}{canOversee(typeOf(i.id)) && ` · oversees ${accounts.grants.filter(g => g.overseer_id === i.id).length}`}</span>}{kindLabel(i.kind)} · joined {timeAgo(i.created_at)}</span></span></span></td>
                   <td className="py-3"><span className="block">{i.owner_name || '—'}</span>{i.owner_username && <span className="block text-xs text-muted-foreground">@{i.owner_username}</span>}</td>
                   <td className="py-3 tabular-nums">{i.published}/{i.venues} live{i.pending_reviews ? <span className="ml-1.5 rounded-full bg-sky-100 px-1.5 text-[11px] font-semibold text-sky-800">{i.pending_reviews} waiting</span> : null}</td>
                   <td className="py-3 tabular-nums">{i.members}</td>
@@ -350,6 +360,23 @@ export function Institutions() {
                         {i.status === 'approved' && <DropdownMenuItem className="text-amber-700" onSelect={() => notes.ask({ title: `Suspend ${i.name}?`, text: 'Their venues go offline and they can’t publish until you reactivate them.', confirm: 'Suspend', danger: true, run: n => set(i, 'suspended', n) })}><Ban className="mr-2 h-4 w-4" /> Suspend</DropdownMenuItem>}
                         {i.status === 'pending' && <DropdownMenuItem className="text-destructive" onSelect={() => notes.ask({ title: `Decline ${i.name}?`, text: 'Their venues stay offline.', confirm: 'Decline', danger: true, run: n => set(i, 'rejected', n) })}><X className="mr-2 h-4 w-4" /> Decline</DropdownMenuItem>}
                         {(i.status === 'rejected' || i.status === 'suspended') && <DropdownMenuItem onSelect={() => void set(i, 'pending')}><RotateCcw className="mr-2 h-4 w-4" /> Back to waiting</DropdownMenuItem>}
+                        {!accounts.missing && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuSub>
+                              <DropdownMenuSubTrigger><Shapes className="mr-2 h-4 w-4" /> Kind of account: {accountLabel(typeOf(i.id))}</DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent className="w-72">
+                                {ACCOUNT_TYPES.map(([t, label, hint]) => (
+                                  <DropdownMenuItem key={t} onSelect={() => void setType(i, t)}>
+                                    <span className="flex-1"><span className="block font-medium">{label}</span><span className="block text-[11px] text-muted-foreground">{hint}</span></span>
+                                    {typeOf(i.id) === t && <Check className="ml-2 h-4 w-4 text-primary" />}
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
+                            {canOversee(typeOf(i.id)) && <DropdownMenuItem onSelect={() => setOverseeing({ id: i.id, name: i.name })}><Eye className="mr-2 h-4 w-4" /> What it oversees…</DropdownMenuItem>}
+                          </>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </td>

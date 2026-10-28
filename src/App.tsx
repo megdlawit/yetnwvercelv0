@@ -36,6 +36,8 @@ import EntryPoints from "./pages/dashboard/EntryPoints";
 import VenueSettings from "./pages/dashboard/VenueSettings";
 import Reports from "./pages/dashboard/Reports";
 import Insights from "./pages/dashboard/Insights";
+import AuditLog from "./pages/dashboard/AuditLog";
+import AdminAudit from "./pages/admin/AdminAudit";
 import Team from "./pages/dashboard/Team";
 import PublishSettings from "./pages/dashboard/PublishSettings";
 import { PlacesPage, AttractionsPage, ContentPage, QrPage } from "./pages/dashboard/ManagerPages";
@@ -93,6 +95,7 @@ const App = () => (
                 <Route path="settings" element={<VenueSettings />} />
                 <Route path="reports" element={<Reports />} />
                 <Route path="insights" element={<Insights />} />
+                <Route path="audit" element={<AuditLog />} />
                 <Route path="team" element={<Team />} />
                 <Route path="publish" element={<PublishSettings />} />
               </Route>
@@ -105,6 +108,7 @@ const App = () => (
                 <Route path="users" element={<AdminPeople />} />
                 <Route path="activity" element={<AdminActivity />} />
                 <Route path="insights" element={<AdminInsightsPage />} />
+                <Route path="audit" element={<AdminAudit />} />
                 <Route path="tools/:tool" element={<AdminTools />} />
               </Route>
               <Route path="/admin/buildings" element={<Navigate to="/admin/tools/buildings" replace />} />

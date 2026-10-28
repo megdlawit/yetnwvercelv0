@@ -10,7 +10,12 @@
 //                      → creates the person, their institution and a first venue
 //   create_institution { institution: { name, kind } }  (signed in, no institution yet)
 //   add_member         { institutionId, username, password, displayName, role }   (owner)
+//                      role: owner | editor | viewer (sees everything, changes nothing)
+//   set_role           { institutionId, userId, role }                              (owner)
 //   remove_member      { institutionId, userId }                                    (owner)
+//
+// Team changes go through public.team_set_member, naming the owner who made them, so the
+// audit log records who did it (this function acts with the service key).
 //   set_password       { institutionId, userId, password }                          (owner)
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -56,6 +61,22 @@ async function requireOwner(db: SupabaseClient, userId: string, institutionId: s
   const { data: m } = await db.from('institution_members').select('role').eq('institution_id', institutionId).eq('user_id', userId).maybeSingle();
   if (m?.role === 'owner') return;
   throw new Problem('Only the institution owner can manage the team.', 403);
+}
+
+/** owner | editor | viewer; anything else is an editor, as before viewers existed. */
+const teamRole = (r: unknown): 'owner' | 'editor' | 'viewer' => (r === 'owner' || r === 'viewer' ? r : 'editor');
+
+/** Adds, changes (role) or removes (null) a team member, naming who did it for the audit log. */
+async function setMember(db: SupabaseClient, actor: string, institutionId: string, memberId: string, role: 'owner' | 'editor' | 'viewer' | null) {
+  const { error } = await db.rpc('team_set_member', { actor, inst: institutionId, member: memberId, new_role: role });
+  if (!error) return;
+  // Before the roles migration runs (20261030090000), write the table directly as before.
+  if (!/team_set_member|PGRST202|Could not find the function/i.test(`${error.code} ${error.message}`)) throw new Error(error.message);
+  const q = role
+    ? db.from('institution_members').upsert({ institution_id: institutionId, user_id: memberId, role: role === 'viewer' ? 'editor' : role })
+    : db.from('institution_members').delete().eq('institution_id', institutionId).eq('user_id', memberId);
+  const { error: e2 } = await q;
+  if (e2) throw new Error(e2.message);
 }
 
 const need = (v: string | undefined) => {
@@ -150,6 +171,20 @@ async function handle(req: Request): Promise<Response> {
       return json({ ok: true, ...(await createInstitution(db, userId, String(institution.name ?? ''), institution.kind)) });
     }
 
+    case 'set_role': {
+      const userId = await caller(db, req);
+      const institutionId = need(body.institutionId), memberId = need(body.userId);
+      await requireOwner(db, userId, institutionId);
+      const role = teamRole(body.role);
+      if (memberId === userId && role !== 'owner') throw new Problem("You can't change your own role.");
+      const { data: inst } = await db.from('institutions').select('owner_id').eq('id', institutionId).maybeSingle();
+      if (inst?.owner_id === memberId) throw new Problem("The institution's main owner stays an owner.");
+      const { data: m } = await db.from('institution_members').select('user_id').eq('institution_id', institutionId).eq('user_id', memberId).maybeSingle();
+      if (!m) throw new Problem("That person isn't on this team.", 404);
+      await setMember(db, userId, institutionId, memberId, role);
+      return json({ ok: true });
+    }
+
     case 'add_member': {
       const userId = await caller(db, req);
       const { username = '', password = '', displayName = '', role = 'editor' } = body;
@@ -157,8 +192,8 @@ async function handle(req: Request): Promise<Response> {
       await requireOwner(db, userId, institutionId);
       checkPerson(username, password, displayName);
       const memberId = await createPerson(db, username, password, displayName);
-      const { error } = await db.from('institution_members').insert({ institution_id: institutionId, user_id: memberId, role: role === 'owner' ? 'owner' : 'editor' });
-      if (error) { await db.auth.admin.deleteUser(memberId); throw new Problem(`Could not add to the team: ${error.message}`, 500); }
+      try { await setMember(db, userId, institutionId, memberId, teamRole(role)); }
+      catch (err) { await db.auth.admin.deleteUser(memberId); throw new Problem(`Could not add to the team: ${(err as Error).message}`, 500); }
       return json({ ok: true, userId: memberId, username: normalizeUsername(username) });
     }
 
@@ -169,7 +204,7 @@ async function handle(req: Request): Promise<Response> {
       if (memberId === userId) throw new Problem('You can\'t remove yourself.');
       const { data: inst } = await db.from('institutions').select('owner_id').eq('id', institutionId).maybeSingle();
       if (inst?.owner_id === memberId) throw new Problem('The institution\'s main owner can\'t be removed.');
-      await db.from('institution_members').delete().eq('institution_id', institutionId).eq('user_id', memberId);
+      await setMember(db, userId, institutionId, memberId, null);
       // Accounts made for this team only (not used anywhere else) are deleted entirely.
       const [{ count: otherTeams }, { count: owned }, admin_] = await Promise.all([
         db.from('institution_members').select('user_id', { count: 'exact', head: true }).eq('user_id', memberId),

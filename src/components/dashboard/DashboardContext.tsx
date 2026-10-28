@@ -14,6 +14,9 @@ export interface DashboardValue {
   editorUrl: (floorId?: string) => string | null;
   previewUrl: string;
   canManageTeam: boolean;
+  /** Owners, editors and Yet New change things; viewers and oversight only look (the database enforces it). */
+  canEdit: boolean;
+  role: import('@/contexts/WorkspaceContext').Role | null;
   openPublish: () => void;
 }
 

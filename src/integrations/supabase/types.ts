@@ -81,6 +81,7 @@ export type Database = {
       institutions: {
         Row: {
           logo_url: string | null
+          account_type: string
           description: string | null
           created_at: string
           id: string
@@ -92,6 +93,7 @@ export type Database = {
         }
         Insert: {
           logo_url?: string | null
+          account_type?: string
           description?: string | null
           created_at?: string
           id?: string
@@ -103,6 +105,7 @@ export type Database = {
         }
         Update: {
           logo_url?: string | null
+          account_type?: string
           description?: string | null
           created_at?: string
           id?: string
@@ -1433,6 +1436,10 @@ export type Database = {
       record_visit_events: { Args: { b: string; visit: string; device: string | null; source: string; events: Json }; Returns: number }
       venue_insights: { Args: { b: string; since: string; until: string }; Returns: Json }
       admin_insights: { Args: { since: string; until: string }; Returns: Json }
+      audit_entries: { Args: { inst: string | null; before_id: number | null; lim: number }; Returns: Json[] }
+      user_team_role: { Args: { inst: string }; Returns: string | null }
+      admin_set_account_type: { Args: { inst: string; new_type: string }; Returns: undefined }
+      admin_set_oversight: { Args: { overseer: string; inst: string; give: boolean; note?: string | null }; Returns: undefined }
     }
     Enums: {
       [_ in never]: never

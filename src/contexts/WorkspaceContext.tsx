@@ -1,6 +1,7 @@
 // The signed-in person's workspace: who they are, which institutions they
 // belong to, and which venue the dashboard is showing. Platform admins (the
-// Yet New team) can switch into any institution to help.
+// Yet New team) can switch into any institution to help. Viewers, and government or
+// destination accounts overseeing an institution, see its venues read-only.
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { supabase } from '@/integrations/supabase/client';
@@ -9,9 +10,14 @@ import { usernameFromEmail } from '@/lib/accounts';
 
 export interface WorkspaceInstitution {
   id: string; name: string; kind: string; slug: string | null; logo_url: string | null; description: string | null; owner_id: string | null;
+  /** venue | government | destination | business | provider (set by Yet New). */
+  account_type: string;
 }
 export interface WorkspaceVenue { id: string; name: string; is_published: boolean; layout: string; theme: string }
-export type Role = 'owner' | 'editor' | 'admin';
+/** owner / editor change things; viewer and oversight only look; admin is the Yet New team. */
+export type Role = 'owner' | 'editor' | 'viewer' | 'oversight' | 'admin';
+/** May this role change the venue? */
+export const canEditAs = (role: Role | null | undefined) => role === 'owner' || role === 'editor' || role === 'admin';
 
 interface WorkspaceValue {
   loading: boolean;
@@ -29,6 +35,7 @@ interface WorkspaceValue {
 }
 
 const WorkspaceContext = createContext<WorkspaceValue | null>(null);
+const rank = (r: Role) => (r === 'admin' ? 2 : r === 'oversight' ? 1 : 0);
 const INST_KEY = 'yetnew-institution', VENUE_KEY = 'yetnew-venue';
 const read = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const write = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
@@ -63,8 +70,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const platformAdmin = !!admin.data || (!!admin.error && (owned.data?.length ?? 0) > 0);
     setAdmin(platformAdmin);
 
-    const roleOf = new Map<string, Role>((members.data ?? []).map(m => [m.institution_id, (m.role === 'owner' ? 'owner' : 'editor') as Role]));
+    const roleOf = new Map<string, Role>((members.data ?? []).map(m => [m.institution_id, (m.role === 'owner' || m.role === 'viewer' ? m.role : 'editor') as Role]));
     for (const i of owned.data ?? []) roleOf.set(i.id, 'owner');
+    // Institutions this person's government / destination accounts oversee (20261030090000; absent before it).
+    const mine = [...roleOf.keys()];
+    if (mine.length) {
+      const { data: over } = await supabase.from('oversight_grants' as never).select('institution_id').in('overseer_id', mine) as unknown as { data: { institution_id: string }[] | null };
+      for (const g of over ?? []) if (!roleOf.has(g.institution_id)) roleOf.set(g.institution_id, 'oversight');
+    }
     let rows: WorkspaceInstitution[] = [];
     if (platformAdmin) {
       rows = ((await supabase.from('institutions').select('*').order('name')).data ?? []) as WorkspaceInstitution[];
@@ -73,10 +86,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
     const list = rows.map(r => ({
       id: r.id, name: r.name, kind: r.kind, slug: r.slug, logo_url: r.logo_url ?? null, description: r.description ?? null, owner_id: r.owner_id,
+      account_type: (r as { account_type?: string }).account_type ?? 'venue',
       role: roleOf.get(r.id) ?? 'admin' as Role,
     }))
-      // your own institutions first
-      .sort((a, b) => Number(a.role === 'admin') - Number(b.role === 'admin') || a.name.localeCompare(b.name));
+      // your own institutions first, then the ones you oversee, then (Yet New) everyone else
+      .sort((a, b) => rank(a.role) - rank(b.role) || a.name.localeCompare(b.name));
     setInstitutions(list);
     return list;
   }, [user]);

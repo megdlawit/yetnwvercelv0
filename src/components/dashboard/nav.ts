@@ -2,7 +2,7 @@
 
 import {
   LayoutDashboard, Map, PenTool, Square, MapPin, Layers, Landmark, CalendarDays, Route, Accessibility,
-  BookOpen, Compass, Images, Megaphone, DoorOpen, QrCode, Settings2, Users, Globe, Flag, BarChart3,
+  BookOpen, Compass, Images, Megaphone, DoorOpen, QrCode, Settings2, Users, Globe, Flag, BarChart3, ScrollText,
 } from 'lucide-react';
 import type { ContentKind } from '@/lib/venue/places';
 
@@ -45,6 +45,7 @@ export const NAV: { title: string; items: NavItem[] }[] = [
     title: 'Settings', items: [
       { label: 'Venue Settings', icon: Settings2, to: '/dashboard/settings' },
       { label: 'Team', icon: Users, to: '/dashboard/team' },
+      { label: 'Audit log', icon: ScrollText, to: '/dashboard/audit' },
       { label: 'Publish Settings', icon: Globe, to: '/dashboard/publish' },
     ],
   },
@@ -72,7 +73,7 @@ export const SECTIONS: Section[] = [
     { label: 'QR codes', to: '/dashboard/qr' }, { label: 'Entrances', to: '/dashboard/entry-points' }, { label: 'Publishing', to: '/dashboard/publish' },
   ] },
   { label: 'Settings', icon: Settings2, hint: 'Your venue and team', tabs: [
-    { label: 'Venue', to: '/dashboard/settings' }, { label: 'Team', to: '/dashboard/team' },
+    { label: 'Venue', to: '/dashboard/settings' }, { label: 'Team', to: '/dashboard/team' }, { label: 'Audit log', to: '/dashboard/audit' },
   ] },
 ];
 

@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
-import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { canEditAs, useWorkspace } from '@/contexts/WorkspaceContext';
 import { useVenue, type ActivityRow } from '@/components/venue/dashboard/useVenue';
 import { venuePlaces } from '@/lib/venue/placeList';
 import { describeActivity, timeAgo } from '@/lib/venue/activity';
@@ -78,11 +78,14 @@ export default function DashboardLayout() {
       places: venuePlaces(data.nodes, data.rooms, data.pois),
       area: site ? { one: 'Zone', many: 'Zones' } : { one: 'Floor', many: 'Floors' },
       editorUrl: (floorId?: string) => {
+        if (!canEditAs(ws.institution?.role)) return null;   // viewers don't open the editor
         const f = floorId ?? data.floors[0]?.id;
         return f ? `/admin/floors/${data.building.id}/${f}/editor` : null;
       },
       previewUrl: `/venue/${data.building.id}?preview=1`,
       canManageTeam: ws.institution?.role === 'owner' || ws.isPlatformAdmin,
+      canEdit: canEditAs(ws.institution?.role),
+      role: ws.institution?.role ?? null,
       openPublish: () => setPublishOpen(true),
     };
   }, [data, reload, ws.venueId, ws.institution, ws.isPlatformAdmin]);
@@ -187,7 +190,7 @@ function Sidebar({ collapsed, onToggle, onNavigate, value, mobile }: {
           {!collapsed && (
             <span className="min-w-0">
               <span className="block truncate text-sm font-semibold">{ws.institution?.name}</span>
-              <span className="block truncate text-[11px] text-muted-foreground">{ws.institution?.role === 'admin' ? 'Yet New support' : ws.institution?.role === 'owner' ? 'Owner' : 'Editor'}</span>
+              <span className="block truncate text-[11px] text-muted-foreground">{ROLE_LABEL[ws.institution?.role ?? 'editor']}</span>
             </span>
           )}
         </Link>
@@ -233,7 +236,7 @@ function Header({ value, onMenu, onSearch, onPublish, onTour }: { value: Dashboa
         <Notifications activity={value?.data.activity ?? []} />
         <HelpMenu onTour={onTour} />
         <AccountMenu />
-        {b && (
+        {b && canEditAs(ws.institution?.role) && (
           <Button onClick={onPublish} data-tour="publish" className="ml-1 h-9 rounded-xl" variant={pending || needsFirstPublish ? 'default' : 'outline'}>
             <Globe className="mr-1.5 h-4 w-4" />
             <span className="hidden sm:inline">{b.is_published ? 'Publish Changes' : 'Publish'}</span>
@@ -246,9 +249,17 @@ function Header({ value, onMenu, onSearch, onPublish, onTour }: { value: Dashboa
       {ws.isPlatformAdmin && ws.institution?.role === 'admin' && (
         <span className="absolute left-1/2 top-full -translate-x-1/2 rounded-b-lg bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white">Support view · {ws.institution.name}</span>
       )}
+      {(ws.institution?.role === 'viewer' || ws.institution?.role === 'oversight') && (
+        <span className="absolute left-1/2 top-full -translate-x-1/2 whitespace-nowrap rounded-b-lg bg-sky-600 px-2 py-0.5 text-[10px] font-semibold text-white"
+          title="You can look at everything here, but not change it.">
+          View only · {ws.institution.role === 'oversight' ? `overseeing ${ws.institution.name}` : ws.institution.name}
+        </span>
+      )}
     </header>
   );
 }
+
+const ROLE_LABEL: Record<string, string> = { admin: 'Yet New support', owner: 'Owner', editor: 'Editor', viewer: 'Viewer', oversight: 'Oversight (view only)' };
 
 function IconButton({ label, onClick, children, className, tour }: { label: string; onClick?: () => void; children: ReactNode; className?: string; tour?: string }) {
   return <button onClick={onClick} aria-label={label} data-tour={tour} title={label} className={cn('relative grid h-9 w-9 place-items-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground', className)}>{children}</button>;
@@ -286,7 +297,7 @@ function VenueSwitcher() {
               {ws.institutions.slice(0, 12).map(i => (
                 <DropdownMenuItem key={i.id} onSelect={() => ws.setInstitutionId(i.id)}>
                   <span className="flex-1 truncate">{i.name}</span>
-                  {i.role === 'admin' && <span className="text-[10px] text-muted-foreground">support</span>}
+                  {(i.role === 'admin' || i.role === 'oversight' || i.role === 'viewer') && <span className="text-[10px] text-muted-foreground">{i.role === 'admin' ? 'support' : 'view only'}</span>}
                   {i.id === ws.institution?.id && <Check className="ml-1 h-4 w-4 text-primary" />}
                 </DropdownMenuItem>
               ))}

@@ -7,7 +7,7 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ShieldCheck, Building, Map as MapIcon, Users, History, Building2, Sparkles, Route, Layers, Code2,
   ChevronsLeft, ChevronsRight, Menu, LogOut, LayoutGrid, AlertTriangle, ExternalLink, Search,
-  BarChart3,
+  BarChart3, ScrollText,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
@@ -38,6 +38,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
     { to: '/admin/users', label: 'People', icon: Users },
     { to: '/admin/activity', label: 'Activity', icon: History },
     { to: '/admin/insights', label: 'Insights', icon: BarChart3 },
+    { to: '/admin/audit', label: 'Audit log', icon: ScrollText },
   ] },
   { title: 'Platform tools', items: [
     { to: '/admin/tools/buildings', label: 'Buildings & floors', icon: Building2 },

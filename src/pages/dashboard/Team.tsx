@@ -15,6 +15,12 @@ import { callAccounts, normalizeUsername, passwordProblem, usernameProblem } fro
 import { PageHeader, Panel } from './ui';
 
 interface Member { userId: string; role: string; username: string | null; displayName: string }
+type TeamRole = 'owner' | 'editor' | 'viewer';
+const ROLES: { id: TeamRole; label: string; hint: string }[] = [
+  { id: 'owner', label: 'Owner', hint: 'everything, and manages the team' },
+  { id: 'editor', label: 'Editor', hint: 'edits maps, places and content, publishes' },
+  { id: 'viewer', label: 'Viewer', hint: 'sees the dashboard, insights and reports; changes nothing' },
+];
 
 export default function Team() {
   const ws = useWorkspace();
@@ -34,9 +40,14 @@ export default function Team() {
       role: id === inst.owner_id ? 'owner' : rows?.find(r => r.user_id === id)?.role ?? 'editor',
       username: acc.get(id)?.username ?? null,
       displayName: acc.get(id)?.display_name || (id === ws.account.userId ? ws.account.displayName : 'Team member'),
-    })).sort((a, b) => Number(b.role === 'owner') - Number(a.role === 'owner') || a.displayName.localeCompare(b.displayName)));
+    })).sort((a, b) => ROLES.findIndex(r => r.id === a.role) - ROLES.findIndex(r => r.id === b.role) || a.displayName.localeCompare(b.displayName)));
   }, [inst.id, inst.owner_id, ws.account]);
   useEffect(() => { load(); }, [load]);
+
+  const changeRole = async (m: Member, role: TeamRole) => {
+    try { await callAccounts('set_role', { institutionId: inst.id, userId: m.userId, role }); toast.success(`${m.displayName} is ${role === 'owner' ? 'an owner' : `a ${role}`} now`); load(); }
+    catch (err) { toast.error(err instanceof Error ? err.message : 'Could not change the role'); }
+  };
 
   const remove = async (m: Member) => {
     if (!confirm(`Remove ${m.displayName} from ${inst.name}? They won't be able to sign in to this dashboard any more.`)) return;
@@ -57,7 +68,14 @@ export default function Team() {
               <span className="block truncate font-medium">{m.displayName}{m.userId === ws.account.userId && <span className="ml-1.5 text-xs text-muted-foreground">(you)</span>}</span>
               <span className="block truncate text-xs text-muted-foreground">{m.username ? `@${m.username}` : 'Email sign-in'}</span>
             </span>
-            <span className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs font-medium capitalize">{m.role === 'owner' && <Crown className="h-3 w-3 text-amber-500" />}{m.role}</span>
+            {canManageTeam && m.userId !== ws.account.userId && m.userId !== inst.owner_id ? (
+              <select value={m.role} onChange={e => changeRole(m, e.target.value as TeamRole)} aria-label={`${m.displayName}'s role`}
+                className="h-8 rounded-full border bg-background px-2.5 text-xs font-medium">
+                {ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+              </select>
+            ) : (
+              <span className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs font-medium capitalize">{m.role === 'owner' && <Crown className="h-3 w-3 text-amber-500" />}{m.role}</span>
+            )}
             {canManageTeam && m.userId !== ws.account.userId && (
               <>
                 {m.username && <Button size="sm" variant="ghost" onClick={() => setResetting(m)}><KeyRound className="mr-1 h-3.5 w-3.5" /> Reset password</Button>}
@@ -67,7 +85,10 @@ export default function Team() {
           </div>
         ))}
       </Panel>
-      {!canManageTeam && <p className="mt-3 text-xs text-muted-foreground">Only owners can add or remove teammates.</p>}
+      <ul className="mt-3 space-y-0.5 text-xs text-muted-foreground">
+        {ROLES.map(r => <li key={r.id}><strong className="font-semibold text-foreground">{r.label}</strong> — {r.hint}.</li>)}
+      </ul>
+      {!canManageTeam && <p className="mt-2 text-xs text-muted-foreground">Only owners can add or remove teammates and change roles.</p>}
       <AddMember open={adding} onOpenChange={setAdding} institutionId={inst.id} onAdded={load} />
       <ResetPassword member={resetting} onClose={() => setResetting(null)} institutionId={inst.id} />
     </>
@@ -84,7 +105,7 @@ function AddMember({ open, onOpenChange, institutionId, onAdded }: { open: boole
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState(suggestPassword);
-  const [role, setRole] = useState<'editor' | 'owner'>('editor');
+  const [role, setRole] = useState<TeamRole>('editor');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ username: string; password: string } | null>(null);
   const u = normalizeUsername(username);
@@ -130,9 +151,8 @@ function AddMember({ open, onOpenChange, institutionId, onAdded }: { open: boole
                 {passwordProblem(password) && <p className="text-xs text-amber-700">{passwordProblem(password)}</p>}</div>
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Role</Label>
-                <select value={role} onChange={e => setRole(e.target.value as 'editor' | 'owner')} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
-                  <option value="editor">Editor — edits maps, places and content, publishes</option>
-                  <option value="owner">Owner — also manages the team</option>
+                <select value={role} onChange={e => setRole(e.target.value as TeamRole)} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+                  {ROLES.map(r => <option key={r.id} value={r.id}>{r.label} — {r.hint}</option>)}
                 </select>
               </div>
             </div>

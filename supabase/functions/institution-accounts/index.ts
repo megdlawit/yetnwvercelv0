@@ -68,6 +68,15 @@ async function requireOwner(db, userId, institutionId) {
   if (m?.role === "owner") return;
   throw new Problem("Only the institution owner can manage the team.", 403);
 }
+var teamRole = (r) => r === "owner" || r === "viewer" ? r : "editor";
+async function setMember(db, actor, institutionId, memberId, role) {
+  const { error } = await db.rpc("team_set_member", { actor, inst: institutionId, member: memberId, new_role: role });
+  if (!error) return;
+  if (!/team_set_member|PGRST202|Could not find the function/i.test(`${error.code} ${error.message}`)) throw new Error(error.message);
+  const q = role ? db.from("institution_members").upsert({ institution_id: institutionId, user_id: memberId, role: role === "viewer" ? "editor" : role }) : db.from("institution_members").delete().eq("institution_id", institutionId).eq("user_id", memberId);
+  const { error: e2 } = await q;
+  if (e2) throw new Error(e2.message);
+}
 var need = (v) => {
   if (!v || !/^[0-9a-f-]{36}$/i.test(v)) throw new Problem("Missing or invalid id.");
   return v;
@@ -154,6 +163,19 @@ async function handle(req) {
       if (!isInstitutionKind(institution.kind)) throw new Problem("Choose what kind of place you run.");
       return json({ ok: true, ...await createInstitution(db, userId, String(institution.name ?? ""), institution.kind) });
     }
+    case "set_role": {
+      const userId = await caller(db, req);
+      const institutionId = need(body.institutionId), memberId = need(body.userId);
+      await requireOwner(db, userId, institutionId);
+      const role = teamRole(body.role);
+      if (memberId === userId && role !== "owner") throw new Problem("You can't change your own role.");
+      const { data: inst } = await db.from("institutions").select("owner_id").eq("id", institutionId).maybeSingle();
+      if (inst?.owner_id === memberId) throw new Problem("The institution's main owner stays an owner.");
+      const { data: m } = await db.from("institution_members").select("user_id").eq("institution_id", institutionId).eq("user_id", memberId).maybeSingle();
+      if (!m) throw new Problem("That person isn't on this team.", 404);
+      await setMember(db, userId, institutionId, memberId, role);
+      return json({ ok: true });
+    }
     case "add_member": {
       const userId = await caller(db, req);
       const { username = "", password = "", displayName = "", role = "editor" } = body;
@@ -161,10 +183,11 @@ async function handle(req) {
       await requireOwner(db, userId, institutionId);
       checkPerson(username, password, displayName);
       const memberId = await createPerson(db, username, password, displayName);
-      const { error } = await db.from("institution_members").insert({ institution_id: institutionId, user_id: memberId, role: role === "owner" ? "owner" : "editor" });
-      if (error) {
+      try {
+        await setMember(db, userId, institutionId, memberId, teamRole(role));
+      } catch (err) {
         await db.auth.admin.deleteUser(memberId);
-        throw new Problem(`Could not add to the team: ${error.message}`, 500);
+        throw new Problem(`Could not add to the team: ${err.message}`, 500);
       }
       return json({ ok: true, userId: memberId, username: normalizeUsername(username) });
     }
@@ -175,7 +198,7 @@ async function handle(req) {
       if (memberId === userId) throw new Problem("You can't remove yourself.");
       const { data: inst } = await db.from("institutions").select("owner_id").eq("id", institutionId).maybeSingle();
       if (inst?.owner_id === memberId) throw new Problem("The institution's main owner can't be removed.");
-      await db.from("institution_members").delete().eq("institution_id", institutionId).eq("user_id", memberId);
+      await setMember(db, userId, institutionId, memberId, null);
       const [{ count: otherTeams }, { count: owned }, admin_] = await Promise.all([
         db.from("institution_members").select("user_id", { count: "exact", head: true }).eq("user_id", memberId),
         db.from("institutions").select("id", { count: "exact", head: true }).eq("owner_id", memberId),

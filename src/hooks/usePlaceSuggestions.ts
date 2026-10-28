@@ -37,6 +37,27 @@ export function parseCoordinates(q: string): { lat: number; lng: number } | null
   return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
 }
 
+/** One coordinate as typed: "9.0108", "-1.5", "9.0108° N", "38.76 E" (S and W are negative). */
+function readDegrees(s: string, pos: string, neg: string): number | null {
+  const m = s.trim().toUpperCase().match(/^(-?\d+(?:\.\d+)?)\s*°?\s*([NSEW])?$/);
+  if (!m || (m[2] && m[2] !== pos && m[2] !== neg)) return null;
+  return m[2] === neg ? -Math.abs(Number(m[1])) : Number(m[1]);
+}
+
+/**
+ * The Latitude and Longitude boxes → a point, or why not. A whole "lat, lng" pair pasted
+ * into either box counts too.
+ */
+export function readLatLng(latText: string, lngText: string): { lat: number; lng: number } | { error: string } {
+  const pair = parseCoordinates(latText) ?? parseCoordinates(lngText);
+  if (pair) return pair;
+  const lat = readDegrees(latText, 'N', 'S'), lng = readDegrees(lngText, 'E', 'W');
+  if (lat === null || lng === null) return { error: 'Type numbers, like 9.0108 and 38.7613.' };
+  if (Math.abs(lat) > 90) return { error: 'Latitude goes from −90 to 90.' };
+  if (Math.abs(lng) > 180) return { error: 'Longitude goes from −180 to 180.' };
+  return { lat, lng };
+}
+
 interface PhotonFeature {
   geometry: { coordinates: [number, number] };
   properties: {

@@ -12,6 +12,7 @@ import { LocateFixed, RotateCw, RotateCcw, Loader2, Satellite, Map as MapIcon, T
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { indoorToGeo } from '@/lib/geo/GeoMath';
 import { anchorForCenter, anchorOf, DEFAULT_MPP, planBounds } from '@/lib/venue/geoVenue';
@@ -21,7 +22,7 @@ import { useFloorDrawing } from '@/components/visitor/useFloorDrawing';
 import { drawingGeoJSON } from '@/lib/venue/geoVenue';
 import type { VenueData } from './useVenue';
 import PlaceSearch from './PlaceSearch';
-import type { PlaceSuggestion } from '@/hooks/usePlaceSuggestions';
+import { readLatLng, type PlaceSuggestion } from '@/hooks/usePlaceSuggestions';
 
 const SATELLITE: StyleSpecification = {
   version: 8,
@@ -45,6 +46,10 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
   const [busy, setBusy] = useState<'save' | null>(null);
   // Where the map is looking, so suggestions favour places nearby.
   const [near, setNear] = useState<{ lat: number; lng: number } | null>(null);
+  // The crosshair's coordinates, which is where the plan's centre lands; type to go there.
+  const [latText, setLatText] = useState('');
+  const [lngText, setLngText] = useState('');
+  const [coordError, setCoordError] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
   const live = useRef({ rotation, scale, opacity });
@@ -103,7 +108,11 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
     });
     let raf = 0;
     map.on('move', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(draw); });
-    const look = () => { const c = map.getCenter(); setNear({ lat: c.lat, lng: c.lng }); };
+    const look = () => {
+      const c = map.getCenter();
+      setNear({ lat: c.lat, lng: c.lng });
+      setLatText(c.lat.toFixed(6)); setLngText(c.lng.toFixed(6)); setCoordError(null);
+    };
     map.on('moveend', look);
     look();
     return () => { cancelAnimationFrame(raf); map.remove(); mapRef.current = null; };
@@ -132,6 +141,13 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
     if (e && Math.abs(e[2] - e[0]) > 0.0004 && Math.abs(e[3] - e[1]) > 0.0004) {
       map.fitBounds([[e[0], e[1]], [e[2], e[3]]], { padding: 40, maxZoom: 18.5, duration: 1400 });
     } else map.flyTo({ center: [p.lng, p.lat], zoom: 17.5, duration: 1400 });
+  };
+
+  const goToCoords = () => {
+    const p = readLatLng(latText, lngText);
+    if ('error' in p) { setCoordError(p.error); return; }
+    setCoordError(null);
+    mapRef.current?.flyTo({ center: [p.lng, p.lat], zoom: Math.max(18, mapRef.current.getZoom()), duration: 1400 });
   };
 
   const locate = () => navigator.geolocation?.getCurrentPosition(
@@ -177,7 +193,22 @@ export default function GeoPlacer({ data, onSaved }: { data: VenueData; onSaved:
           <div className="absolute inset-x-0 bottom-0 bg-card/95 p-3 text-center text-sm text-muted-foreground">Upload a plan in the map editor first — then line it up here.</div>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">Drag the map until the yellow plan sits on the real site, then turn and size it to match.</p>
+      <p className="text-xs text-muted-foreground">Drag the map until the yellow plan sits on the real site, then turn and size it to match — or type its coordinates.</p>
+
+      <form className="flex flex-wrap items-end gap-2" onSubmit={e => { e.preventDefault(); goToCoords(); }}>
+        <label className="min-w-[9rem] flex-1 space-y-1 text-xs font-medium">
+          Latitude
+          <Input value={latText} onChange={e => setLatText(e.target.value)} inputMode="decimal" placeholder="9.010800" aria-invalid={!!coordError} className="h-9 tabular-nums" />
+        </label>
+        <label className="min-w-[9rem] flex-1 space-y-1 text-xs font-medium">
+          Longitude
+          <Input value={lngText} onChange={e => setLngText(e.target.value)} inputMode="decimal" placeholder="38.761300" aria-invalid={!!coordError} className="h-9 tabular-nums" />
+        </label>
+        <Button type="submit" variant="outline" className="h-9"><Crosshair className="mr-1.5 h-4 w-4" /> Go</Button>
+        <p className={cn('basis-full text-[11px]', coordError ? 'text-destructive' : 'text-muted-foreground')}>
+          {coordError ?? "The plan's centre goes at the crosshair. Paste “9.0108, 38.7613” into either box, or use N/S/E/W."}
+        </p>
+      </form>
 
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="space-y-2">

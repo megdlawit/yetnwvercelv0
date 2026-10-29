@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 
 vi.mock('./AdminLayout', () => ({ useAdminConsole: () => ({ query: '' }) }));
 vi.mock('@/integrations/supabase/client', () => ({
@@ -21,7 +22,7 @@ import AdminInsights from './AdminInsights';
 
 describe('every venue’s insights', () => {
   it('shows totals and a row per venue, busiest first', async () => {
-    render(<AdminInsights />);
+    render(<MemoryRouter><AdminInsights /></MemoryRouter>);
     expect(await screen.findByText('Unity Park')).toBeTruthy();
     const rows = screen.getAllByRole('row').slice(1).map(r => r.textContent ?? '');
     expect(rows[0]).toContain('Unity Park');
@@ -36,7 +37,7 @@ describe('every venue’s insights', () => {
   it('says to run the migration when it is missing', async () => {
     const { supabase } = await import('@/integrations/supabase/client');
     vi.mocked(supabase.rpc).mockResolvedValueOnce({ data: null, error: { message: 'Could not find the function public.admin_insights' } } as never);
-    render(<AdminInsights />);
+    render(<MemoryRouter><AdminInsights /></MemoryRouter>);
     expect(await screen.findByText(/20261029090000_visit_insights/)).toBeTruthy();
   });
 });

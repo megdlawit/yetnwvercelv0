@@ -9,6 +9,12 @@
 // browser can call `/api/osrm` directly without hitting cross-origin
 // restrictions on the public OSRM servers.
 
+import type { IncomingMessage, ServerResponse } from 'http';
+
+/** What Vercel's Node runtime passes in: Node's request/response plus the parsed body and query. */
+type ApiRequest = IncomingMessage & { body?: unknown; query?: Record<string, string | string[] | undefined> };
+type ApiResponse = ServerResponse;
+
 // The public demo at router.project-osrm.org only serves the `driving`
 // profile — there's no public "foot" demo instance there. routing.
 // openstreetmap.de runs a separate routed-foot deployment that does
@@ -36,7 +42,7 @@ const CAR_MIRRORS = [
 // (Hobby plan) even with mirrors raced in parallel, not chained.
 const MIRROR_TIMEOUT_MS = 8_000;
 
-function setCorsHeaders(res: any) {
+function setCorsHeaders(res: ApiResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -69,7 +75,7 @@ async function fetchMirror(base: string, coords: string): Promise<MirrorResult> 
   }
 }
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req: ApiRequest, res: ApiResponse) {
   setCorsHeaders(res);
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -83,7 +89,7 @@ export default async function handler(req: any, res: any) {
     // http.IncomingMessage with no query parsing at all, so req.query is
     // always undefined there and every request 400'd on "missing coords"
     // before ever reaching OSRM. Parsing req.url directly works in both.
-    const parsedUrl = new URL(req.url, 'http://internal');
+    const parsedUrl = new URL(req.url ?? '/', 'http://internal');
     const profile = parsedUrl.searchParams.get('profile') === 'car' ? 'car' : 'foot';
     const coords = parsedUrl.searchParams.get('coords') || '';
     if (!coords) {
@@ -129,7 +135,7 @@ export default async function handler(req: any, res: any) {
     res.statusCode = 502;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ error: 'all OSRM mirrors failed', detail: String(firstError) }));
-  } catch (e: any) {
+  } catch (e) {
     console.error('[api/osrm] proxy error', e);
     res.statusCode = 500;
     res.setHeader('Content-Type', 'application/json');

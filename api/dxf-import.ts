@@ -41,7 +41,19 @@
 // a hosted conversion API, or "Save As... DXF" in AutoCAD, which is free
 // and one click).
 
-import type { IncomingMessage } from 'http';
+import type { IncomingMessage, ServerResponse } from 'http';
+/** What Vercel's Node runtime passes in: Node's request/response plus the parsed body and query. */
+type ApiRequest = IncomingMessage & { body?: unknown; query?: Record<string, string | string[] | undefined> };
+type ApiResponse = ServerResponse;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON sent by the client; every field is checked before use
+type JsonBody = any;
+
+/** A binary (DWG) file starts with a control character, not text. */
+function isBinaryStart(text: string): boolean {
+  const c = text.charCodeAt(0);
+  return (c >= 0 && c <= 8) || (c >= 14 && c <= 31);
+}
+
 import { createClient } from '@supabase/supabase-js';
 import { parseDxf, diagnoseDxf, unitsFromInsunits } from '../src/lib/dxf/parseDxf';
 import { dxfToVenue, type ImportOptions } from '../src/lib/dxf/dxfToVenue';
@@ -53,7 +65,7 @@ import { generatePathGraph } from '../src/lib/dxf/generatePathGraph';
 // this, every field below reads as undefined under `npm run dev` — this is
 // what caused the "buildingId, floorId and dxfText are required" / 404-ish
 // failure when testing locally.
-async function readJsonBody(req: any): Promise<any> {
+async function readJsonBody(req: ApiRequest): Promise<JsonBody> {
   if (req.body && typeof req.body === 'object') return req.body;
   if (req.body && typeof req.body === 'string') { try { return JSON.parse(req.body); } catch { return {}; } }
   const raw: string = await new Promise((resolve, reject) => {
@@ -66,7 +78,7 @@ async function readJsonBody(req: any): Promise<any> {
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
-function setCors(res: any) {
+function setCors(res: ApiResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -74,7 +86,7 @@ function setCors(res: any) {
 
 const MAX_DXF_BYTES = 15 * 1024 * 1024; // 15MB — generous for a single-floor plan, blocks accidental whole-project exports
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req: ApiRequest, res: ApiResponse) {
   setCors(res);
   if (req.method === 'OPTIONS') { res.statusCode = 204; res.end(); return; }
   if (req.method !== 'POST') { res.statusCode = 405; res.end(JSON.stringify({ error: 'POST only' })); return; }
@@ -98,7 +110,7 @@ export default async function handler(req: any, res: any) {
       res.statusCode = 413; res.end(JSON.stringify({ error: `dxfText too large (max ${MAX_DXF_BYTES} bytes)` })); return;
     }
 
-    const authHeader = req.headers?.authorization || req.headers?.Authorization;
+    const authHeader = String(req.headers?.authorization || '');  // Node lower-cases header names
     if (!authHeader) {
       res.statusCode = 401; res.end(JSON.stringify({ error: 'Missing Authorization header — sign in as the venue owner first' })); return;
     }
@@ -125,7 +137,7 @@ export default async function handler(req: any, res: any) {
       global: { headers: { Authorization: authHeader } },
     });
 
-    if (dxfText.slice(0, 6) === 'AC1032' || dxfText.slice(0, 4) === 'AC10' || /^[\x00-\x08\x0E-\x1F]/.test(dxfText.slice(0, 1))) {
+    if (dxfText.slice(0, 6) === 'AC1032' || dxfText.slice(0, 4) === 'AC10' || isBinaryStart(dxfText)) {
       res.statusCode = 422;
       res.end(JSON.stringify({
         error: 'This looks like a binary DWG file, not ASCII DXF.',
@@ -137,8 +149,8 @@ export default async function handler(req: any, res: any) {
     let parsed;
     try {
       parsed = parseDxf(dxfText);
-    } catch (e: any) {
-      res.statusCode = 422; res.end(JSON.stringify({ error: `Could not parse DXF: ${String(e?.message || e)}` })); return;
+    } catch (e) {
+      res.statusCode = 422; res.end(JSON.stringify({ error: `Could not parse DXF: ${e instanceof Error ? e.message : String(e)}` })); return;
     }
     if (parsed.entities.length === 0) {
       const diag = diagnoseDxf(dxfText);
@@ -253,9 +265,9 @@ export default async function handler(req: any, res: any) {
       cleanup: result.cleanup,     // duplicate and zero-length wall segments dropped
       mapping: result.mapping,     // which CAD layers became walls / rooms
     }));
-  } catch (e: any) {
+  } catch (e) {
     console.error('[api/dxf-import]', e);
     res.statusCode = 500;
-    res.end(JSON.stringify({ error: String(e?.message || e) }));
+    res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
   }
 }

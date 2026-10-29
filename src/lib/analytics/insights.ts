@@ -67,8 +67,11 @@ export function toCsv(rows: Record<string, unknown>[], columns: { key: string; l
   return [columns.map(c => cell(c.label)).join(','), ...rows.map(r => columns.map(c => cell(r[c.key])).join(','))].join('\n');
 }
 
+/** Byte-order mark, so Excel opens the CSV as UTF-8 (Amharic and accents intact). */
+const BOM = '\uFEFF';
+
 export function downloadText(name: string, text: string, type = 'text/csv') {
-  const url = URL.createObjectURL(new Blob([`﻿${text}`], { type: `${type};charset=utf-8` }));
+  const url = URL.createObjectURL(new Blob([`${BOM}${text}`], { type: `${type};charset=utf-8` }));
   const a = Object.assign(document.createElement('a'), { href: url, download: name });
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);

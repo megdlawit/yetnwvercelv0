@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import animate from "tailwindcss-animate";
 
 export default {
   darkMode: ["class"],
@@ -111,7 +112,7 @@ export default {
     },
   },
   plugins: [
-    require("tailwindcss-animate"),
+    animate,
     // Indoor theme: state classes toggled imperatively by the 3D engine / animation loops
     ({ addVariant }: { addVariant: (name: string, def: string) => void }) => {
       for (const s of ['lit', 'hv', 'on', 'dim', 'fin', 'spin', 'drag', 'done', 'near', 'side', 'off', 'pause', 'next'])

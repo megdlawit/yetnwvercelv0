@@ -1263,6 +1263,54 @@ export type Database = {
         }
         Relationships: []
       }
+      promotion_events: {
+        Row: {
+          environment: string
+          event_type: string
+          id: string
+          poi_id: string
+          promotion_id: string | null
+          session_id: string
+          timestamp: string
+          user_lat: number | null
+          user_lng: number | null
+          user_x: number | null
+          user_y: number | null
+        }
+        Insert: {
+          environment?: string
+          event_type: string
+          id?: string
+          poi_id: string
+          promotion_id?: string | null
+          session_id?: string
+          timestamp?: string
+          user_lat?: number | null
+          user_lng?: number | null
+          user_x?: number | null
+          user_y?: number | null
+        }
+        Update: {
+          environment?: string
+          event_type?: string
+          id?: string
+          poi_id?: string
+          promotion_id?: string | null
+          session_id?: string
+          timestamp?: string
+          user_lat?: number | null
+          user_lng?: number | null
+          user_x?: number | null
+          user_y?: number | null
+        }
+        Relationships: []
+      }
+      merchant_wallets: {
+        Row: { balance: number; created_at: string; currency: string; merchant_id: string; updated_at: string }
+        Insert: { balance?: number; created_at?: string; currency?: string; merchant_id: string; updated_at?: string }
+        Update: { balance?: number; created_at?: string; currency?: string; merchant_id?: string; updated_at?: string }
+        Relationships: []
+      }
       profiles: {
         Row: {
           id: string
@@ -1429,6 +1477,7 @@ export type Database = {
       user_can_edit_building: { Args: { b: string }; Returns: boolean }
       user_can_edit_institution: { Args: { inst: string }; Returns: boolean }
       user_is_platform_admin: { Args: Record<PropertyKey, never>; Returns: boolean }
+      deduct_merchant_balance: { Args: { p_merchant_id: string; p_amount: number }; Returns: Json }
       user_can_consent_for_building: { Args: { b: string }; Returns: boolean }
       layer_training_consent_current: { Args: { b: string }; Returns: boolean }
       publish_venue: { Args: { b: string }; Returns: string }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { OutdoorMapEngine, selectBestOverpassGraph } from './OutdoorMapEngine';
+import type { OutdoorGraph } from './GeoTypes';
 
-function graphWithEdges(edges = 1) {
+function graphWithEdges(edges = 1): OutdoorGraph {
   return {
     nodes: [{ id: 'n1', lat: 0, lng: 0, kind: 'intersection' }],
     edges: Array.from({ length: edges }, (_, i) => ({

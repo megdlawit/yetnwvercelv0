@@ -25,7 +25,9 @@ function call(body: unknown, headers: Record<string, string> = { authorization: 
   return new Promise<{ status: number; json: { dxfPath?: string; error?: string } }>(resolve => {
     const res = { statusCode: 0, headers: {} as Record<string, string>, setHeader(k: string, v: string) { this.headers[k] = v; },
       end(s: string) { resolve({ status: this.statusCode, json: JSON.parse(s) }); } };
-    void import('../../../api/dwg-convert').then(m => m.default({ method: 'POST', headers, body }, res));
+    // A stand-in for Node's request/response: only what the handler touches.
+    type Handler = (req: unknown, res: unknown) => Promise<void>;
+    void import('../../../api/dwg-convert').then(m => (m.default as Handler)({ method: 'POST', headers, body }, res));
   });
 }
 

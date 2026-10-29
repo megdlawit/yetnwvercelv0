@@ -87,11 +87,11 @@ const Index = () => {
       <IndoorTrackingModal
         open={true}
         onAllow={() => {
-          try { localStorage.setItem('ethi_sensor_seen', '1'); } catch {}
+          try { localStorage.setItem('ethi_sensor_seen', '1'); } catch { /* storage unavailable (private mode) */ }
           setShowPreOnboarding(false);
         }}
         onSkip={() => {
-          try { localStorage.setItem('ethi_sensor_seen', '1'); } catch {}
+          try { localStorage.setItem('ethi_sensor_seen', '1'); } catch { /* storage unavailable (private mode) */ }
           setShowPreOnboarding(false);
         }}
       />
@@ -1790,8 +1790,8 @@ export const ExploreMap = ({
       {/* ── Indoor Tracking Onboarding ── */}
       <IndoorTrackingModal
         open={showOnboarding}
-        onAllow={() => { requestSensors(); try { localStorage.setItem('ethi_onboarded', '1'); } catch {} setShowOnboarding(false); }}
-        onSkip={() => { try { localStorage.setItem('ethi_onboarded', '1'); } catch {} setShowOnboarding(false); }}
+        onAllow={() => { requestSensors(); try { localStorage.setItem('ethi_onboarded', '1'); } catch { /* storage unavailable (private mode) */ } setShowOnboarding(false); }}
+        onSkip={() => { try { localStorage.setItem('ethi_onboarded', '1'); } catch { /* storage unavailable (private mode) */ } setShowOnboarding(false); }}
       />
 
       </div>

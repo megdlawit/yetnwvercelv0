@@ -16,7 +16,15 @@ export function decodeTextSmart(buf: ArrayBuffer | Uint8Array): string {
   // No BOM: UTF-16 of mostly-ASCII text has a NUL in every other byte.
   const n = Math.min(b.length, 4000);
   let evenNul = 0, oddNul = 0;
-  for (let i = 0; i < n; i++) if (b[i] === 0) (i % 2 === 0 ? evenNul++ : oddNul++);
+  for (let i = 0; i < n; i++) {
+    if (b[i] === 0 && i % 2 === 0) {
+      evenNul++;
+    } else if (b[i] === 0) {
+      oddNul++;
+    } else {
+      // not a NUL byte
+    }
+  }
   const half = n / 2;
   if (oddNul > half * 0.4 && evenNul < half * 0.1) return new TextDecoder('utf-16le').decode(b);
   if (evenNul > half * 0.4 && oddNul < half * 0.1) return new TextDecoder('utf-16be').decode(b);

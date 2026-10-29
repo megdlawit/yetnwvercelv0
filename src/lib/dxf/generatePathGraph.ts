@@ -120,7 +120,7 @@ function floodFillFreeSpace(g: Grid, seeds: Array<readonly [number, number]>): {
 
 function thin(g: Grid): void {
   const w = g.w, h = g.h;
-  let img = g.data;
+  const img = g.data;
   const at = (arr: Uint8Array, x: number, y: number) => (x >= 0 && y >= 0 && x < w && y < h ? arr[y * w + x] : 0);
   let changed = true;
   let guard = 0;

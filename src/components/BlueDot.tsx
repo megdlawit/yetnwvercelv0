@@ -224,7 +224,7 @@ const BlueDot: React.FC<BlueDotProps> = ({
         accuracyRef.current.setAttribute('r', r.accuracy.toFixed(1));
         accuracyRef.current.style.opacity = (r.accuracyAlpha * 0.18).toFixed(3);
         if (accuracyRef.current.parentElement) {
-          (accuracyRef.current.parentElement as SVGElement).style.opacity =
+          (accuracyRef.current.parentElement as unknown as SVGElement).style.opacity =
             (r.accuracyAlpha * 0.7).toFixed(3);
         }
       }

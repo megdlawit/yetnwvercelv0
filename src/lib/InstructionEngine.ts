@@ -43,6 +43,8 @@ export interface UnifiedInstruction {
   text: string;
   /** Source: indoor pixel-graph or outdoor geo-graph. */
   source: 'indoor' | 'outdoor' | 'transition';
+  /** Outdoor only: the path index this instruction belongs to (internal bookkeeping). */
+  __pathIdx?: number;
 }
 
 export interface InstructionHud {
@@ -129,7 +131,7 @@ export class InstructionEngine {
         for (let i = 0; i < list.length; i++) {
           if (list[i].source === 'transition') continue;
           // Use a counter on outdoor instructions to map back to path index.
-          const pathIdx = (list[i] as any).__pathIdx as number | undefined;
+          const pathIdx = list[i].__pathIdx;
           if (pathIdx == null || pathIdx > segIdx) {
             current = list[i];
             next = list[i + 1] ?? null;
@@ -246,7 +248,7 @@ export class InstructionEngine {
             text: `${verb} in ${Math.round(accumDist)} meters.`,
             source: 'outdoor',
           };
-          (inst as any).__pathIdx = i + 1;
+          inst.__pathIdx = i + 1;
           out.push(inst);
           accumDist = 0;
         }
@@ -260,7 +262,7 @@ export class InstructionEngine {
       text: 'You have arrived at your destination.',
       source: 'outdoor',
     };
-    (arrive as any).__pathIdx = path.length - 1;
+    arrive.__pathIdx = path.length - 1;
     out.push(arrive);
     return out;
   }

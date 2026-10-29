@@ -99,7 +99,7 @@ export class HeadingTracker {
       return screen.orientation.angle || 0;
     }
     // Fallback for older browsers
-    return (window as any).orientation || 0;
+    return (window as Window & { orientation?: number }).orientation || 0;
   }
 
   /** Get cardinal direction string */

@@ -266,7 +266,8 @@ function hatchLoops(body: Pair[]): DxfPoint[][] {
         if (type === 1) { const x1 = at(10), y1 = at(20), x2 = at(11), y2 = at(21); pts.push({ x: x1, y: y1 }, { x: x2, y: y2 }); }
         else if (type === 2) {
           const cx = at(10), cy = at(20), r = at(40), a0 = at(50), a1 = at(51), ccw = at(73);
-          let s0 = a0, s1 = a1;
+          const s0 = a0;
+          let s1 = a1;
           if (s1 < s0) s1 += 360;
           const steps = Math.max(2, Math.ceil((s1 - s0) / 15));
           const arc = Array.from({ length: steps + 1 }, (_, i) => {
@@ -487,7 +488,7 @@ export function diagnoseDxf(text: string): DxfDiagnosis {
   }
   // High ratio of NUL bytes = UTF-16 that was decoded as UTF-8.
   const sample = text.slice(0, 4000);
-  const nulRatio = sample.length ? (sample.match(/\u0000/g)?.length ?? 0) / sample.length : 0;
+  const nulRatio = sample.length ? (sample.split(String.fromCharCode(0)).length - 1) / sample.length : 0;
   if (nulRatio > 0.2) {
     d.format = 'not-dxf';
     d.hints.push('File looks UTF-16 encoded but was read as UTF-8 (mostly NUL characters). Re-save the DXF as ASCII/UTF-8, or re-upload — the reader normally auto-detects this.');

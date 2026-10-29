@@ -11,9 +11,9 @@ describe('usePDRNavigation', () => {
 
     vi.spyOn(window, 'addEventListener');
     vi.spyOn(window, 'removeEventListener');
-    vi.spyOn(window, 'setInterval').mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, 'setInterval').mockReturnValue(1 as unknown as ReturnType<typeof setInterval>);
     vi.spyOn(window, 'clearInterval');
-    vi.spyOn(window, 'setTimeout').mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, 'setTimeout').mockReturnValue(1 as unknown as ReturnType<typeof setTimeout>);
     vi.spyOn(window, 'clearTimeout');
   });
 

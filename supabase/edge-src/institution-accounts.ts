@@ -6,7 +6,9 @@
 //
 // POST { action, ... }
 //   check_username     { username }                                → { available, problem? }
-//   signup             { username, password, displayName, institution: { name, kind } }
+//   signup             { username, password, displayName, institution: { name, kind, accountType? } }
+//                      accountType 'business': a business account (hotel, restaurant, shop) with no venue of its own;
+//                      it manages places in other venues once Yet New approves its claim (business plan §18).
 //                      → creates the person, their institution and a first venue
 //   create_institution { institution: { name, kind } }  (signed in, no institution yet)
 //   add_member         { institutionId, username, password, displayName, role }   (owner)
@@ -110,6 +112,24 @@ async function createPerson(db: SupabaseClient, rawUsername: string, password: s
   return data.user.id;
 }
 
+/** A business account: the institution and its owner, no venue (it claims places in venues). */
+async function createBusiness(db: SupabaseClient, ownerId: string, name: string) {
+  const clean = name.trim();
+  if (clean.length < 2) throw new Problem('Please add your business\'s name.');
+  let slug = slugify(clean);
+  const { data: clash } = await db.from('institutions').select('id').eq('slug', slug).maybeSingle();
+  if (clash) slug = `${slug}-${crypto.randomUUID().slice(0, 6)}`;
+  // The service key sets the kind of account (the database lets only Yet New or the service do that).
+  const { data: inst, error } = await db.from('institutions')
+    .insert({ name: clean, slug, kind: 'other', owner_id: ownerId, account_type: 'business' }).select('id').single();
+  if (error || !inst) throw new Problem(`Could not create the business: ${error?.message}`, 500);
+  const { error: mErr } = await db.from('institution_members').insert({ institution_id: inst.id, user_id: ownerId, role: 'owner' });
+  if (mErr) { await db.from('institutions').delete().eq('id', inst.id); throw new Problem(`Could not set up the business: ${mErr.message}`, 500); }
+  return { institutionId: inst.id, venueId: null };
+}
+
+const isBusiness = (inst: { accountType?: unknown }) => inst.accountType === 'business';
+
 /** An institution, its owner, and a first venue ready for a map upload. */
 async function createInstitution(db: SupabaseClient, ownerId: string, name: string, kind: InstitutionKind) {
   const clean = name.trim();
@@ -135,7 +155,7 @@ async function createInstitution(db: SupabaseClient, ownerId: string, name: stri
 
 interface Body {
   action?: string; username?: string; password?: string; displayName?: string; role?: string;
-  institution?: { name?: string; kind?: unknown }; institutionId?: string; userId?: string;
+  institution?: { name?: string; kind?: unknown; accountType?: unknown }; institutionId?: string; userId?: string;
 }
 
 async function handle(req: Request): Promise<Response> {
@@ -152,11 +172,13 @@ async function handle(req: Request): Promise<Response> {
     case 'signup': {
       const { username = '', password = '', displayName = '', institution = {} } = body;
       checkPerson(username, password, displayName);
-      if (!isInstitutionKind(institution.kind)) throw new Problem('Choose what kind of place you run.');
+      if (!isBusiness(institution) && !isInstitutionKind(institution.kind)) throw new Problem('Choose what kind of place you run.');
       if (String(institution.name ?? '').trim().length < 2) throw new Problem('Please add your institution\'s name.');
       const userId = await createPerson(db, username, password, displayName);
       try {
-        const created = await createInstitution(db, userId, String(institution.name), institution.kind);
+        const created = isBusiness(institution)
+          ? await createBusiness(db, userId, String(institution.name))
+          : await createInstitution(db, userId, String(institution.name), institution.kind as InstitutionKind);
         return json({ ok: true, ...created });
       } catch (err) {
         await db.auth.admin.deleteUser(userId);
@@ -167,6 +189,7 @@ async function handle(req: Request): Promise<Response> {
     case 'create_institution': {
       const userId = await caller(db, req);
       const { institution = {} } = body;
+      if (isBusiness(institution)) return json({ ok: true, ...(await createBusiness(db, userId, String(institution.name ?? ''))) });
       if (!isInstitutionKind(institution.kind)) throw new Problem('Choose what kind of place you run.');
       return json({ ok: true, ...(await createInstitution(db, userId, String(institution.name ?? ''), institution.kind)) });
     }

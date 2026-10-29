@@ -38,6 +38,10 @@ import { useStreetDirections } from '@/components/visitor/useStreetDirections';
 import { useGeofences } from '@/components/visitor/useGeofences';
 import { PlaceDetail, TrustLine, type DistanceOf } from '@/components/visitor/PlaceViews';
 import ReportProblem, { type ReportTarget } from '@/components/visitor/ReportProblem';
+import PlaceBusiness from '@/components/visitor/PlaceBusiness';
+import PlaceReviews from '@/components/visitor/PlaceReviews';
+import { useVenueExtras, VenueExtrasContext } from '@/components/visitor/useVenueExtras';
+import { isBusinessPlaceType } from '@/lib/venue/places';
 import { ContentDetail, ContentRowButton } from '@/components/visitor/ContentViews';
 import { CategoryChips, CategoryList, CollectionView, DiscoverHome, ExploreView, SearchResults } from '@/components/visitor/BrowseViews';
 import { DirectionsPanel, GuidanceCard } from '@/components/visitor/NavigationViews';
@@ -105,7 +109,9 @@ export default function ViewMap() {
   useEffect(() => {
     if (state !== 'ready' || !building || initialised) return;
     setInitialised(true);
-    const placeParam = params.get('place');
+    // ?poi=<place details id> (links from Yet New Business), or ?review=<id>: back from the email link that confirmed a review.
+    const poiParam = params.get('poi') ?? params.get('review');
+    const placeParam = params.get('place') ?? (poiParam ? places.find(p => p.poiId === poiParam)?.id ?? null : null);
     const view = params.get('view');
     if (qrStart) setFromId(qrStart);
     if (view === '2d' || view === '3d' || view === 'outdoor') setMode(view === 'outdoor' && !anchorOf(building) ? '3d' : view);
@@ -284,6 +290,8 @@ export default function ViewMap() {
   const insights = useVisitInsights(buildingId, !preview && !previewing, arrivedBy);
   // What an authority overseeing the venue wants visitors to know (closures, safety, hours).
   const notices = useOfficialNotices(buildingId);
+  // Live: business details and ratings (not part of the published snapshot).
+  const extras = useVenueExtras(buildingId);
   const counted = useRef<{ qr?: boolean; route?: string | null }>({});
   useEffect(() => {
     if (!insights || !qrStart || counted.current.qr) return;
@@ -448,6 +456,11 @@ export default function ViewMap() {
         saved={saved.has(sel.id)} onSave={() => toast.success(saved.toggle(sel) ? `Saved ${sel.name}` : 'Removed from saved')}
         onReport={() => setReportFor({ buildingId: building.id, poiId: sel.poiId ?? null, nodeId: sel.id, name: sel.name })}
         onStreetDirections={anchor && sel.gps ? () => { setStreetTo(sel.gps); gps.start(); setShowStreetRoute(true); setMode('outdoor'); setSnap('peek'); } : undefined}
+        business={<PlaceBusiness info={sel.poiId ? extras.business.get(sel.poiId) : null} poiId={sel.poiId}
+          claimable={extras.available && building.is_published && !!sel.poiId && isBusinessPlaceType(sel.type)} />}
+        reviews={sel.poiId && extras.available
+          ? <PlaceReviews poiId={sel.poiId} venueId={building.id} placeName={sel.name} published={building.is_published && !previewing} onChanged={extras.reload} />
+          : null}
         stories={linked.length ? <div className="space-y-1.5">{linked.map(c => <ContentRowButton key={c.id} c={c} onOpen={() => setOpenContent(c.id)} />)}</div> : null} />;
     }
     if (collection) {
@@ -511,6 +524,7 @@ export default function ViewMap() {
   const glass = 'border border-white/50 bg-card/85 shadow-xl backdrop-blur-xl dark:border-white/10';
 
   return (
+    <VenueExtrasContext.Provider value={extras}>
     <div className="relative h-[100dvh] overflow-hidden bg-background text-foreground" style={themeVars}>
       {/* ── The map fills the screen ── */}
       <main className="absolute inset-0">
@@ -659,5 +673,6 @@ export default function ViewMap() {
           onBrowse={closeStartSheet} />
       )}
     </div>
+    </VenueExtrasContext.Provider>
   );
 }

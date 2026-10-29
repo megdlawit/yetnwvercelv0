@@ -121,7 +121,8 @@ export function derivePlaces(d: Pick<VisitorVenueData, 'nodes' | 'rooms' | 'pois
       gps: poi?.lat != null && poi?.lng != null ? { lat: poi.lat, lng: poi.lng } : null,
       greetRadiusM: poi?.trigger_radius ?? 0,
       poiCategory: poi?.category ?? null, poiSubcategory: poi?.subcategory ?? null,
-      trust: poi ? { trust_level: poi.trust_level, verified_at: poi.verified_at, checked_at: poi.checked_at, responsible_party: poi.responsible_party } : undefined,
+      trust: poi ? { trust_level: poi.trust_level, verified_at: poi.verified_at, checked_at: poi.checked_at, responsible_party: poi.responsible_party,
+        verified_until: poi.verified_until ?? null, verification_scope: poi.verification_scope ?? null } : undefined,
     }];
   });
   return { places, placeById: new Map(places.map(p => [p.id, p] as const)), floorById, roomByNode };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isStale, sinceText, trustBadge, venueStatus } from './trust';
+import { isStale, sinceText, trustBadge, venueStatus, verificationState } from './trust';
 
 const NOW = new Date('2026-10-28T12:00:00Z');
 
@@ -40,5 +40,25 @@ describe('what visitors see', () => {
     expect(isStale(null, NOW)).toBe(true);
     expect(isStale('2026-09-01T00:00:00Z', NOW)).toBe(false);
     expect(isStale('2026-03-01T00:00:00Z', NOW)).toBe(true);
+  });
+});
+
+describe('verification end dates', () => {
+  const V = { trust_level: 'verified', verified_at: '2026-01-10T00:00:00Z' };
+  it('knows active, ending soon and lapsed', () => {
+    expect(verificationState({ trust_level: 'listed' }, NOW)).toBe('none');
+    expect(verificationState(V, NOW)).toBe('active');                                         // verified before end dates existed
+    expect(verificationState({ ...V, verified_until: '2027-06-01T00:00:00Z' }, NOW)).toBe('active');
+    expect(verificationState({ ...V, verified_until: new Date(NOW.getTime() + 10 * 864e5).toISOString() }, NOW)).toBe('ending');
+    expect(verificationState({ ...V, verified_until: '2026-09-01T00:00:00Z' }, NOW)).toBe('lapsed');
+  });
+  it('shows a lapsed verification as listed, being renewed', () => {
+    const b = trustBadge({ ...V, verified_until: '2026-09-01T00:00:00Z' }, NOW);
+    expect(b?.level).toBe('listed');
+    expect(b?.detail).toMatch(/being renewed/);
+  });
+  it('says what was checked', () => {
+    expect(trustBadge({ ...V, verified_until: '2027-06-01T00:00:00Z', verification_scope: 'Name, hours and location' }, NOW)?.detail)
+      .toMatch(/Name, hours and location/);
   });
 });

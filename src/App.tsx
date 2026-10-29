@@ -6,6 +6,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { UserProfileProvider } from "@/contexts/UserProfileContext";
 import { AdminAuthProvider } from "@/contexts/AdminAuthContext";
+import ReviewDraftPoster from "@/components/visitor/ReviewDraftPoster";
+import BusinessPortal from "./pages/business/BusinessPortal";
 import RequireAdminAuth from "@/components/admin/RequireAdminAuth";
 import { RequirePlatformAdmin, RequireVenueEditor } from "@/components/admin/AccessGuards";
 import Index from "./pages/Index";
@@ -35,6 +37,7 @@ import Media from "./pages/dashboard/Media";
 import EntryPoints from "./pages/dashboard/EntryPoints";
 import VenueSettings from "./pages/dashboard/VenueSettings";
 import Reports from "./pages/dashboard/Reports";
+import ReviewsPage from "./pages/dashboard/Reviews";
 import Insights from "./pages/dashboard/Insights";
 import AuditLog from "./pages/dashboard/AuditLog";
 import AdminAudit from "./pages/admin/AdminAudit";
@@ -67,6 +70,8 @@ const App = () => (
       <BrowserRouter>
         <UserProfileProvider>
           <AdminAuthProvider>
+            {/* A review written before confirming an email posts itself once the visitor is back. */}
+            <ReviewDraftPoster />
             <Routes>
               {/* The landing page: the Indoor experience (3D park, journey, museum tour) */}
               <Route path="/" element={<Suspense fallback={<div className="fixed inset-0 bg-paper" />}><Landing /></Suspense>} />
@@ -79,6 +84,8 @@ const App = () => (
               <Route path="/signup" element={<Signup />} />
               <Route path="/admin/login" element={<Login />} />
               {/* Destination OS: a government or destination account across the venues it oversees. */}
+              {/* YET NEW Business: hotels, restaurants, cafés and shops manage their places and answer reviews. */}
+              <Route path="/business" element={<BusinessPortal />} />
               <Route path="/destination" element={<RequireAdminAuth><WorkspaceProvider><DestinationOS /></WorkspaceProvider></RequireAdminAuth>} />
               <Route path="/dashboard" element={<RequireAdminAuth><WorkspaceProvider><DashboardLayout /></WorkspaceProvider></RequireAdminAuth>}>
                 <Route index element={<Home />} />
@@ -98,6 +105,7 @@ const App = () => (
                 <Route path="qr" element={<QrPage />} />
                 <Route path="settings" element={<VenueSettings />} />
                 <Route path="reports" element={<Reports />} />
+                <Route path="reviews" element={<ReviewsPage />} />
                 <Route path="insights" element={<Insights />} />
                 <Route path="audit" element={<AuditLog />} />
                 <Route path="team" element={<Team />} />

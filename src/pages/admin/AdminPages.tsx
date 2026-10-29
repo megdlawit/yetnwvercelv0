@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import {
   Building, Building2, Check, Eye, LayoutGrid, PenTool, Globe, CloudOff, Star, Ban, RotateCcw, ShieldPlus, ShieldMinus, ShieldCheck,
   BadgeCheck, Landmark, Flag, Shapes, Trees, Pencil, Users, Inbox, ArrowRight, Footprints, Activity as ActivityIcon, MapPin, Layers,
-  CalendarDays, Route, ScrollText, Clock,
+  CalendarDays, Route, ScrollText, Clock, Store,
 } from 'lucide-react';
 import {
   DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
@@ -18,17 +18,20 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import AuditLogList from '@/components/audit/AuditLogList';
 import { INSTITUTION_KINDS, isInstitutionKind } from '@/lib/accounts';
+import { PLACE_TYPES, type PlaceType } from '@/lib/venue/places';
+import { Stars } from '@/components/reviews/ReviewParts';
 import { STATUS_INFO, trustLevelOf } from '@/lib/venue/trust';
 import { dayLabel } from '@/lib/venue/activity';
 import { useAdminConsole, waitingCount } from './AdminLayout';
 import {
   useAdminQuery, adminActions, openInstitutionDashboard,
-  type AdminActivity, type AdminInstitution, type AdminOverview, type AdminUser, type AdminVenue, type AdminVerificationRequest, type InstitutionStatus, type VisitorStats,
+  type AdminActivity, type AdminInstitution, type AdminOverview, type AdminBusinessClaim, type AdminFlaggedReview, type AdminVerificationDue, type AdminUser, type AdminVenue, type AdminVerificationRequest, type InstitutionStatus, type VisitorStats,
 } from './useAdmin';
 import { Avatar, Empty, Loading, Mark, StatusChip, TrustPill, VenueStatus, describe, matches, plural, timeAgo, useNoteDialog } from './parts';
 import { FilledButton, Group, IconTile, Metric, MoreMenu, Page, Pill, PlainButton, Row, SearchField, Segmented, Timeline, Toolbar } from './ui';
 import { ACCOUNT_TYPES, OversightDialog, accountLabel, canOversee, useAccountTypes, type AccountType } from './Oversight';
 
+const placeTypeLabel = (t: string | null) => (t && t in PLACE_TYPES ? PLACE_TYPES[t as PlaceType].label : 'Place');
 const kindLabel = (k: string | null) => (k && isInstitutionKind(k) ? INSTITUTION_KINDS[k].label : k ?? 'Institution');
 const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : 'Something went wrong');
 const join = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(' · ');
@@ -80,6 +83,7 @@ export function Overview() {
   const pendingInst = (institutions.data ?? []).filter(i => i.status === 'pending').slice(0, 4);
   const pendingVenues = (venues.data ?? []).filter(v => v.review_status === 'pending').slice(0, 4);
   const verifications = o?.verifications_pending ?? 0;
+  const otherWaiting = (o?.claims_pending ?? 0) + (o?.reviews_flagged ?? 0) + (o?.verifications_due ?? 0);
   const meta = (user?.user_metadata ?? {}) as { display_name?: string; full_name?: string };
   const first = (meta.display_name || meta.full_name || '').split(' ')[0];
 
@@ -89,7 +93,7 @@ export function Overview() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <Group title="Waiting for you" icon={Inbox} action={waiting ? <SeeAll to="/admin/approvals">All approvals <ArrowRight className="ml-1 h-4 w-4" /></SeeAll> : null}>
-          {(institutions.loading && !institutions.data) || (venues.loading && !venues.data) ? <Loading /> : !pendingInst.length && !pendingVenues.length && !verifications ? (
+          {(institutions.loading && !institutions.data) || (venues.loading && !venues.data) ? <Loading /> : !pendingInst.length && !pendingVenues.length && !verifications && !otherWaiting ? (
             <Empty icon={Check} title="All caught up" text="New institutions and first publishes from new teams show up here for your approval." />
           ) : (
             <>
@@ -104,6 +108,18 @@ export function Overview() {
               {verifications ? (
                 <Row to="/admin/approvals" leading={<IconTile icon={BadgeCheck} tone="green" />}
                   title={plural(verifications, 'verification request')} subtitle="Places asking to be verified or official" />
+              ) : null}
+              {o?.claims_pending ? (
+                <Row to="/admin/approvals" leading={<IconTile icon={Store} tone="orange" />}
+                  title={plural(o.claims_pending, 'business claim')} subtitle="Businesses asking to manage their place" />
+              ) : null}
+              {o?.reviews_flagged ? (
+                <Row to="/admin/approvals" leading={<IconTile icon={Flag} tone="red" />}
+                  title={plural(o.reviews_flagged, 'flagged review')} subtitle="Reviews visitors reported" />
+              ) : null}
+              {o?.verifications_due ? (
+                <Row to="/admin/approvals" leading={<IconTile icon={BadgeCheck} tone="gray" />}
+                  title={plural(o.verifications_due, 'verification', 'verifications')} subtitle="Ended or ending within 30 days — renew or remove" />
               ) : null}
             </>
           )}
@@ -130,6 +146,9 @@ function DecisionCard({ waiting, o, onReview }: { waiting: number; o: AdminOverv
       o.institutions_pending ? plural(o.institutions_pending, 'new institution') : null,
       o.venues_pending ? plural(o.venues_pending, 'publish request') : null,
       o.verifications_pending ? plural(o.verifications_pending, 'verification') : null,
+      o.claims_pending ? plural(o.claims_pending, 'business claim') : null,
+      o.reviews_flagged ? plural(o.reviews_flagged, 'flagged review') : null,
+      o.verifications_due ? plural(o.verifications_due, 'renewal') : null,
     ].filter(Boolean).join(', ');
     return (
       <section className="flex flex-wrap items-center gap-4 rounded-3xl border bg-gradient-to-br from-primary/10 via-card to-card p-5">
@@ -204,15 +223,25 @@ export function Approvals() {
   const institutions = useAdminQuery<AdminInstitution[]>('admin_institutions');
   const venues = useAdminQuery<AdminVenue[]>('admin_venues');
   const verifications = useAdminQuery<AdminVerificationRequest[]>('admin_verification_queue');
+  const claims = useAdminQuery<AdminBusinessClaim[]>('admin_business_claims');
+  const flagged = useAdminQuery<AdminFlaggedReview[]>('admin_flagged_reviews');
+  const due = useAdminQuery<AdminVerificationDue[]>('admin_verifications_due', { days: 30 });
+  // How long a verification lasts before it's re-checked (business plan §20: "expiry or review date").
+  const [months, setMonths] = useState(12);
   const openDashboard = useOpenDashboard();
   const notes = useNoteDialog();
   const [busy, setBusy] = useState<string | null>(null);
   const pendingInst = (institutions.data ?? []).filter(i => i.status === 'pending');
   const pendingVenues = (venues.data ?? []).filter(v => v.review_status === 'pending');
   const pendingVerifications = verifications.data ?? [];
+  const pendingClaims = claims.data ?? [];
+  const flaggedReviews = flagged.data ?? [];
+  const dueChecks = due.data ?? [];
   const loading = (institutions.loading && !institutions.data) || (venues.loading && !venues.data);
-  const total = pendingInst.length + pendingVenues.length + pendingVerifications.length;
-  const refresh = () => { void institutions.reload(); void venues.reload(); void verifications.reload(); reloadOverview(); };
+  const total = pendingInst.length + pendingVenues.length + pendingVerifications.length + pendingClaims.length + flaggedReviews.length + dueChecks.length;
+  const refresh = () => {
+    void institutions.reload(); void venues.reload(); void verifications.reload(); void claims.reload(); void flagged.reload(); void due.reload(); reloadOverview();
+  };
 
   const run = async (id: string, work: () => Promise<void>, done: string) => {
     setBusy(id);
@@ -222,14 +251,21 @@ export function Approvals() {
     status === 'approved' ? `${i.name} approved${i.pending_reviews ? ' — its waiting venues are live now' : ''}` : `${i.name} declined`);
   const decideVenue = (v: AdminVenue, approve: boolean, note?: string) => run(v.id, () => adminActions.reviewVenue(v.id, approve, note),
     approve ? `${v.name} is live` : `Publishing ${v.name} declined`);
-  const decideVerification = (r: AdminVerificationRequest, approve: boolean, note?: string) => run(r.id, () => adminActions.decideVerification(r.id, approve, note),
-    approve ? `${r.place_name ?? r.venue_name} is ${r.level} now` : 'Verification declined');
+  const decideVerification = (r: AdminVerificationRequest, approve: boolean, note?: string) => run(r.id, () => adminActions.decideVerification(r.id, approve, note, months),
+    approve ? `${r.place_name ?? r.venue_name} is ${r.level} now, for ${months} months` : 'Verification declined');
+  const decideClaim = (c: AdminBusinessClaim, approve: boolean, note?: string) => run(c.id, () => adminActions.decideClaim(c.id, approve, note),
+    approve ? `${c.business_name} now manages ${c.place_name}` : 'Claim declined');
+  const moderate = (r: AdminFlaggedReview, hide: boolean, reason?: string) => run(r.id, () => adminActions.moderateReview(r.id, hide, reason),
+    hide ? 'Review hidden' : 'Review kept — its flags are cleared');
+  const renew = (d: AdminVerificationDue, keep: boolean, note?: string) => run(d.poi_id ?? d.building_id,
+    () => adminActions.setTrust(d.building_id, keep ? d.level : 'listed', note, d.poi_id ?? undefined, months),
+    keep ? `${d.name}: renewed for ${months} months` : `${d.name}: verification removed`);
 
   return (
     <Page title="Approvals" subtitle="Approving an institution also publishes the venues it was waiting to publish.">
       {notes.dialog}
       {loading ? <Loading /> : total === 0 ? (
-        <Group><Empty icon={Check} title="All caught up" text="New institutions, publish requests and verification requests will wait here for you." /></Group>
+        <Group><Empty icon={Check} title="All caught up" text="New institutions, publish requests, verifications, business claims and flagged reviews will wait here for you." /></Group>
       ) : null}
 
       {!loading && pendingInst.length ? (
@@ -271,12 +307,15 @@ export function Approvals() {
       {verifications.needsMigration ? (
         <Group title="Verification requests" footer="Run the 20261028090000_place_trust migration to turn on verification requests."><Empty icon={BadgeCheck} title="Not set up yet" /></Group>
       ) : !loading && pendingVerifications.length ? (
-        <Group title={`Verification requests · ${pendingVerifications.length}`} footer="Verification is free and never sold.">
+        <Group title={`Verification requests · ${pendingVerifications.length}`} footer="Verification is free and never sold." action={<label className="flex items-center gap-1.5 text-xs text-muted-foreground">Valid for
+            <select value={months} onChange={e => setMonths(Number(e.target.value))} className="rounded-lg border bg-card px-1.5 py-1 text-xs text-foreground" aria-label="Valid for">
+              {[6, 12, 24].map(m => <option key={m} value={m}>{m} months</option>)}
+            </select></label>}>
           {pendingVerifications.map(r => (
             <Decision key={r.id} leading={<IconTile icon={r.level === 'official' ? Landmark : BadgeCheck} tone={r.level === 'official' ? 'purple' : 'green'} size={40} />}
               title={<>{r.place_name ? `${r.place_name}, ${r.venue_name}` : r.venue_name} <span className="font-normal text-muted-foreground">→ {STATUS_INFO[r.level].label}</span></>}
               subtitle={join(r.institution_name, `asked ${timeAgo(r.requested_at)}`, r.requested_by_name && `by ${r.requested_by_name}`, `now ${STATUS_INFO[trustLevelOf(r.current_level)].label}`, !r.is_published && 'not published')}
-              detail={<>{join(`Source: ${r.source || 'not given'}`, `Responsible: ${r.responsible_party || 'not given'}`)}{r.open_reports ? <> · <span className="text-amber-700">{plural(r.open_reports, 'open report')}</span></> : null}</>}
+              detail={<>{r.scope ? <>Check: <b className="font-medium text-foreground">{r.scope}</b> · </> : null}{join(`Source: ${r.source || 'not given'}`, `Responsible: ${r.responsible_party || 'not given'}`)}{r.open_reports ? <> · <span className="text-amber-700">{plural(r.open_reports, 'open report')}</span></> : null}</>}
               note={r.note}>
               <PlainButton href={`/venue/${r.building_id}${r.is_published ? '' : '?preview=1'}`}>Look</PlainButton>
               <PlainButton tone="red" disabled={busy === r.id}
@@ -289,6 +328,75 @@ export function Approvals() {
               </FilledButton>
             </Decision>
           ))}
+        </Group>
+      ) : null}
+
+      {!loading && pendingClaims.length ? (
+        <Group title={`Business claims · ${pendingClaims.length}`} footer="Check the evidence — call the number, look up the licence. The business then manages the place's contact, prices and review answers.">
+          {pendingClaims.map(c => (
+            <Decision key={c.id} leading={<IconTile icon={Store} tone="orange" size={40} />}
+              title={<>{c.business_name} <span className="font-normal text-muted-foreground">→ {c.place_name}</span></>}
+              subtitle={join(`${placeTypeLabel(c.place_type)} in ${c.venue_name}`, c.venue_institution, `asked ${timeAgo(c.requested_at)}`, c.requested_by_name && `by ${c.requested_by_name}`)}
+              detail={join(c.contact_phone && `Phone: ${c.contact_phone}`, c.other_claims ? `${plural(Number(c.other_claims), 'other business', 'other businesses')} also asking` : null)}
+              note={c.evidence}>
+              <PlainButton href={`/venue/${c.building_id}?poi=${c.poi_id}`}>Look</PlainButton>
+              <PlainButton tone="red" disabled={busy === c.id}
+                onClick={() => notes.ask({ title: `Decline ${c.business_name}'s claim?`, text: 'Say what is missing — they see your note on Yet New Business and can ask again.', confirm: 'Decline', danger: true, run: n => decideClaim(c, false, n) })}>
+                Decline
+              </PlainButton>
+              <FilledButton disabled={busy === c.id}
+                onClick={() => notes.ask({ title: `Let ${c.business_name} manage ${c.place_name}?`, text: 'Note how you checked it (kept in the audit log). Other claims for this place are answered too.', confirm: 'Approve', run: n => decideClaim(c, true, n) })}>
+                Approve
+              </FilledButton>
+            </Decision>
+          ))}
+        </Group>
+      ) : null}
+
+      {!loading && flaggedReviews.length ? (
+        <Group title={`Flagged reviews · ${flaggedReviews.length}`} footer="Hide only what breaks the rules — abuse, spam, personal details, not about the place. Criticism stays.">
+          {flaggedReviews.map(r => (
+            <Decision key={r.id} leading={<IconTile icon={Flag} tone="red" size={40} />}
+              title={<>{r.author_name} <span className="font-normal text-muted-foreground">on {r.place_name}</span> <Stars value={r.rating} size={12} className="ml-1 align-[-1px]" /></>}
+              subtitle={join(r.venue_name, timeAgo(r.created_at), `${plural(r.flags, 'flag')}`, r.reasons.length ? `“${r.reasons.join('”, “')}”` : null)}
+              note={r.body}>
+              <PlainButton disabled={busy === r.id} onClick={() => void moderate(r, false)}>Keep</PlainButton>
+              <FilledButton disabled={busy === r.id}
+                onClick={() => notes.ask({ title: 'Hide this review?', text: 'Visitors stop seeing it and it leaves the rating. Its writer still sees it, with your reason.', confirm: 'Hide', danger: true, run: n => moderate(r, true, n) })}>
+                Hide
+              </FilledButton>
+            </Decision>
+          ))}
+        </Group>
+      ) : null}
+
+      {!loading && dueChecks.length ? (
+        <Group title={`Verifications to renew · ${dueChecks.length}`} action={<label className="flex items-center gap-1.5 text-xs text-muted-foreground">Valid for
+            <select value={months} onChange={e => setMonths(Number(e.target.value))} className="rounded-lg border bg-card px-1.5 py-1 text-xs text-foreground" aria-label="Valid for">
+              {[6, 12, 24].map(m => <option key={m} value={m}>{m} months</option>)}
+            </select></label>}
+          footer="Ended or ending within 30 days. Until renewed, visitors see a lapsed verification as Listed.">
+          {dueChecks.map(d => {
+            const key = d.poi_id ?? d.building_id;
+            const lapsed = new Date(d.verified_until).getTime() < Date.now();
+            return (
+              <Decision key={key} leading={<IconTile icon={d.level === 'official' ? Landmark : BadgeCheck} tone={lapsed ? 'gray' : 'green'} size={40} />}
+                title={<>{d.poi_id ? `${d.name}, ${d.venue_name}` : d.name} <span className="font-normal text-muted-foreground">· {STATUS_INFO[d.level].label}</span></>}
+                subtitle={join(lapsed ? `ended ${timeAgo(d.verified_until)}` : `ends ${new Date(d.verified_until).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`,
+                  d.verified_at && `verified ${timeAgo(d.verified_at)}`, d.responsible_party)}
+                detail={d.scope ? `Checked: ${d.scope}` : undefined}>
+                <PlainButton href={`/venue/${d.building_id}${d.poi_id ? `?poi=${d.poi_id}` : ''}`}>Look</PlainButton>
+                <PlainButton tone="red" disabled={busy === key}
+                  onClick={() => notes.ask({ title: `Remove ${d.name}'s verification?`, text: 'It goes back to Listed. Say why — the team sees your note.', confirm: 'Remove', danger: true, run: n => renew(d, false, n) })}>
+                  Remove
+                </PlainButton>
+                <FilledButton disabled={busy === key}
+                  onClick={() => notes.ask({ title: `Renew ${d.name} for ${months} months?`, text: 'Note how you re-checked it (kept in the audit log).', confirm: 'Renew', run: n => renew(d, true, n) })}>
+                  Renew
+                </FilledButton>
+              </Decision>
+            );
+          })}
         </Group>
       ) : null}
     </Page>

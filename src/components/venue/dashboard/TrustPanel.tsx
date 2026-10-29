@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
-import { STATUS_INFO, isStale, sinceText, trustLevelOf, venueStatus } from '@/lib/venue/trust';
+import { STATUS_INFO, isStale, sinceText, trustLevelOf, untilText, venueStatus, verificationState } from '@/lib/venue/trust';
 
 type Request = Tables<'verification_requests'>;
 const missing = (msg: string) => /trust_level|verification_requests|archive_venue|schema cache|does not exist/i.test(msg);
@@ -31,6 +31,8 @@ export default function TrustPanel({ building, institutionStatus, canArchive, on
   const [asking, setAsking] = useState(false);
   const [askLevel, setAskLevel] = useState<'verified' | 'official'>(level === 'verified' ? 'official' : 'verified');
   const [askNote, setAskNote] = useState('');
+  const [askScope, setAskScope] = useState('');
+  const vstate = verificationState(b);
   useEffect(() => { setSource(b.source ?? ''); setParty(b.responsible_party ?? ''); }, [b.source, b.responsible_party]);
 
   const loadRequests = useCallback(async () => {
@@ -56,11 +58,13 @@ export default function TrustPanel({ building, institutionStatus, canArchive, on
   const ask = async () => {
     setBusy('ask');
     const { data: u } = await supabase.auth.getUser();
-    const { error } = await supabase.from('verification_requests').insert({ building_id: b.id, level: askLevel, note: askNote.trim() || null, requested_by: u.user?.id ?? null });
+    const { error } = await supabase.from('verification_requests').insert({
+      building_id: b.id, level: askLevel, note: askNote.trim() || null, scope: askScope.trim() || null, requested_by: u.user?.id ?? null,
+    });
     setBusy(null);
     if (error) { fail(/one_pending|duplicate/i.test(error.message) ? 'You already have a request waiting.' : error.message); return; }
     toast.success('Sent to Yet New — you’ll see the answer here.');
-    setAsking(false); setAskNote(''); void loadRequests();
+    setAsking(false); setAskNote(''); setAskScope(''); void loadRequests();
   };
 
   const withdraw = async (r: Request) => {
@@ -90,7 +94,15 @@ export default function TrustPanel({ building, institutionStatus, canArchive, on
       </div>
       {b.suspended_at && b.suspend_note && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950/40 dark:text-red-300">Yet New: “{b.suspend_note}”</p>}
       {b.verified_at && level !== 'listed' && (
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> {STATUS_INFO[level].label} by Yet New {sinceText(b.verified_at)}{b.trust_note ? ` — “${b.trust_note}”` : ''}</p>
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> {STATUS_INFO[level].label} by Yet New {sinceText(b.verified_at)}
+          {untilText(b) ? `, ${untilText(b)}` : ''}{b.verification_scope ? ` · checked: ${b.verification_scope}` : ''}{b.trust_note ? ` — “${b.trust_note}”` : ''}</p>
+      )}
+      {(vstate === 'ending' || vstate === 'lapsed') && (
+        <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          {vstate === 'lapsed'
+            ? 'Your verification has ended, so visitors no longer see the badge. Ask Yet New to renew it below.'
+            : `Your verification ends soon (${untilText(b)}). Ask Yet New to renew it below so the badge stays.`}
+        </p>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -124,10 +136,10 @@ export default function TrustPanel({ building, institutionStatus, canArchive, on
             Asked to be {pending.level} {sinceText(pending.requested_at)}.
             <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void withdraw(pending)}><Undo2 className="mr-1 h-3.5 w-3.5" /> Withdraw</Button>
           </div>
-        ) : level === 'official' ? null : asking ? (
+        ) : level === 'official' && vstate === 'active' ? null : asking ? (
           <div className="mt-3 space-y-2">
             <div className="flex gap-2">
-              {(['verified', 'official'] as const).filter(l => l !== level).map(l => (
+              {(['verified', 'official'] as const).filter(l => l !== level || vstate === 'ending' || vstate === 'lapsed').map(l => (
                 <button key={l} type="button" onClick={() => setAskLevel(l)} aria-pressed={askLevel === l}
                   className={cn('flex-1 rounded-xl border p-2 text-left', askLevel === l ? 'border-primary bg-primary/10' : 'hover:bg-muted')}>
                   <span className="block text-sm font-semibold">{STATUS_INFO[l].label}</span>
@@ -135,6 +147,7 @@ export default function TrustPanel({ building, institutionStatus, canArchive, on
                 </button>
               ))}
             </div>
+            <Input maxLength={300} value={askScope} onChange={e => setAskScope(e.target.value)} placeholder="What should be checked? e.g. Name, opening hours and location" aria-label="What should be checked" />
             <Textarea rows={2} maxLength={2000} value={askNote} onChange={e => setAskNote(e.target.value)}
               placeholder={askLevel === 'official' ? 'Which authority confirms it, and how Yet New can check (letter, contact, website)' : 'Anything that helps Yet New check (licence, website, a contact)'} />
             <div className="flex gap-2">
@@ -146,7 +159,9 @@ export default function TrustPanel({ building, institutionStatus, canArchive, on
         ) : (
           <div className="mt-2 space-y-2">
             {lastDecided?.status === 'rejected' && <p className="text-xs text-muted-foreground">Last request declined{lastDecided.decision_note ? `: “${lastDecided.decision_note}”` : '.'}</p>}
-            <Button size="sm" variant="outline" onClick={() => setAsking(true)}><ShieldCheck className="mr-1.5 h-4 w-4" /> Ask Yet New to verify</Button>
+            <Button size="sm" variant="outline" onClick={() => { setAskLevel(vstate === 'none' ? 'verified' : level === 'official' ? 'official' : askLevel); setAsking(true); }}>
+              <ShieldCheck className="mr-1.5 h-4 w-4" /> {vstate === 'ending' || vstate === 'lapsed' ? 'Ask Yet New to renew' : 'Ask Yet New to verify'}
+            </Button>
           </div>
         )}
       </div>

@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight, Info, Megaphone, Siren, X } from 'lucide-rea
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { noticeWhen, type VenueNotice } from '@/lib/destination';
+import { getPackage } from '@/lib/offline/venuePackage';
 
 const STYLE: Record<VenueNotice['severity'], string> = {
   urgent: 'border-red-300 bg-red-600 text-white dark:border-red-800',
@@ -22,8 +23,16 @@ export function useOfficialNotices(buildingId: string | undefined) {
   useEffect(() => {
     if (!buildingId) return;
     let live = true;
-    void Promise.resolve(supabase.rpc('venue_notices', { b: buildingId })).then(({ data, error }) => {
-      if (live && !error) setNotices((data ?? []) as VenueNotice[]);
+    void Promise.resolve(supabase.rpc('venue_notices', { b: buildingId })).then(async ({ data, error }) => {
+      // No connection: the notices saved with the venue for offline use (safety information belongs offline too).
+      const saved = error && /fetch|network|load failed/i.test(error.message) ? (await getPackage(buildingId))?.notices ?? null : null;
+      if (live && saved) {
+        setNotices(saved as VenueNotice[]);
+      } else if (live && !error) {
+        setNotices((data ?? []) as VenueNotice[]);
+      } else {
+        // nothing to show
+      }
     }).catch(() => undefined);
     return () => { live = false; };
   }, [buildingId]);

@@ -39,6 +39,7 @@ import { useGeofences } from '@/components/visitor/useGeofences';
 import { PlaceDetail, TrustLine, type DistanceOf } from '@/components/visitor/PlaceViews';
 import ReportProblem, { type ReportTarget } from '@/components/visitor/ReportProblem';
 import PlaceBusiness from '@/components/visitor/PlaceBusiness';
+import OfflineSave from '@/components/visitor/OfflineSave';
 import PlaceReviews from '@/components/visitor/PlaceReviews';
 import { useVenueExtras, VenueExtrasContext } from '@/components/visitor/useVenueExtras';
 import { isBusinessPlaceType } from '@/lib/venue/places';
@@ -553,6 +554,12 @@ export default function ViewMap() {
           <button onClick={() => navigate(`/visit?v=${buildingId}`)} className={cn('pointer-events-auto grid h-10 w-10 place-items-center rounded-2xl', glass)} aria-label="Venue home">
             <HomeIcon className="h-[18px] w-[18px]" />
           </button>
+          {building.is_published && !previewing && (
+            <OfflineSave venueId={building.id} venueName={building.name} publishedAt={building.published_at} offlineSavedAt={venue.data?.offlineSavedAt} className={glass} />
+          )}
+          {venue.data?.offlineSavedAt && (
+            <span className={cn('pointer-events-auto rounded-full px-3 py-2 text-xs font-medium', glass)}>Offline · saved copy</span>
+          )}
           {position && !guiding && (
             <div className={cn('pointer-events-auto flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium', glass)}>
               <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-60" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-500" /></span>

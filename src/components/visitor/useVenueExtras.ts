@@ -5,6 +5,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { businessInfo, type BusinessInfo, type ReviewSummary } from '@/lib/venue/business';
+import { getPackage } from '@/lib/offline/venuePackage';
 
 export interface VenueExtras {
   business: Map<string, BusinessInfo>;
@@ -29,14 +30,18 @@ export function useVenueExtras(venueId: string | undefined): VenueExtras {
           supabase.from('business_profiles').select('*').eq('building_id', venueId),
           supabase.rpc('place_review_summary', { b: venueId }),
         ]);
+        // No connection: what was saved with the venue for offline use.
+        const offline = bp.error && /fetch|network|load failed/i.test(bp.error.message) ? await getPackage(venueId) : null;
         if (live) {
+          const rows = offline ? offline.business : bp.data ?? [];
+          const summary = offline ? offline.ratings : rs.data ?? [];
           const business = new Map<string, BusinessInfo>();
-          for (const row of bp.data ?? []) {
+          for (const row of rows) {
             const info = businessInfo(row);
             if (info) business.set(row.poi_id, info);
           }
-          const ratings = new Map<string, ReviewSummary>((rs.data ?? []).map(r => [r.poi_id, { rating: Number(r.rating), reviews: Number(r.reviews) }] as const));
-          setState({ business, ratings, available: !bp.error && !rs.error });
+          const ratings = new Map<string, ReviewSummary>(summary.map(r => [r.poi_id, { rating: Number(r.rating), reviews: Number(r.reviews) }] as const));
+          setState({ business, ratings, available: !!offline || (!bp.error && !rs.error) });
         }
       })();
     } else {

@@ -71,6 +71,8 @@ export default function PlaceReviews({ poiId, venueId, placeName, published, onC
 
   if (missing || !published) {
     return null;
+  } else if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return <p className="rounded-2xl bg-muted/40 p-3 text-center text-xs text-muted-foreground">Visitor reviews show when you're back online.</p>;
   } else {
     return (
       <section className="space-y-3" aria-label="Visitor reviews">

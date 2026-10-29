@@ -1,16 +1,7 @@
-// Every audit-log entry on the platform, for the Yet New team (and the pilot's oversight report).
+// The platform audit log lives as a tab of Activity; /admin/audit opens that tab.
 
-import { ScrollText } from 'lucide-react';
-import AuditLogList from '@/components/audit/AuditLogList';
-import { PageHeader, Panel } from '@/pages/dashboard/ui';
+import { Activity } from './AdminPages';
 
 export default function AdminAudit() {
-  return (
-    <>
-      <PageHeader title="Audit log" description="Every change to access, trust and visibility across the platform — by venue teams and by Yet New. Permanent: entries can't be changed or deleted, by anyone." />
-      <Panel title="All changes" icon={ScrollText}>
-        <AuditLogList institutionId={null} fileName="Yet New audit log.csv" />
-      </Panel>
-    </>
-  );
+  return <Activity />;
 }

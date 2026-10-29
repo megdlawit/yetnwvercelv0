@@ -11,7 +11,7 @@ import { RequirePlatformAdmin, RequireVenueEditor } from "@/components/admin/Acc
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import AdminLayout from "./pages/admin/AdminLayout";
-import AdminTools from "./pages/admin/AdminTools";
+import AdminTools, { ToolsHome as AdminToolsHome } from "./pages/admin/AdminTools";
 import AdminInsightsPage from "./pages/admin/AdminInsights";
 import { Overview as AdminOverview, Approvals as AdminApprovals, Institutions as AdminInstitutions, Venues as AdminVenues, People as AdminPeople, Activity as AdminActivity } from "./pages/admin/AdminPages";
 import Login from "./pages/Login";
@@ -114,6 +114,7 @@ const App = () => (
                 <Route path="insights" element={<AdminInsightsPage />} />
                 <Route path="audit" element={<AdminAudit />} />
                 <Route path="report" element={<AdminReport />} />
+                <Route path="tools" element={<AdminToolsHome />} />
                 <Route path="tools/:tool" element={<AdminTools />} />
               </Route>
               <Route path="/admin/buildings" element={<Navigate to="/admin/tools/buildings" replace />} />

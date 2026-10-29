@@ -21,6 +21,7 @@ import { venueHealth } from '@/lib/venue/health';
 import { describeActivity, dayLabel, timeAgo } from '@/lib/venue/activity';
 import { themeOf } from '@/lib/venue/themes';
 import { Panel, StatusDot } from './ui';
+import VenueNoticesPanel from '@/components/dashboard/VenueNoticesPanel';
 
 function greeting(d = new Date()) {
   const h = d.getHours();
@@ -49,6 +50,8 @@ export default function Home() {
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{welcome ? `Welcome to Yet New, ${first}!` : `${greeting()}, ${first}`}</h1>
         <p className="mt-1 text-muted-foreground">Here's how {b.name} is doing.</p>
       </div>
+
+      <VenueNoticesPanel buildingId={b.id} />
 
       <NextStep h={h} editor={editor} onPublish={openPublish}
         onDismiss={welcome ? () => { params.delete('welcome'); setParams(params, { replace: true }); } : undefined} />

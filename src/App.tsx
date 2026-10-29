@@ -38,6 +38,7 @@ import Reports from "./pages/dashboard/Reports";
 import Insights from "./pages/dashboard/Insights";
 import AuditLog from "./pages/dashboard/AuditLog";
 import AdminAudit from "./pages/admin/AdminAudit";
+import DestinationOS from "./pages/destination/DestinationOS";
 import Team from "./pages/dashboard/Team";
 import PublishSettings from "./pages/dashboard/PublishSettings";
 import { PlacesPage, AttractionsPage, ContentPage, QrPage } from "./pages/dashboard/ManagerPages";
@@ -76,6 +77,8 @@ const App = () => (
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
               <Route path="/admin/login" element={<Login />} />
+              {/* Destination OS: a government or destination account across the venues it oversees. */}
+              <Route path="/destination" element={<RequireAdminAuth><WorkspaceProvider><DestinationOS /></WorkspaceProvider></RequireAdminAuth>} />
               <Route path="/dashboard" element={<RequireAdminAuth><WorkspaceProvider><DashboardLayout /></WorkspaceProvider></RequireAdminAuth>}>
                 <Route index element={<Home />} />
                 <Route path="map" element={<ViewMapPage />} />

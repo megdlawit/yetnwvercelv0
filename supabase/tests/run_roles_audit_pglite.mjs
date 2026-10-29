@@ -121,6 +121,7 @@ check('viewer reads insights', !!(await one(`select public.venue_insights($1, no
 check('viewer cannot publish', !!(await throws(`select public.archive_venue($1, true)`, [DRAFT])));
 check('viewer is not counted as a visitor', (await one(`select public.record_visit_events($1, 'visit-viewer-01', 'phone', 'direct', '[{"kind":"visit"}]'::jsonb) as n`, [LIVE])).n === 0);
 check('user_team_role says viewer', (await one(`select public.user_team_role($1) as r`, [INST])).r === 'viewer');
+check('can-edit is false (not null) for a viewer', (await one(`select public.user_can_edit_institution($1) as x`, [INST])).x === false);
 
 await as('authenticated', EDITOR);
 await db.query(`update public.buildings set name = 'Annex West' where id = $1`, [DRAFT]);
@@ -148,6 +149,7 @@ await as('authenticated', OWNER);
 check('the overseen owner sees who oversees them', (await all(`select * from public.oversight_grants`)).length === 1);
 await as('authenticated', STRANGER);
 check('others do not see the grant', (await all(`select * from public.oversight_grants`)).length === 0);
+check('can-edit and can-view are false (not null) for a stranger', (await one(`select public.user_can_edit_institution($1) as e, public.user_can_view_institution($1) as v`, [INST])).e === false);
 check('a stranger still sees nothing unpublished', !(await one(`select id from public.buildings where id = $1`, [DRAFT])));
 
 await as('authenticated', ADMIN);
@@ -207,7 +209,7 @@ await db.query(`select public.team_set_member($1, $2, $3, 'viewer')`, [OWNER, IN
 await as('authenticated', VIEWER);
 check('viewers do not read the log', !!(await throws(`select * from public.audit_entries($1)`, [INST])));
 await as('authenticated', STRANGER);
-check('another institution's owner sees none of this one's entries', !!(await throws(`select * from public.audit_entries($1)`, [INST])) && (await all(`select * from public.audit_log`)).every(e => e.institution_id === SHOP));
+check("another institution's owner sees none of this one's entries", !!(await throws(`select * from public.audit_entries($1)`, [INST])) && (await all(`select * from public.audit_log`)).every(e => e.institution_id === SHOP));
 await as('authenticated', ADMIN);
 check('Yet New reads everything', (await all(`select * from public.audit_entries(null, null, 200)`)).length === log.length + 1);
 

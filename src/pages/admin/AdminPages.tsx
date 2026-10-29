@@ -311,6 +311,7 @@ export function Institutions() {
   const rows = useMemo(() => (q.data ?? []).filter(i => (filter === 'all' || i.status === filter) && matches(search || query, i.name, i.owner_username, i.owner_name, i.kind)), [q.data, filter, search, query]);
   const count = (s: InstitutionStatus) => (q.data ?? []).filter(i => i.status === s).length;
   const accounts = useAccountTypes();
+  const navigate = useNavigate();
   const [overseeing, setOverseeing] = useState<{ id: string; name: string } | null>(null);
   const typeOf = (id: string) => accounts.types?.get(id) ?? 'venue';
   const setType = async (i: AdminInstitution, t: AccountType) => {
@@ -375,6 +376,7 @@ export function Institutions() {
                               </DropdownMenuSubContent>
                             </DropdownMenuSub>
                             {canOversee(typeOf(i.id)) && <DropdownMenuItem onSelect={() => setOverseeing({ id: i.id, name: i.name })}><Eye className="mr-2 h-4 w-4" /> What it oversees…</DropdownMenuItem>}
+                            {canOversee(typeOf(i.id)) && <DropdownMenuItem onSelect={() => navigate(`/destination?as=${i.id}`)}><Landmark className="mr-2 h-4 w-4" /> Open its Destination OS</DropdownMenuItem>}
                           </>
                         )}
                       </DropdownMenuContent>

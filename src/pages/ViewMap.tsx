@@ -29,6 +29,7 @@ import { useCurrentOutdoorVenue, useSiblingVenues } from '@/components/venue/use
 import { CATEGORY_COLORS, PX_PER_METER, type Place, type VisitorPosition } from '@/components/visitor/types';
 import { useVisitorVenue, resolveEntry } from '@/components/visitor/useVisitorVenue';
 import { useVisitInsights, visitSource } from '@/components/visitor/useVisitInsights';
+import OfficialNotices, { useOfficialNotices } from '@/components/visitor/OfficialNotices';
 import { useSavedPlaces } from '@/components/visitor/useSavedPlaces';
 import { useGps, useStepCounter, metresTo, STRIDE_M } from '@/components/visitor/usePositioning';
 import { planAngleDeg, snapToPaths, stepForward, type Segment } from '@/lib/venue/pdr';
@@ -281,6 +282,8 @@ export default function ViewMap() {
   // ── Insights: anonymous counts for the venue's team (never for previews or "do not track") ──
   const [arrivedBy] = useState(() => visitSource(params));
   const insights = useVisitInsights(buildingId, !preview && !previewing, arrivedBy);
+  // What an authority overseeing the venue wants visitors to know (closures, safety, hours).
+  const notices = useOfficialNotices(buildingId);
   const counted = useRef<{ qr?: boolean; route?: string | null }>({});
   useEffect(() => {
     if (!insights || !qrStart || counted.current.qr) return;
@@ -543,6 +546,7 @@ export default function ViewMap() {
             </div>
           )}
         </div>
+        {!guiding && <OfficialNotices notices={notices} />}
         {geo.nearby && !guiding && !sel && (
           <NearbyChip name={geo.nearby.place.name} minutes={geo.nearby.minutes}
             onOpen={() => selectPlace(geo.nearby!.place.id)} onDismiss={() => geo.dismissNearby(geo.nearby!.place.id)} />

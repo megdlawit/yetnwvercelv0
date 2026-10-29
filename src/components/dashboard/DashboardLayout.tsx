@@ -3,11 +3,12 @@
 // current venue of the current institution.
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Search, Eye, Bell, HelpCircle, ChevronsLeft, ChevronsRight, Menu, ChevronDown, Check, Plus, LogOut, KeyRound,
   ShieldCheck, Loader2, Globe, Building2, BookOpen, Upload, AlertTriangle, Trees, Sparkles, Lightbulb, PenTool,
+  Landmark,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -92,6 +93,8 @@ export default function DashboardLayout() {
 
   if (ws.loading) return <FullScreen><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></FullScreen>;
   if (!ws.institution) return <CreateInstitution />;
+  // A government or destination account usually runs no venues itself: its home is Destination OS.
+  if (!ws.venueId && isAuthority(ws.institution.account_type)) return <Navigate to={`/destination?as=${ws.institution.id}`} replace />;
   if (!ws.venueId) return <NoVenue />;
 
   const sidebar = (mobile: boolean) => (
@@ -414,6 +417,8 @@ function HelpMenu({ onTour }: { onTour: () => void }) {
   );
 }
 
+const isAuthority = (t: string | undefined) => t === 'government' || t === 'destination';
+
 function AccountMenu() {
   const ws = useWorkspace();
   const { signOut } = useAdminAuth();
@@ -433,6 +438,9 @@ function AccountMenu() {
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => navigate('/dashboard/team')}><Building2 className="mr-2 h-4 w-4" /> {ws.institution?.name} team</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setPwOpen(true)}><KeyRound className="mr-2 h-4 w-4" /> Change password</DropdownMenuItem>
+          {ws.institutions.some(i => isAuthority(i.account_type) && i.role !== 'oversight' && i.role !== 'admin') && (
+            <DropdownMenuItem onSelect={() => navigate('/destination')}><Landmark className="mr-2 h-4 w-4" /> Destination OS</DropdownMenuItem>
+          )}
           {ws.isPlatformAdmin && <DropdownMenuItem onSelect={() => navigate('/admin')}><ShieldCheck className="mr-2 h-4 w-4" /> Platform console</DropdownMenuItem>}
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={async () => { await signOut(); navigate('/login', { replace: true }); }}><LogOut className="mr-2 h-4 w-4" /> Sign out</DropdownMenuItem>

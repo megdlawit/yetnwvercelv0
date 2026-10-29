@@ -70,7 +70,8 @@ GRANT EXECUTE ON FUNCTION public.user_team_role(uuid) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.user_can_edit_institution(inst uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-  SELECT auth.uid() IS NOT NULL AND (public.user_team_role(inst) IN ('owner', 'editor') OR public.user_is_platform_admin());
+  -- COALESCE: no role is false, not NULL ("IF NOT <null>" would let anyone through).
+  SELECT auth.uid() IS NOT NULL AND (COALESCE(public.user_team_role(inst) IN ('owner', 'editor'), false) OR public.user_is_platform_admin());
 $$;
 CREATE OR REPLACE FUNCTION public.user_can_view_institution(inst uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
@@ -346,7 +347,7 @@ CREATE TRIGGER guard_account_type BEFORE INSERT OR UPDATE ON public.institutions
 ALTER TABLE public.oversight_grants ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Both sides and Yet New read oversight" ON public.oversight_grants;
 CREATE POLICY "Both sides and Yet New read oversight" ON public.oversight_grants FOR SELECT TO authenticated
-  USING (public.user_is_platform_admin() OR public.user_can_edit_institution(institution_id) OR public.user_team_role(overseer_id) IN ('owner', 'editor', 'viewer'));
+  USING (public.user_is_platform_admin() OR public.user_can_edit_institution(institution_id) OR COALESCE(public.user_team_role(overseer_id) IN ('owner', 'editor', 'viewer'), false));
 REVOKE ALL ON public.oversight_grants FROM anon, authenticated;
 GRANT SELECT ON public.oversight_grants TO authenticated;
 

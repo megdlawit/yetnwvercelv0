@@ -25,6 +25,13 @@ describe('the audit log in plain words', () => {
     expect(describeAudit(entry('institution.type', 'Addis Ababa Tourism', { account_type: { from: 'venue', to: 'government' } }, 'institution'))).toBe('made Addis Ababa Tourism a government account');
   });
 
+  it('says what an authority told visitors', () => {
+    expect(describeAudit(entry('notice.issued', 'North gate closed', { severity: 'urgent', all_venues: false, venues: 2 }, 'notice'))).toBe('issued the official notice “North gate closed” (urgent) to 2 venues');
+    expect(describeAudit(entry('notice.issued', 'Heat', { severity: 'info', all_venues: true }, 'notice'))).toBe('issued the official notice “Heat” to every venue it oversees');
+    expect(describeAudit(entry('notice.withdrawn', 'Heat', {}, 'notice'))).toBe('withdrew the official notice “Heat”');
+    expect(auditGroup('notice.issued')).toBe('notices');
+  });
+
   it('still says something for an action it does not know', () => {
     expect(describeAudit(entry('venue.something_new', 'Unity Park'))).toBe('venue something new Unity Park');
   });

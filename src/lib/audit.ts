@@ -82,6 +82,9 @@ export function describeAudit(e: AuditEntry): string {
     case 'verification.approved': return `approved the verification of ${t}`;
     case 'verification.rejected': return `declined the verification of ${t}${d.note ? ` — “${str(d.note)}”` : ''}`;
     case 'verification.withdrawn': return `withdrew the verification request for ${t}`;
+    case 'notice.issued': return `issued the official notice “${t}”${d.severity === 'urgent' ? ' (urgent)' : ''} to ${d.all_venues ? 'every venue it oversees' : `${str(d.venues)} venue${d.venues === 1 ? '' : 's'}`}`;
+    case 'notice.updated': return `changed the official notice “${t}”`;
+    case 'notice.withdrawn': return `withdrew the official notice “${t}”`;
     case 'report.fixed': return `fixed a reported problem at ${t}`;
     case 'report.dismissed': return `dismissed a report about ${t}`;
     case 'report.open': return `reopened a report about ${t}`;
@@ -92,11 +95,12 @@ export function describeAudit(e: AuditEntry): string {
 const article = (role: string) => (role === 'owner' ? 'an owner' : role === 'editor' ? 'an editor' : role === 'viewer' ? 'a viewer' : role || 'a member');
 
 /** Which group an entry belongs to, for filtering. */
-export function auditGroup(action: string): 'visibility' | 'trust' | 'team' | 'institution' | 'reports' {
+export function auditGroup(action: string): 'visibility' | 'trust' | 'team' | 'institution' | 'reports' | 'notices' {
   if (/^(venue\.(published|unpublished|archived|restored|suspended|unsuspended|featured|created|deleted|moved|review))/.test(action)) return 'visibility';
   if (/trust|^verification/.test(action)) return 'trust';
   if (/^(member|staff)\./.test(action)) return 'team';
   if (/^report\./.test(action)) return 'reports';
+  if (/^notice\./.test(action)) return 'notices';
   return 'institution';
 }
-export const AUDIT_GROUPS = [['visibility', 'Online & offline'], ['trust', 'Trust & verification'], ['team', 'Team & access'], ['institution', 'Institution & oversight'], ['reports', 'Reports']] as const;
+export const AUDIT_GROUPS = [['visibility', 'Online & offline'], ['trust', 'Trust & verification'], ['team', 'Team & access'], ['institution', 'Institution & oversight'], ['reports', 'Reports'], ['notices', 'Official notices']] as const;

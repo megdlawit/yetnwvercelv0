@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
-  AlertTriangle, ArrowLeft, BadgeCheck, Building2, CircleAlert, Download, ExternalLink, Eye, Flag, Info, LayoutGrid, Loader2, Megaphone, Plus, Siren, Users, XCircle,
+  AlertTriangle, ArrowLeft, FileBarChart, BadgeCheck, Building2, CircleAlert, Download, ExternalLink, Eye, Flag, Info, LayoutGrid, Loader2, Megaphone, Plus, Siren, Users, XCircle,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { PageHeader, Panel } from '@/pages/dashboard/ui';
+import PilotReport from './PilotReport';
 import { STATUS_INFO, sinceText, venueStatus } from '@/lib/venue/trust';
 import { period, downloadText, toCsv } from '@/lib/analytics/insights';
 import {
@@ -45,7 +46,7 @@ export default function DestinationOS() {
   // The accounts that oversee: your own government / destination institutions (Yet New: all of them).
   const authorities = useMemo(() => ws.institutions.filter(i => (i.account_type === 'government' || i.account_type === 'destination') && i.role !== 'oversight'), [ws.institutions]);
   const authority = authorities.find(a => a.id === params.get('as')) ?? authorities[0] ?? null;
-  const [tab, setTab] = useState<'overview' | 'notices'>(params.get('tab') === 'notices' ? 'notices' : 'overview');
+  const [tab, setTab] = useState<'overview' | 'notices' | 'report'>(() => { const t = params.get('tab'); return t === 'notices' || t === 'report' ? t : 'overview'; });
 
   if (ws.loading) return <div className="grid min-h-screen place-items-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   if (!authority) return <Navigate to="/dashboard" replace />;
@@ -53,8 +54,8 @@ export default function DestinationOS() {
   const hasVenues = ws.institutions.some(i => i.role !== 'oversight' && i.account_type !== 'government' && i.account_type !== 'destination');
 
   return (
-    <div className="min-h-screen bg-muted/30">
-      <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur sm:px-6">
+    <div className="min-h-screen bg-muted/30 print:bg-white">
+      <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur sm:px-6 print:hidden">
         <Logo className="text-lg" />
         <span className="hidden h-6 w-px bg-border sm:block" />
         <span className="min-w-0">
@@ -70,8 +71,8 @@ export default function DestinationOS() {
         </div>
       </header>
       <main className="mx-auto max-w-[1240px] px-4 py-6 sm:px-6">
-        <div className="mb-5 flex gap-1 rounded-full border bg-card p-1 sm:w-fit" role="tablist">
-          {([['overview', 'Overview', LayoutGrid], ['notices', 'Official notices', Megaphone]] as const).map(([id, label, Icon]) => (
+        <div className="mb-5 flex gap-1 rounded-full border bg-card p-1 sm:w-fit print:hidden" role="tablist">
+          {([['overview', 'Overview', LayoutGrid], ['notices', 'Official notices', Megaphone], ['report', 'Pilot report', FileBarChart]] as const).map(([id, label, Icon]) => (
             <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
               className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-2 text-sm', tab === id ? 'bg-primary font-semibold text-primary-foreground' : 'text-muted-foreground hover:bg-muted')}>
               <Icon className="h-4 w-4" />{label}
@@ -79,7 +80,8 @@ export default function DestinationOS() {
           ))}
         </div>
         {tab === 'overview' ? <Overview authorityId={authority.id} authorityName={authority.name} />
-          : <Notices authorityId={authority.id} authorityName={authority.name} canIssue={canIssue} />}
+          : tab === 'notices' ? <Notices authorityId={authority.id} authorityName={authority.name} canIssue={canIssue} />
+            : <PilotReport overseer={authority.id} title={authority.name} />}
       </main>
     </div>
   );

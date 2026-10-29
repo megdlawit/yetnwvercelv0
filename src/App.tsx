@@ -39,6 +39,7 @@ import Insights from "./pages/dashboard/Insights";
 import AuditLog from "./pages/dashboard/AuditLog";
 import AdminAudit from "./pages/admin/AdminAudit";
 import DestinationOS from "./pages/destination/DestinationOS";
+import AdminReport from "./pages/admin/AdminReport";
 import Team from "./pages/dashboard/Team";
 import PublishSettings from "./pages/dashboard/PublishSettings";
 import { PlacesPage, AttractionsPage, ContentPage, QrPage } from "./pages/dashboard/ManagerPages";
@@ -112,6 +113,7 @@ const App = () => (
                 <Route path="activity" element={<AdminActivity />} />
                 <Route path="insights" element={<AdminInsightsPage />} />
                 <Route path="audit" element={<AdminAudit />} />
+                <Route path="report" element={<AdminReport />} />
                 <Route path="tools/:tool" element={<AdminTools />} />
               </Route>
               <Route path="/admin/buildings" element={<Navigate to="/admin/tools/buildings" replace />} />

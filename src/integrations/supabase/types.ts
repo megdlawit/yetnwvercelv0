@@ -1436,6 +1436,7 @@ export type Database = {
       record_visit_events: { Args: { b: string; visit: string; device: string | null; source: string; events: Json }; Returns: number }
       venue_insights: { Args: { b: string; since: string; until: string }; Returns: Json }
       admin_insights: { Args: { since: string; until: string }; Returns: Json }
+      pilot_report: { Args: { overseer: string | null; since: string; until: string }; Returns: Json }
       destination_overview: { Args: { overseer: string; since: string; until: string }; Returns: Json }
       venue_notices: { Args: { b: string; upcoming?: boolean }; Returns: { id: string; title: string; body: string | null; severity: string; starts_at: string; ends_at: string | null; issuer_name: string; issuer_logo: string | null }[] }
       audit_entries: { Args: { inst: string | null; before_id: number | null; lim: number }; Returns: Json[] }

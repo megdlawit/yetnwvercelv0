@@ -7,7 +7,7 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ShieldCheck, Building, Map as MapIcon, Users, History, Building2, Sparkles, Route, Layers, Code2,
   ChevronsLeft, ChevronsRight, Menu, LogOut, LayoutGrid, AlertTriangle, ExternalLink, Search,
-  BarChart3, ScrollText,
+  BarChart3, ScrollText, FileBarChart,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
@@ -39,6 +39,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
     { to: '/admin/activity', label: 'Activity', icon: History },
     { to: '/admin/insights', label: 'Insights', icon: BarChart3 },
     { to: '/admin/audit', label: 'Audit log', icon: ScrollText },
+    { to: '/admin/report', label: 'Pilot report', icon: FileBarChart },
   ] },
   { title: 'Platform tools', items: [
     { to: '/admin/tools/buildings', label: 'Buildings & floors', icon: Building2 },
@@ -62,7 +63,7 @@ export default function AdminLayout() {
   return (
     <AdminCtx.Provider value={value}>
       <div className="flex min-h-[100dvh] bg-muted/30 text-foreground">
-        <aside className={cn('sticky top-0 hidden h-[100dvh] shrink-0 border-r bg-card transition-[width] duration-200 lg:block', collapsed ? 'w-[68px]' : 'w-64')}>
+        <aside className={cn('sticky top-0 hidden h-[100dvh] shrink-0 border-r bg-card transition-[width] duration-200 lg:block print:!hidden', collapsed ? 'w-[68px]' : 'w-64')}>
           <Sidebar collapsed={collapsed} onToggle={toggle} onNavigate={() => {}} overview={overview.data} />
         </aside>
         <Sheet open={mobileNav} onOpenChange={setMobileNav}>
@@ -137,7 +138,7 @@ function Header({ onMenu, query, setQuery }: { onMenu: () => void; query: string
   const navigate = useNavigate();
   const initials = (user?.email ?? 'A').split('@')[0].slice(0, 2).toUpperCase();
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur sm:px-5">
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur sm:px-5 print:hidden">
       <button onClick={onMenu} className="rounded-lg p-2 hover:bg-muted lg:hidden" aria-label="Open navigation"><Menu className="h-5 w-5" /></button>
       <div className="min-w-0">
         <p className="truncate text-sm font-bold leading-tight">Yet New</p>

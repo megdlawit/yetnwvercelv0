@@ -316,7 +316,7 @@ const DEMO_POIS: POI[] = [
   },
   {
     id: 'demo-palace', nodeId: null, buildingId: 'unity-park',
-    name: 'Menelik II Palace', description: 'Historic imperial palace', category: 'palace',
+    name: 'Menelik II Palace', description: 'Historic imperial palace', category: 'attraction',
     subcategory: 'Palace · Historic Site', imageUrl: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=800&q=80',
     isFeatured: false, triggerRadius: 20, promotions: [], lat: null, lng: null, isOutdoor: false,
   },
@@ -346,7 +346,7 @@ const DEMO_POIS: POI[] = [
   },
   {
     id: 'demo-6', nodeId: null, buildingId: 'unity-park',
-    name: 'Throne Room Exhibition', description: 'Imperial throne & artifacts', category: 'palace',
+    name: 'Throne Room Exhibition', description: 'Imperial throne & artifacts', category: 'attraction',
     subcategory: 'Historic Exhibition', imageUrl: 'https://images.unsplash.com/photo-1445112098124-3e76dd67983c?w=800&q=80',
     isFeatured: false, triggerRadius: 20, promotions: [], lat: null, lng: null, isOutdoor: false,
   },

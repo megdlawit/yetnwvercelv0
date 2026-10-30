@@ -9,6 +9,7 @@
  * Terrain re-triggers this).
  */
 import type { Map as MLMap, GeoJSONSource, ImageSource } from 'maplibre-gl';
+import type * as GeoJSON from 'geojson';
 import type { GeoCoord } from './GeoTypes';
 import { metersToLatLng } from './GeoMath';
 
@@ -191,7 +192,7 @@ export function updateDrapedImage(map: MLMap, image: DrapedImage | null): void {
   const ne = metersToLatLng(image.center, image.radiusM, image.radiusM);
   const se = metersToLatLng(image.center, image.radiusM, -image.radiusM);
   const sw = metersToLatLng(image.center, -image.radiusM, -image.radiusM);
-  const coordinates: [number, number][] = [
+  const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
     [nw.lng, nw.lat], [ne.lng, ne.lat], [se.lng, se.lat], [sw.lng, sw.lat],
   ];
 

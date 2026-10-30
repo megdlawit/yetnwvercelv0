@@ -11,6 +11,8 @@ export interface AdminOverview {
   venues_pending: number; team_members: number; platform_admins: number; places: number; new_institutions_30d: number; publishes_30d: number;
   /** Since migration 20261028090000 (absent before it). */
   verifications_pending?: number; venues_verified?: number; reports_open?: number;
+  /** Since migration 20261103090000. */
+  claims_pending?: number; reviews_flagged?: number; verifications_due?: number; businesses?: number; businesses_claimed?: number; reviews?: number;
 }
 export interface VisitorStats { visitors: number; with_email: number; saves: number; visits: number; steps: number }
 export interface AdminInstitution {
@@ -29,6 +31,21 @@ export interface AdminVerificationRequest {
   id: string; building_id: string; venue_name: string; institution_name: string | null; institution_status: InstitutionStatus | null;
   poi_id: string | null; place_name: string | null; level: 'verified' | 'official'; note: string | null; requested_at: string;
   requested_by_name: string | null; current_level: string; source: string | null; responsible_party: string | null; is_published: boolean; open_reports: number;
+  /** What the team asked to have checked (20261103090000). */
+  scope?: string | null;
+}
+export interface AdminBusinessClaim {
+  id: string; poi_id: string; place_name: string; place_type: string | null; building_id: string; venue_name: string; venue_institution: string | null;
+  business_id: string; business_name: string; evidence: string; contact_phone: string | null; requested_at: string; requested_by_name: string | null;
+  other_claims: number;
+}
+export interface AdminFlaggedReview {
+  id: string; poi_id: string; place_name: string; building_id: string; venue_name: string; author_name: string; rating: number; body: string | null;
+  status: string; flags: number; reasons: string[]; created_at: string; reply_body: string | null; hidden_reason: string | null;
+}
+export interface AdminVerificationDue {
+  building_id: string; poi_id: string | null; name: string; venue_name: string; level: 'verified' | 'official'; verified_at: string | null;
+  verified_until: string; scope: string | null; responsible_party: string | null;
 }
 export interface AdminUser {
   user_id: string; username: string | null; display_name: string | null; email: string | null; created_at: string; last_sign_in_at: string | null;
@@ -70,8 +87,11 @@ export const adminActions = {
   setVenueLive: (b: string, live: boolean) => rpc<void>('admin_set_venue_live', { b, live }),
   setHomeRank: (b: string, rank: number) => rpc<void>('admin_set_home_rank', { b, rank }),
   setPlatformAdmin: (u: string, make: boolean) => rpc<void>('admin_set_platform_admin', { u, make }),
-  decideVerification: (req: string, approve: boolean, note?: string) => rpc<void>('admin_decide_verification', { req, approve, note: note ?? null }),
-  setTrust: (b: string, level: 'listed' | 'verified' | 'official', note?: string, poi?: string) => rpc<void>('admin_set_trust', { b, poi: poi ?? null, level, note: note ?? null }),
+  decideVerification: (req: string, approve: boolean, note?: string, months = 12) => rpc<void>('admin_decide_verification', { req, approve, note: note ?? null, months }),
+  setTrust: (b: string, level: 'listed' | 'verified' | 'official', note?: string, poi?: string, months = 12) => rpc<void>('admin_set_trust', { b, poi: poi ?? null, level, note: note ?? null, months }),
+  decideClaim: (claim: string, approve: boolean, note?: string) => rpc<void>('admin_decide_business_claim', { claim, approve, note: note ?? null }),
+  releaseBusiness: (poi: string, note?: string) => rpc<void>('admin_release_business', { poi, note: note ?? null }),
+  moderateReview: (review: string, hide: boolean, reason?: string) => rpc<void>('admin_moderate_review', { review, hide, reason: reason ?? null }),
   suspendVenue: (b: string, suspend: boolean, note?: string) => rpc<void>('admin_suspend_venue', { b, suspend, note: note ?? null }),
 };
 

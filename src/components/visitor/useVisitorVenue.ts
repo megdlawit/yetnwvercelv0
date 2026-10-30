@@ -13,7 +13,8 @@ import type { RouteEdge, Connection } from '@/lib/venue/routing';
 import { PLACE_TYPES, parseAccessibility, parseHours, type PlaceType } from '@/lib/venue/places';
 import { categoryOf } from '@/lib/venue/discover';
 import { slugify } from '@/lib/accounts';
-import { loadVenueRows } from './loadVenue';
+import { loadVenueRows, type VenueRows } from './loadVenue';
+import { getPackage } from '@/lib/offline/venuePackage';
 import type { Floor, Place } from './types';
 
 export type VisitorBuilding = Tables<'buildings'>;
@@ -31,25 +32,52 @@ export interface VisitorVenueData {
   features: (MapFeature & { floorId: string })[];
   pois: Tables<'pois'>[];
   content: Tables<'venue_content'>[];
+  /** Shown from the copy saved on this device (no connection): when it was saved. */
+  offlineSavedAt?: string;
 }
 
 const cache = new Map<string, Promise<VisitorVenueData | null>>();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** The request never reached the server (offline, or a network that doesn't let it through). */
+class Unreachable extends Error {}
+const unreachable = (e: { message?: string } | null) => !!e && /fetch|network|load failed|timed? ?out/i.test(e.message ?? '');
+
 /** Venue id from an id or a readable name ("unity-park"); null if there's no such published venue. */
 export async function resolveVenueId(idOrSlug: string): Promise<string | null> {
   if (UUID.test(idOrSlug)) return idOrSlug;
-  const { data } = await supabase.from('buildings').select('id, name').eq('is_published', true);
+  const { data, error } = await supabase.from('buildings').select('id, name').eq('is_published', true);
+  if (unreachable(error)) throw new Unreachable(error!.message);
   return data?.find(b => b.id === idOrSlug)?.id ?? data?.find(b => slugify(b.name) === idOrSlug.toLowerCase())?.id ?? null;
 }
 
+/** From the network; with no connection, the copy saved on this device ("Save for offline"), if there is one. */
 async function load(idOrSlug: string, preview: boolean): Promise<VisitorVenueData | null> {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Unreachable('offline');
+    return await loadOnline(idOrSlug, preview);
+  } catch (err) {
+    const pack = !preview && err instanceof Unreachable ? await getPackage(idOrSlug) : null;
+    if (pack) {
+      return { ...toVisitorData(pack.building, { ...pack.rows, live: false, teamPreview: false }), offlineSavedAt: pack.savedAt };
+    } else {
+      throw err;
+    }
+  }
+}
+
+async function loadOnline(idOrSlug: string, preview: boolean): Promise<VisitorVenueData | null> {
   const id = await resolveVenueId(idOrSlug);
   if (!id) return null;
-  const { data: b } = await supabase.from('buildings').select('*').eq('id', id).maybeSingle();
+  const { data: b, error } = await supabase.from('buildings').select('*').eq('id', id).maybeSingle();
+  if (unreachable(error)) throw new Unreachable(error!.message);
   // RLS only returns unpublished venues to their own editors (shown as a preview).
   if (!b) return null;
   const src = await loadVenueRows(id, b, preview);
+  return toVisitorData(b, src);
+}
+
+function toVisitorData(b: VisitorBuilding, src: VenueRows): VisitorVenueData {
   const fl = [...src.floors].sort((a, z) => a.level - z.level) as Floor[];
   const levelOf = new Map(fl.map(x => [x.id, x.level] as const));
   return {
@@ -121,7 +149,8 @@ export function derivePlaces(d: Pick<VisitorVenueData, 'nodes' | 'rooms' | 'pois
       gps: poi?.lat != null && poi?.lng != null ? { lat: poi.lat, lng: poi.lng } : null,
       greetRadiusM: poi?.trigger_radius ?? 0,
       poiCategory: poi?.category ?? null, poiSubcategory: poi?.subcategory ?? null,
-      trust: poi ? { trust_level: poi.trust_level, verified_at: poi.verified_at, checked_at: poi.checked_at, responsible_party: poi.responsible_party } : undefined,
+      trust: poi ? { trust_level: poi.trust_level, verified_at: poi.verified_at, checked_at: poi.checked_at, responsible_party: poi.responsible_party,
+        verified_until: poi.verified_until ?? null, verification_scope: poi.verification_scope ?? null } : undefined,
     }];
   });
   return { places, placeById: new Map(places.map(p => [p.id, p] as const)), floorById, roomByNode };

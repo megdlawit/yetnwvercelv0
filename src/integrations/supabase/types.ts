@@ -374,6 +374,7 @@ export type Database = {
       }
       verification_requests: {
         Row: {
+          scope: string | null
           id: string
           building_id: string
           poi_id: string | null
@@ -387,6 +388,7 @@ export type Database = {
           decision_note: string | null
         }
         Insert: {
+          scope?: string | null
           id?: string
           building_id: string
           poi_id?: string | null
@@ -400,6 +402,7 @@ export type Database = {
           decision_note?: string | null
         }
         Update: {
+          scope?: string | null
           id?: string
           building_id?: string
           poi_id?: string | null
@@ -696,6 +699,8 @@ export type Database = {
       }
       buildings: {
         Row: {
+          verified_until: string | null
+          verification_scope: string | null
           trust_level: string
           source: string | null
           responsible_party: string | null
@@ -730,6 +735,8 @@ export type Database = {
           version: number
         }
         Insert: {
+          verified_until?: string | null
+          verification_scope?: string | null
           trust_level?: string
           source?: string | null
           responsible_party?: string | null
@@ -764,6 +771,8 @@ export type Database = {
           version?: number
         }
         Update: {
+          verified_until?: string | null
+          verification_scope?: string | null
           trust_level?: string
           source?: string | null
           responsible_party?: string | null
@@ -996,6 +1005,8 @@ export type Database = {
       }
       pois: {
         Row: {
+          verified_until: string | null
+          verification_scope: string | null
           trust_level: string
           source: string | null
           responsible_party: string | null
@@ -1033,6 +1044,8 @@ export type Database = {
           description_am: string | null
         }
         Insert: {
+          verified_until?: string | null
+          verification_scope?: string | null
           trust_level?: string
           source?: string | null
           responsible_party?: string | null
@@ -1070,6 +1083,8 @@ export type Database = {
           description_am?: string | null
         }
         Update: {
+          verified_until?: string | null
+          verification_scope?: string | null
           trust_level?: string
           source?: string | null
           responsible_party?: string | null
@@ -1263,6 +1278,270 @@ export type Database = {
         }
         Relationships: []
       }
+      promotion_events: {
+        Row: {
+          environment: string
+          event_type: string
+          id: string
+          poi_id: string
+          promotion_id: string | null
+          session_id: string
+          timestamp: string
+          user_lat: number | null
+          user_lng: number | null
+          user_x: number | null
+          user_y: number | null
+        }
+        Insert: {
+          environment?: string
+          event_type: string
+          id?: string
+          poi_id: string
+          promotion_id?: string | null
+          session_id?: string
+          timestamp?: string
+          user_lat?: number | null
+          user_lng?: number | null
+          user_x?: number | null
+          user_y?: number | null
+        }
+        Update: {
+          environment?: string
+          event_type?: string
+          id?: string
+          poi_id?: string
+          promotion_id?: string | null
+          session_id?: string
+          timestamp?: string
+          user_lat?: number | null
+          user_lng?: number | null
+          user_x?: number | null
+          user_y?: number | null
+        }
+        Relationships: []
+      }
+      merchant_wallets: {
+        Row: { balance: number; created_at: string; currency: string; merchant_id: string; updated_at: string }
+        Insert: { balance?: number; created_at?: string; currency?: string; merchant_id: string; updated_at?: string }
+        Update: { balance?: number; created_at?: string; currency?: string; merchant_id?: string; updated_at?: string }
+        Relationships: []
+      }
+      business_profiles: {
+        Row: {
+          poi_id: string
+          building_id: string
+          business_id: string | null
+          claimed_at: string | null
+          about: string | null
+          phone: string | null
+          whatsapp: string | null
+          email: string | null
+          website: string | null
+          price_range: string | null
+          price_note: string | null
+          amenities: string[]
+          booking_note: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          poi_id: string
+          building_id?: string
+          business_id?: string | null
+          claimed_at?: string | null
+          about?: string | null
+          phone?: string | null
+          whatsapp?: string | null
+          email?: string | null
+          website?: string | null
+          price_range?: string | null
+          price_note?: string | null
+          amenities?: string[]
+          booking_note?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          poi_id?: string
+          building_id?: string
+          business_id?: string | null
+          claimed_at?: string | null
+          about?: string | null
+          phone?: string | null
+          whatsapp?: string | null
+          email?: string | null
+          website?: string | null
+          price_range?: string | null
+          price_note?: string | null
+          amenities?: string[]
+          booking_note?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      business_place_requests: {
+        Row: {
+          id: string
+          business_id: string
+          building_id: string
+          place_name: string
+          place_type: string
+          where_note: string
+          contact_phone: string | null
+          note: string | null
+          status: string
+          poi_id: string | null
+          requested_by: string | null
+          requested_at: string
+          decided_by: string | null
+          decided_at: string | null
+          decision_note: string | null
+        }
+        Insert: {
+          id?: string
+          business_id: string
+          building_id: string
+          place_name: string
+          place_type: string
+          where_note: string
+          contact_phone?: string | null
+          note?: string | null
+          status?: string
+          poi_id?: string | null
+          requested_by?: string | null
+          requested_at?: string
+          decided_by?: string | null
+          decided_at?: string | null
+          decision_note?: string | null
+        }
+        Update: {
+          id?: string
+          business_id?: string
+          building_id?: string
+          place_name?: string
+          place_type?: string
+          where_note?: string
+          contact_phone?: string | null
+          note?: string | null
+          status?: string
+          poi_id?: string | null
+          requested_by?: string | null
+          requested_at?: string
+          decided_by?: string | null
+          decided_at?: string | null
+          decision_note?: string | null
+        }
+        Relationships: []
+      }
+      business_claims: {
+        Row: {
+          id: string
+          poi_id: string
+          building_id: string
+          business_id: string
+          evidence: string
+          contact_phone: string | null
+          status: string
+          requested_by: string | null
+          requested_at: string
+          decided_by: string | null
+          decided_at: string | null
+          decision_note: string | null
+        }
+        Insert: {
+          id?: string
+          poi_id: string
+          building_id: string
+          business_id: string
+          evidence: string
+          contact_phone?: string | null
+          status?: string
+          requested_by?: string | null
+          requested_at?: string
+          decided_by?: string | null
+          decided_at?: string | null
+          decision_note?: string | null
+        }
+        Update: {
+          id?: string
+          poi_id?: string
+          building_id?: string
+          business_id?: string
+          evidence?: string
+          contact_phone?: string | null
+          status?: string
+          requested_by?: string | null
+          requested_at?: string
+          decided_by?: string | null
+          decided_at?: string | null
+          decision_note?: string | null
+        }
+        Relationships: []
+      }
+      place_reviews: {
+        Row: {
+          id: string
+          poi_id: string
+          building_id: string
+          user_id: string
+          author_name: string
+          rating: number
+          body: string | null
+          status: string
+          hidden_reason: string | null
+          hidden_by: string | null
+          hidden_at: string | null
+          flags: number
+          reply_body: string | null
+          reply_name: string | null
+          reply_by: string | null
+          reply_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          poi_id: string
+          building_id: string
+          user_id?: string
+          author_name: string
+          rating: number
+          body?: string | null
+          status?: string
+          hidden_reason?: string | null
+          hidden_by?: string | null
+          hidden_at?: string | null
+          flags?: number
+          reply_body?: string | null
+          reply_name?: string | null
+          reply_by?: string | null
+          reply_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          poi_id?: string
+          building_id?: string
+          user_id?: string
+          author_name?: string
+          rating?: number
+          body?: string | null
+          status?: string
+          hidden_reason?: string | null
+          hidden_by?: string | null
+          hidden_at?: string | null
+          flags?: number
+          reply_body?: string | null
+          reply_name?: string | null
+          reply_by?: string | null
+          reply_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           id: string
@@ -1429,6 +1708,22 @@ export type Database = {
       user_can_edit_building: { Args: { b: string }; Returns: boolean }
       user_can_edit_institution: { Args: { inst: string }; Returns: boolean }
       user_is_platform_admin: { Args: Record<PropertyKey, never>; Returns: boolean }
+      is_business_place_type: { Args: { t: string }; Returns: boolean }
+      user_can_edit_business_profile: { Args: { p: string }; Returns: boolean }
+      business_venues: { Args: { q?: string }; Returns: { building_id: string; venue_name: string; places: number; unclaimed: number }[] }
+      business_find_places: { Args: { q?: string; venue?: string | null }; Returns: { poi_id: string; place_name: string; place_type: string | null; building_id: string; venue_name: string; claimed: boolean }[] }
+      request_business_place: { Args: { business: string; venue: string; place_name: string; place_type: string; where_note: string; phone?: string | null; note?: string | null }; Returns: string }
+      withdraw_business_place_request: { Args: { req: string }; Returns: undefined }
+      venue_place_requests: { Args: { b?: string | null }; Returns: { id: string; business_id: string; business_name: string; building_id: string; venue_name: string; place_name: string; place_type: string; where_note: string; contact_phone: string | null; note: string | null; status: string; poi_id: string | null; requested_at: string; decided_at: string | null }[] }
+      answer_business_place_request: { Args: { req: string; poi?: string | null; note?: string | null }; Returns: undefined }
+      business_claimable_places: { Args: { q: string }; Returns: { poi_id: string; place_name: string; place_type: string | null; building_id: string; venue_name: string; claimed: boolean }[] }
+      request_business_claim: { Args: { poi: string; business: string; evidence: string; phone?: string | null }; Returns: string }
+      withdraw_business_claim: { Args: { claim: string }; Returns: undefined }
+      business_places: { Args: { business: string }; Returns: { poi_id: string; place_name: string; place_type: string | null; building_id: string; venue_name: string; images: string[]; profile: Json; rating: number | null; reviews: number; unanswered: number }[] }
+      place_review_summary: { Args: { b: string }; Returns: { poi_id: string; rating: number; reviews: number }[] }
+      reply_to_review: { Args: { review: string; reply: string }; Returns: undefined }
+      flag_review: { Args: { review: string; flagger: string; reason?: string | null }; Returns: undefined }
+      deduct_merchant_balance: { Args: { p_merchant_id: string; p_amount: number }; Returns: Json }
       user_can_consent_for_building: { Args: { b: string }; Returns: boolean }
       layer_training_consent_current: { Args: { b: string }; Returns: boolean }
       publish_venue: { Args: { b: string }; Returns: string }

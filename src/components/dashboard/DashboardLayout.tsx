@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import {
   Search, Eye, Bell, HelpCircle, ChevronsLeft, ChevronsRight, Menu, ChevronDown, Check, Plus, LogOut, KeyRound,
   ShieldCheck, Loader2, Globe, Building2, BookOpen, Upload, AlertTriangle, Trees, Sparkles, Lightbulb, PenTool,
-  Landmark,
+  Landmark, Store,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -95,6 +95,8 @@ export default function DashboardLayout() {
   if (!ws.institution) return <CreateInstitution />;
   // A government or destination account usually runs no venues itself: its home is Destination OS.
   if (!ws.venueId && isAuthority(ws.institution.account_type)) return <Navigate to={`/destination?as=${ws.institution.id}`} replace />;
+  // A business account runs no venue: its home is Yet New Business.
+  if (!ws.venueId && ws.institution.account_type === 'business') return <Navigate to="/business" replace />;
   if (!ws.venueId) return <NoVenue />;
 
   const sidebar = (mobile: boolean) => (
@@ -440,6 +442,9 @@ function AccountMenu() {
           <DropdownMenuItem onSelect={() => setPwOpen(true)}><KeyRound className="mr-2 h-4 w-4" /> Change password</DropdownMenuItem>
           {ws.institutions.some(i => isAuthority(i.account_type) && i.role !== 'oversight' && i.role !== 'admin') && (
             <DropdownMenuItem onSelect={() => navigate('/destination')}><Landmark className="mr-2 h-4 w-4" /> Destination OS</DropdownMenuItem>
+          )}
+          {ws.institutions.some(i => i.account_type === 'business' && i.role !== 'admin') && (
+            <DropdownMenuItem onSelect={() => navigate('/business')}><Store className="mr-2 h-4 w-4" /> Yet New Business</DropdownMenuItem>
           )}
           {ws.isPlatformAdmin && <DropdownMenuItem onSelect={() => navigate('/admin')}><ShieldCheck className="mr-2 h-4 w-4" /> Platform console</DropdownMenuItem>}
           <DropdownMenuSeparator />

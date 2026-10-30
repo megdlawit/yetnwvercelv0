@@ -349,7 +349,7 @@ export class HybridNavigationBrain {
     this.instructions = new InstructionEngine();
     this.poiEngine = new POITriggerEngine({
       onAnnounce: (poi) => {
-        const promos = (poi.promotions ?? []).filter((p: any) => p.isActive);
+        const promos = (poi.promotions ?? []).filter(p => p.isActive);
         const hasPromo = promos.length > 0;
         const text = hasPromo
           ? `Special offer available at ${poi.name}. ${promos[0].title}.`

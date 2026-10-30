@@ -17,12 +17,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFo
 import { cn } from '@/lib/utils';
 import {
   PLACE_TYPES, PLACE_TYPE_LIST, DAYS, DAY_LABELS, ACCESSIBILITY_LABELS, parseHours, parseAccessibility, hoursSummary,
-  type PlaceType, type OpeningHours, type Accessibility,
+  type PlaceType, type OpeningHours, type Accessibility, isBusinessPlaceType,
 } from '@/lib/venue/places';
 import type { PlaceEntry } from '@/lib/venue/placeList';
 import type { PoiRow, VenueData } from './useVenue';
 import { savePlace, createPlace, deletePlaceDetails, type PoiPatch } from './placesApi';
 import { uploadImage } from './upload';
+import BusinessSection from './BusinessSection';
 
 type Entry = PlaceEntry<PoiRow>;
 
@@ -346,6 +347,10 @@ function PlaceEditor({ data, entry, defaultType, onClose, onSaved }: { data: Ven
               </>
             ) : <p className="text-xs text-muted-foreground">No hours shown to visitors (always open, or not applicable).</p>}
           </Section>
+
+          {isBusinessPlaceType(f.place_type) && (
+            <Section title="Business details"><BusinessSection poiId={current?.poi?.id ?? null} /></Section>
+          )}
 
           <Section title="Accessibility">
             <div className="grid grid-cols-2 gap-2">

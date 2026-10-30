@@ -12,12 +12,14 @@
  */
 
 const DB_NAME = 'ethi-route-offline';
-const DB_VERSION = 1;
+// 2: venue_packages (venues saved for offline use, lib/offline/venuePackage).
+const DB_VERSION = 2;
 
 export const STORES = {
   buildings: 'buildings',
   pois: 'pois',
   meta: 'meta',
+  venuePackages: 'venue_packages',
 } as const;
 
 export type StoreName = (typeof STORES)[keyof typeof STORES];
@@ -77,6 +79,21 @@ export async function idbSet<T>(store: StoreName, key: string, value: T): Promis
   } catch (e) {
     console.warn(`idbSet(${store}, ${key}) failed`, e);
     return false;
+  }
+}
+
+export async function idbKeys(store: StoreName): Promise<string[]> {
+  try {
+    const db = await openDb();
+    return await new Promise<string[]>((resolve, reject) => {
+      const tx = db.transaction(store, 'readonly');
+      const req = tx.objectStore(store).getAllKeys();
+      req.onsuccess = () => resolve((req.result as IDBValidKey[]).map(String));
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    console.warn(`idbKeys(${store}) failed`, e);
+    return [];
   }
 }
 

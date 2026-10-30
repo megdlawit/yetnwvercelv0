@@ -109,6 +109,22 @@ async function createPerson(db, rawUsername, password, displayName) {
   }
   return data.user.id;
 }
+async function createBusiness(db, ownerId, name) {
+  const clean = name.trim();
+  if (clean.length < 2) throw new Problem("Please add your business's name.");
+  let slug = slugify(clean);
+  const { data: clash } = await db.from("institutions").select("id").eq("slug", slug).maybeSingle();
+  if (clash) slug = `${slug}-${crypto.randomUUID().slice(0, 6)}`;
+  const { data: inst, error } = await db.from("institutions").insert({ name: clean, slug, kind: "other", owner_id: ownerId, account_type: "business" }).select("id").single();
+  if (error || !inst) throw new Problem(`Could not create the business: ${error?.message}`, 500);
+  const { error: mErr } = await db.from("institution_members").insert({ institution_id: inst.id, user_id: ownerId, role: "owner" });
+  if (mErr) {
+    await db.from("institutions").delete().eq("id", inst.id);
+    throw new Problem(`Could not set up the business: ${mErr.message}`, 500);
+  }
+  return { institutionId: inst.id, venueId: null };
+}
+var isBusiness = (inst) => inst.accountType === "business";
 async function createInstitution(db, ownerId, name, kind) {
   const clean = name.trim();
   if (clean.length < 2) throw new Problem("Please add your institution's name.");
@@ -146,11 +162,11 @@ async function handle(req) {
     case "signup": {
       const { username = "", password = "", displayName = "", institution = {} } = body;
       checkPerson(username, password, displayName);
-      if (!isInstitutionKind(institution.kind)) throw new Problem("Choose what kind of place you run.");
+      if (!isBusiness(institution) && !isInstitutionKind(institution.kind)) throw new Problem("Choose what kind of place you run.");
       if (String(institution.name ?? "").trim().length < 2) throw new Problem("Please add your institution's name.");
       const userId = await createPerson(db, username, password, displayName);
       try {
-        const created = await createInstitution(db, userId, String(institution.name), institution.kind);
+        const created = isBusiness(institution) ? await createBusiness(db, userId, String(institution.name)) : await createInstitution(db, userId, String(institution.name), institution.kind);
         return json({ ok: true, ...created });
       } catch (err) {
         await db.auth.admin.deleteUser(userId);
@@ -160,6 +176,7 @@ async function handle(req) {
     case "create_institution": {
       const userId = await caller(db, req);
       const { institution = {} } = body;
+      if (isBusiness(institution)) return json({ ok: true, ...await createBusiness(db, userId, String(institution.name ?? "")) });
       if (!isInstitutionKind(institution.kind)) throw new Problem("Choose what kind of place you run.");
       return json({ ok: true, ...await createInstitution(db, userId, String(institution.name ?? ""), institution.kind) });
     }

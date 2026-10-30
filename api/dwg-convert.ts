@@ -23,7 +23,13 @@
 // gzipped (viaStorage below). Raw bytes in the request still work, for small drawings
 // and for `vite dev`, where any DWG up to MAX_DWG_BYTES converts.
 
-import type { IncomingMessage } from 'http';
+import type { IncomingMessage, ServerResponse } from 'http';
+/** What Vercel's Node runtime passes in: Node's request/response plus the parsed body and query. */
+type ApiRequest = IncomingMessage & { body?: unknown; query?: Record<string, string | string[] | undefined> };
+type ApiResponse = ServerResponse;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON sent by the client; every field is checked before use
+type JsonBody = any;
+
 import { createRequire } from 'module';
 import path from 'path';
 
@@ -61,7 +67,7 @@ async function readRawBody(req: IncomingMessage & { body?: unknown }): Promise<B
   return Buffer.concat(chunks);
 }
 
-function setCors(res: any) {
+function setCors(res: ApiResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-File-Name');
@@ -70,7 +76,7 @@ function setCors(res: any) {
 // Same dual-environment body reader as api/dxf-import.ts / api/overpass.ts —
 // see the comment there. Needed here too since this is also a POST with a
 // JSON body, and `vite dev` doesn't pre-parse it the way Vercel does.
-async function readJsonBody(req: any): Promise<any> {
+async function readJsonBody(req: ApiRequest): Promise<JsonBody> {
   if (req.body && typeof req.body === 'object') return req.body;
   if (req.body && typeof req.body === 'string') { try { return JSON.parse(req.body); } catch { return {}; } }
   const raw: string = await new Promise((resolve, reject) => {
@@ -135,7 +141,7 @@ async function cc(path: string, apiKey: string, init?: RequestInit) {
   return json;
 }
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req: ApiRequest, res: ApiResponse) {
   setCors(res);
   if (req.method === 'OPTIONS') { res.statusCode = 204; res.end(); return; }
   if (req.method !== 'POST') { res.statusCode = 405; res.end(JSON.stringify({ error: 'POST only' })); return; }
@@ -190,7 +196,7 @@ export default async function handler(req: any, res: any) {
       }),
     });
 
-    const importTask = job.data.tasks.find((t: any) => t.name === 'import-file');
+    const importTask = job.data.tasks.find((t: { name: string }) => t.name === 'import-file');
     const uploadUrl = importTask?.result?.form?.url;
     const uploadParams = importTask?.result?.form?.parameters;
     if (!uploadUrl) throw new Error('CloudConvert did not return an upload URL — check the job response shape hasn\'t changed.');
@@ -199,7 +205,7 @@ export default async function handler(req: any, res: any) {
     const form = new FormData();
     Object.entries(uploadParams || {}).forEach(([k, v]) => form.append(k, v as string));
     form.append('file', new Blob([buf]), fileName);
-    const uploadResp = await fetch(uploadUrl, { method: 'POST', body: form as any });
+    const uploadResp = await fetch(uploadUrl, { method: 'POST', body: form as unknown as BodyInit });
     if (!uploadResp.ok) throw new Error(`Upload to CloudConvert failed: ${uploadResp.status}`);
 
     // 3. Poll the job until the export task finishes
@@ -209,7 +215,7 @@ export default async function handler(req: any, res: any) {
     while (Date.now() - start < POLL_TIMEOUT_MS) {
       await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
       const status = await cc(`/jobs/${jobId}`, apiKey);
-      const exportTask = status.data.tasks.find((t: any) => t.name === 'export-file');
+      const exportTask = status.data.tasks.find((t: { name: string }) => t.name === 'export-file');
       if (exportTask?.status === 'error') throw new Error(`Conversion failed: ${exportTask.message || 'unknown CloudConvert error'}`);
       if (exportTask?.status === 'finished') {
         exportUrl = exportTask.result?.files?.[0]?.url;
@@ -230,9 +236,9 @@ export default async function handler(req: any, res: any) {
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ dxfText }));
-  } catch (e: any) {
+  } catch (e) {
     console.error('[api/dwg-convert]', e);
     res.statusCode = 500;
-    res.end(JSON.stringify({ error: String(e?.message || e) }));
+    res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
   }
 }

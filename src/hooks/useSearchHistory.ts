@@ -3,12 +3,13 @@ import {
   addSearchHistoryEntry,
   loadSearchHistory,
   type SearchHistoryEntry,
+  type SearchHistoryInput,
 } from '@/lib/searchHistory';
 
 export function useSearchHistory() {
   const [entries, setEntries] = useState<SearchHistoryEntry[]>(() => loadSearchHistory());
 
-  const record = useCallback((entry: Omit<SearchHistoryEntry, 'timestamp'>) => {
+  const record = useCallback((entry: SearchHistoryInput) => {
     const updated = addSearchHistoryEntry(entry);
     setEntries(updated);
     return updated;

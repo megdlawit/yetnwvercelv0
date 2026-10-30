@@ -29,7 +29,7 @@ import { mountNavigation, type MountOptions, type MountedNavigation } from '@eth
  * everything the widget needs travels with it. That's why this has its own
  * Vite build (vite.embed.config.ts) instead of reusing the main app bundle.
  */
-export interface EthiMapsRenderOptions extends Omit<IndoorMapProps, 'className' | 'style'> {}
+export type EthiMapsRenderOptions = Omit<IndoorMapProps, 'className' | 'style'>;
 
 export interface EthiMapsHandle {
   destroy: () => void;

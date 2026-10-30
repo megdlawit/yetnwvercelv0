@@ -31,7 +31,9 @@ export const useAdminConsole = () => {
   }
 };
 
-export const waitingCount = (o: AdminOverview | null) => (o ? o.institutions_pending + o.venues_pending + (o.verifications_pending ?? 0) : 0);
+export const waitingCount = (o: AdminOverview | null) => (o
+  ? o.institutions_pending + o.venues_pending + (o.verifications_pending ?? 0) + (o.claims_pending ?? 0) + (o.reviews_flagged ?? 0) + (o.verifications_due ?? 0)
+  : 0);
 
 /** The sidebar: six sections; related pages are tabs inside a section. */
 interface Section { label: string; icon: typeof MapIcon; tabs: { label: string; to: string }[] }
@@ -198,6 +200,9 @@ function Waiting({ overview: o }: { overview: AdminOverview | null }) {
     [o.institutions_pending, 'new institution', 'new institutions'],
     [o.venues_pending, 'venue wants to publish', 'venues want to publish'],
     [o.verifications_pending ?? 0, 'verification request', 'verification requests'],
+    [o.claims_pending ?? 0, 'business claim', 'business claims'],
+    [o.reviews_flagged ?? 0, 'flagged review', 'flagged reviews'],
+    [o.verifications_due ?? 0, 'verification to renew', 'verifications to renew'],
   ] : [];
   return (
     <Popover open={open} onOpenChange={setOpen}>

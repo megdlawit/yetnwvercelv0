@@ -39,6 +39,9 @@ import { followRoute, planDirection, pointAlong, projectAlong, stepForward, stri
 import { snapToPath } from '@/lib/PathSnapper';
 import { findShortestPath } from '@/lib/dijkstra';
 
+/** iOS 13+ asks before giving motion and orientation events. */
+type IOSPermission = { requestPermission?: () => Promise<'granted' | 'denied' | 'default'> };
+
 export interface PDRNavState {
   isNavigating: boolean;
   isPaused: boolean;
@@ -262,9 +265,9 @@ export function usePDRNavigation(
       }
 
       // iOS 13+ requires explicit permission
-      if (typeof (DeviceMotionEvent as any).requestPermission === 'function') {
-        const motionPerm = await (DeviceMotionEvent as any).requestPermission();
-        const orientPerm = await (DeviceOrientationEvent as any).requestPermission?.() ?? 'granted';
+      if (typeof (DeviceMotionEvent as unknown as IOSPermission).requestPermission === 'function') {
+        const motionPerm = await (DeviceMotionEvent as unknown as IOSPermission).requestPermission!();
+        const orientPerm = await (DeviceOrientationEvent as unknown as IOSPermission).requestPermission?.() ?? 'granted';
         const granted = motionPerm === 'granted' && orientPerm === 'granted';
         const status = granted ? 'granted' : 'denied';
         setState(s => ({ ...s, sensorPermission: status }));
@@ -393,8 +396,8 @@ export function usePDRNavigation(
 
     let sawAbsoluteEvent = false;
     const orientHandler = (e: DeviceOrientationEvent) => {
-      const webkitCompassHeading = (e as any).webkitCompassHeading;
-      const isAbsolute = (e as any).absolute === true || e.type === 'deviceorientationabsolute';
+      const webkitCompassHeading = (e as DeviceOrientationEvent & { webkitCompassHeading?: number }).webkitCompassHeading;
+      const isAbsolute = e.absolute === true || e.type === 'deviceorientationabsolute';
       if (isAbsolute) sawAbsoluteEvent = true;
 
       // If this device also fires a proper absolute event, ignore the
@@ -464,7 +467,7 @@ export function usePDRNavigation(
     let cancelled = false;
     const needsPrompt =
       typeof DeviceMotionEvent !== 'undefined' &&
-      typeof (DeviceMotionEvent as any).requestPermission === 'function';
+      typeof (DeviceMotionEvent as unknown as IOSPermission).requestPermission === 'function';
     if (!cancelled && !cleanupRef.current && (!needsPrompt || permRef.current === 'granted')) {
       cleanupRef.current = startSensors();
     }

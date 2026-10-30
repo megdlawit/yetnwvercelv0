@@ -17,7 +17,7 @@ import type { Place } from './types';
 const CONNECTOR_REACH_M = 6;
 
 const POI_CATEGORY: Record<VisitorCategory, POICategory> = {
-  attractions: 'attraction', gardens: 'attraction', family: 'attraction', food: 'retail',
+  attractions: 'attraction', gardens: 'attraction', family: 'attraction', food: 'retail', shops: 'retail', stays: 'service',
   restrooms: 'service', parking: 'service', entrances: 'service', facilities: 'service',
 };
 

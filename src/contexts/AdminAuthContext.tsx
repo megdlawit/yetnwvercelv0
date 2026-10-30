@@ -19,6 +19,9 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
+    // A visitor's quiet session (made to post a review) is not a team account: to the dashboards,
+    // that's still signed out.
+    const team = (s: Session | null) => (s?.user?.is_anonymous ? null : s);
     // Guards against the initial getSession() call resolving *after*
     // onAuthStateChange has already fired (e.g. right after a fresh
     // sign-in). Without this, a slow/late getSession() response can
@@ -28,13 +31,13 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
 
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted || authEventReceived) return;
-      setSession(data.session);
+      setSession(team(data.session));
       setLoading(false);
     });
 
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       authEventReceived = true;
-      setSession(nextSession);
+      setSession(team(nextSession));
       setLoading(false);
     });
 

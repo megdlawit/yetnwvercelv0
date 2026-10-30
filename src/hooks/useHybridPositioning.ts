@@ -134,7 +134,7 @@ export function useHybridPositioning(
 
     const tryStartCompass = async () => {
       try {
-        const DOE = typeof DeviceOrientationEvent !== 'undefined' ? (DeviceOrientationEvent as any) : null;
+        const DOE = typeof DeviceOrientationEvent !== 'undefined' ? (DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> }) : null;
         if (DOE && typeof DOE.requestPermission === 'function') {
           // iOS 13+: requires an explicit permission grant, and reliably only
           // resolves 'granted' when called from within a user gesture. Try

@@ -2,11 +2,11 @@
 // opening hours, accessibility) shared by the dashboard and the visitor map.
 
 import {
-  Landmark, Flower2, Coffee, Bath, SquareParking, DoorOpen, Info, Baby, Mountain, Castle, MapPin,
+  Landmark, Flower2, Coffee, Bath, SquareParking, DoorOpen, Info, Baby, Mountain, Castle, MapPin, UtensilsCrossed, BedDouble, ShoppingBag,
 } from 'lucide-react';
 
 export type PlaceType =
-  | 'attraction' | 'garden' | 'cafe' | 'restroom' | 'parking' | 'entrance' | 'info_desk'
+  | 'attraction' | 'garden' | 'cafe' | 'restaurant' | 'hotel' | 'shop' | 'restroom' | 'parking' | 'entrance' | 'info_desk'
   | 'play_area' | 'viewpoint' | 'cultural_site' | 'custom';
 
 /** `legacy` keeps the older 4-way `category` column in step for the existing visitor app and partner API. */
@@ -14,6 +14,9 @@ export const PLACE_TYPES: Record<PlaceType, { label: string; icon: typeof MapPin
   attraction:    { label: 'Attraction',    icon: Landmark,      legacy: 'attraction', qr: true },
   garden:        { label: 'Garden',        icon: Flower2,       legacy: 'attraction', qr: false },
   cafe:          { label: 'Café',          icon: Coffee,        legacy: 'retail',     qr: false },
+  restaurant:    { label: 'Restaurant',    icon: UtensilsCrossed, legacy: 'retail',   qr: false },
+  hotel:         { label: 'Hotel / lodge', icon: BedDouble,     legacy: 'service',    qr: false },
+  shop:          { label: 'Shop',          icon: ShoppingBag,   legacy: 'retail',     qr: false },
   restroom:      { label: 'Restroom',      icon: Bath,          legacy: 'service',    qr: false },
   parking:       { label: 'Parking',       icon: SquareParking, legacy: 'service',    qr: true },
   entrance:      { label: 'Entrance / gate', icon: DoorOpen,    legacy: 'service',    qr: true },
@@ -25,11 +28,18 @@ export const PLACE_TYPES: Record<PlaceType, { label: string; icon: typeof MapPin
 };
 export const PLACE_TYPE_LIST = Object.keys(PLACE_TYPES) as PlaceType[];
 
+/** Places a business runs and can claim (business plan §18): their contact, prices and reviews matter most. */
+export const BUSINESS_PLACE_TYPES: PlaceType[] = ['cafe', 'restaurant', 'hotel', 'shop', 'custom'];
+export const isBusinessPlaceType = (t: string | null | undefined): boolean => !!t && (BUSINESS_PLACE_TYPES as string[]).includes(t);
+
 /** Best guess at a place type for rows created before place types existed. */
 export function placeTypeOf(row: { place_type?: string | null; category?: string | null; name?: string }): PlaceType {
   if (row.place_type && row.place_type in PLACE_TYPES) return row.place_type as PlaceType;
   const n = (row.name ?? '').toLowerCase();
-  if (/caf|coffee|restaurant|food|ቡና/.test(n)) return 'cafe';
+  if (/restaurant|ምግብ ቤት/.test(n)) return 'restaurant';
+  if (/caf|coffee|food|ቡና/.test(n)) return 'cafe';
+  if (/hotel|lodge|guest ?house|ሆቴል/.test(n)) return 'hotel';
+  if (/shop|store|souvenir|gift|ሱቅ/.test(n)) return 'shop';
   if (/toilet|wc|restroom/.test(n)) return 'restroom';
   if (/gate|entrance|entry|መግቢያ/.test(n)) return 'entrance';
   if (/parking/.test(n)) return 'parking';

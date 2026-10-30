@@ -1,4 +1,8 @@
-import { IncomingMessage } from 'http';
+import type { IncomingMessage, ServerResponse } from 'http';
+/** What Vercel's Node runtime passes in: Node's request/response plus the parsed body and query. */
+type ApiRequest = IncomingMessage & { body?: unknown; query?: Record<string, string | string[] | undefined> };
+type ApiResponse = ServerResponse;
+
 
 // Proxy for Overpass requests. Adds CORS headers and forwards the incoming
 // POST body to a live Overpass mirror. This lets the browser call
@@ -26,7 +30,7 @@ const MIRRORS = (process.env.OVERPASS_ENDPOINT
 // (Hobby plan) even though every mirror is raced in parallel, not chained.
 const MIRROR_TIMEOUT_MS = 8_000;
 
-function setCorsHeaders(res: any) {
+function setCorsHeaders(res: ApiResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -70,7 +74,7 @@ async function fetchMirror(url: string, body: string): Promise<MirrorResult> {
   }
 }
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req: ApiRequest, res: ApiResponse) {
   setCorsHeaders(res);
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -137,7 +141,7 @@ export default async function handler(req: any, res: any) {
     res.statusCode = 502;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ error: 'all Overpass mirrors failed', detail: String(firstError) }));
-  } catch (e: any) {
+  } catch (e) {
     console.error('[api/overpass] proxy error', e);
     res.statusCode = 500;
     res.end(JSON.stringify({ error: String(e) }));

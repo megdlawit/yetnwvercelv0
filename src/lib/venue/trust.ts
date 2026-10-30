@@ -51,7 +51,36 @@ export function sinceText(iso: string, now = new Date()): string {
   return 'over a year ago';
 }
 
-export interface TrustFields { trust_level?: string | null; verified_at?: string | null; checked_at?: string | null; responsible_party?: string | null; source?: string | null }
+export interface TrustFields {
+  trust_level?: string | null; verified_at?: string | null; checked_at?: string | null; responsible_party?: string | null; source?: string | null;
+  /** When Yet New's verification ends (20261103090000); absent before that migration. */
+  verified_until?: string | null;
+  /** What was checked: "Name, hours and location". */
+  verification_scope?: string | null;
+}
+
+/** Days before the end date when a verification counts as ending soon. */
+export const ENDING_SOON_DAYS = 30;
+export type VerificationState = 'none' | 'active' | 'ending' | 'lapsed';
+
+/** Where a verification stands: none (listed), active, ending within 30 days, or lapsed. */
+export function verificationState(t: TrustFields, now = new Date()): VerificationState {
+  const until = t.verified_until ? new Date(t.verified_until).getTime() : null;
+  if (trustLevelOf(t.trust_level) === 'listed') {
+    return 'none';
+  } else if (until === null) {
+    return 'active';
+  } else if (until < now.getTime()) {
+    return 'lapsed';
+  } else if (until < now.getTime() + ENDING_SOON_DAYS * 86_400_000) {
+    return 'ending';
+  } else {
+    return 'active';
+  }
+}
+
+/** "until Mar 2027" for a verification's end, or null. */
+export const untilText = (t: TrustFields): string | null => (t.verified_until ? `until ${monthYear(t.verified_until)}` : null);
 
 /**
  * What a visitor sees about how trustworthy a place's details are, or null when there's
@@ -60,9 +89,14 @@ export interface TrustFields { trust_level?: string | null; verified_at?: string
 export function trustBadge(t: TrustFields, now = new Date()): { level: TrustLevel; label: string; detail: string | null } | null {
   const level = trustLevelOf(t.trust_level);
   const checked = t.checked_at ? `Details checked ${sinceText(t.checked_at, now)}` : null;
+  // A verification that has ended is not shown as one: the place reads as listed until Yet New re-checks it.
+  if (verificationState(t, now) === 'lapsed') {
+    return { level: 'listed', label: 'Listed', detail: [`${level === 'official' ? 'Official confirmation' : 'Verification'} is being renewed`, checked].filter(Boolean).join(' · ') };
+  }
+  const scope = t.verification_scope?.trim() ? ` · ${t.verification_scope.trim()}` : '';
   const by = t.responsible_party?.trim() ? ` by ${t.responsible_party.trim()}` : '';
-  if (level === 'official') return { level, label: 'Official', detail: [`Confirmed${by}${t.verified_at ? ` · ${monthYear(t.verified_at)}` : ''}`, checked].filter(Boolean).join(' · ') };
-  if (level === 'verified') return { level, label: 'Verified', detail: [`Checked by Yet New${t.verified_at ? ` · ${monthYear(t.verified_at)}` : ''}`, checked].filter(Boolean).join(' · ') };
+  if (level === 'official') return { level, label: 'Official', detail: [`Confirmed${by}${t.verified_at ? ` · ${monthYear(t.verified_at)}` : ''}${scope}`, checked].filter(Boolean).join(' · ') };
+  if (level === 'verified') return { level, label: 'Verified', detail: [`Checked by Yet New${t.verified_at ? ` · ${monthYear(t.verified_at)}` : ''}${scope}`, checked].filter(Boolean).join(' · ') };
   return checked ? { level, label: 'Listed', detail: checked } : null;
 }
 

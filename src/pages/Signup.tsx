@@ -1,9 +1,11 @@
 // Create an institution account in two short steps: the place you run,
 // then your sign-in. You land in your dashboard with a venue ready for a map.
+// A business (hotel, restaurant, café, shop) signs up as a business account instead:
+// no venue of its own; it claims its listing on Yet New Business (?type=business).
 
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, Loader2, AtSign, Check, X, ArrowLeft, Trees, Landmark, Castle, GraduationCap, Hospital, ShoppingBag, Building2 } from 'lucide-react';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { Eye, EyeOff, Loader2, AtSign, Check, X, ArrowLeft, Trees, Landmark, Castle, GraduationCap, Hospital, ShoppingBag, Building2, Store } from 'lucide-react';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import AuthShell, { FIELD_CLS } from '@/components/auth/AuthShell';
 import { cn } from '@/lib/utils';
@@ -18,6 +20,11 @@ const KIND_ICONS: Record<InstitutionKind, typeof Trees> = {
 export default function Signup() {
   const { session, loading, signIn } = useAdminAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const [business, setBusiness] = useState(params.get('type') === 'business');
+  // Where a business goes after signing up: straight to claiming the place it came from, if any.
+  const claim = params.get('claim');
+  const businessHome = `/business?welcome=1${claim ? `&claim=${encodeURIComponent(claim)}` : ''}`;
   const [step, setStep] = useState<1 | 2>(1);
   const [name, setName] = useState('');
   const [kind, setKind] = useState<InstitutionKind | null>(null);
@@ -47,12 +54,12 @@ export default function Signup() {
     return () => clearTimeout(t);
   }, [u, uProblem]);
 
-  if (!loading && session && !busy) return <Navigate to="/dashboard" replace />;
+  if (!loading && session && !busy) return <Navigate to={business ? businessHome : '/dashboard'} replace />;
 
   const next = (e: FormEvent) => {
     e.preventDefault();
-    if (name.trim().length < 2) { setError('Add your institution\'s name.'); return; }
-    if (!kind) { setError('Choose what kind of place you run.'); return; }
+    if (name.trim().length < 2) { setError(business ? 'Add your business\'s name.' : 'Add your institution\'s name.'); return; }
+    if (!business && !kind) { setError('Choose what kind of place you run.'); return; }
     setError(null); setStep(2);
   };
 
@@ -65,10 +72,13 @@ export default function Signup() {
     if (availability?.for === u && !availability.available) { setError('That username is taken. Try another.'); return; }
     setBusy(true); setError(null);
     try {
-      await callAccounts('signup', { username: u, password, displayName: displayName.trim(), institution: { name: name.trim(), kind } });
+      await callAccounts('signup', {
+        username: u, password, displayName: displayName.trim(),
+        institution: business ? { name: name.trim(), kind: 'other', accountType: 'business' } : { name: name.trim(), kind },
+      });
       const { error: err } = await signIn(u, password);
       if (err) throw new Error(err);
-      navigate('/dashboard?welcome=1', { replace: true });
+      navigate(business ? businessHome : '/dashboard?welcome=1', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the account.');
       setBusy(false);
@@ -79,15 +89,35 @@ export default function Signup() {
 
   return (
     <AuthShell
-      title={step === 1 ? 'Create your digital venue' : 'Create your sign-in'}
-      subtitle={step === 1 ? 'Step 1 of 2 · Tell us about the place you run.' : `Step 2 of 2 · How your team will sign in to ${name.trim() || 'your venue'}.`}
+      title={step === 1 ? (business ? 'Join Yet New Business' : 'Create your digital venue') : 'Create your sign-in'}
+      subtitle={step === 1
+        ? (business ? 'Step 1 of 2 · Manage how your hotel, restaurant, café or shop appears on venue maps.' : 'Step 1 of 2 · Tell us about the place you run.')
+        : `Step 2 of 2 · How your team will sign in to ${name.trim() || (business ? 'your business' : 'your venue')}.`}
       footer={<>Already have an account? <Link to="/login" className="font-semibold text-primary hover:underline">Sign in</Link></>}>
       {step === 1 ? (
         <form onSubmit={next} className="space-y-5" noValidate>
+          <div className="grid grid-cols-2 gap-1 rounded-2xl bg-muted p-1" role="radiogroup" aria-label="What are you signing up">
+            {([[false, Landmark, 'A venue I run'], [true, Store, 'A business']] as const).map(([b, Icon, label]) => (
+              <button key={label} type="button" role="radio" aria-checked={business === b} onClick={() => { setBusiness(b); setError(null); }}
+                className={cn('flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold transition-colors',
+                  business === b ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                <Icon className="h-4 w-4" /> {label}
+              </button>
+            ))}
+          </div>
           <label className="block space-y-1.5">
-            <span className="px-0.5 text-xs font-bold text-foreground/80">Institution name</span>
-            <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Unity Park" className={FIELD_CLS} aria-label="Institution name" />
+            <span className="px-0.5 text-xs font-bold text-foreground/80">{business ? 'Business name' : 'Institution name'}</span>
+            <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder={business ? 'Tomoca Coffee' : 'Unity Park'} className={FIELD_CLS}
+              aria-label={business ? 'Business name' : 'Institution name'} />
           </label>
+          {business ? (
+            <div className="space-y-1.5 rounded-2xl bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
+              <p className="font-semibold text-foreground">What happens next</p>
+              <p>1. Pick the venue you’re in (a park, mall, hotel, museum…) and choose your place — or ask the venue to add it.</p>
+              <p>2. Yet New confirms it’s yours, usually within a working day.</p>
+              <p>3. Add your phone, prices and what you offer, and answer reviews. Free — visitors contact you directly.</p>
+            </div>
+          ) : (
           <fieldset className="space-y-1.5">
             <legend className="px-0.5 pb-1.5 text-xs font-bold text-foreground/80">What kind of place is it?</legend>
             <div className="grid grid-cols-2 gap-2">
@@ -103,6 +133,7 @@ export default function Signup() {
               })}
             </div>
           </fieldset>
+          )}
           {error && <p role="alert" className="rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
           <button type="submit" className="flex h-12 w-full items-center justify-center rounded-2xl bg-primary text-sm font-bold text-primary-foreground shadow-sm hover:opacity-95">Continue</button>
         </form>
@@ -140,7 +171,7 @@ export default function Signup() {
           </label>
           {error && <p role="alert" className="rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
           <button type="submit" disabled={busy} className="flex h-12 w-full items-center justify-center rounded-2xl bg-primary text-sm font-bold text-primary-foreground shadow-sm hover:opacity-95 disabled:opacity-60">
-            {busy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating your venue…</> : 'Create account'}
+            {busy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {business ? 'Creating your business account…' : 'Creating your venue…'}</> : 'Create account'}
           </button>
           <button type="button" onClick={() => { setStep(1); setError(null); }} className="flex w-full items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground"><ArrowLeft className="h-3.5 w-3.5" /> Back</button>
         </form>

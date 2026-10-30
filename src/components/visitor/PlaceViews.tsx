@@ -15,6 +15,8 @@ import { ACCESSIBILITY_LABELS, hoursSummary, openStatus, type Accessibility as P
 import { VISITOR_CATEGORIES } from '@/lib/venue/discover';
 import { trustBadge, type TrustFields } from '@/lib/venue/trust';
 import { CATEGORY_COLORS, CATEGORY_ICONS, PX_PER_METER, type Place } from './types';
+import { useExtras } from './useVenueExtras';
+import { ratingText } from '@/lib/venue/business';
 
 export type DistanceOf = (p: Place) => { metres: number; minutes: number } | null;
 
@@ -29,6 +31,17 @@ export function CategoryBubble({ p, size = 'md' }: { p: Pick<Place, 'category'>;
   return <span className={cn('flex shrink-0 items-center justify-center', box)} style={tint(CATEGORY_COLORS[p.category])}><Icon className={size === 'lg' ? 'h-7 w-7' : size === 'sm' ? 'h-4 w-4' : 'h-5 w-5'} /></span>;
 }
 
+/** "★ 4.5 (12)" when visitors have rated the place. */
+function RatingInline({ p }: { p: Place }) {
+  const { ratings } = useExtras();
+  const r = p.poiId ? ratings.get(p.poiId) : undefined;
+  if (r) {
+    return <span className="text-amber-700 dark:text-amber-400"> · <Star className="mb-0.5 inline h-3 w-3 fill-amber-400 text-amber-400" />{ratingText(r.rating)} ({r.reviews})</span>;
+  } else {
+    return null;
+  }
+}
+
 export function PlaceRow({ p, onOpen, distance, multiFloor }: { p: Place; onOpen: () => void; distance: DistanceOf; multiFloor: boolean }) {
   const st = openStatus(p.hours);
   const d = distance(p);
@@ -41,6 +54,7 @@ export function PlaceRow({ p, onOpen, distance, multiFloor }: { p: Place; onOpen
         <span className="flex items-center gap-1 truncate text-sm font-semibold">{p.name} {p.featured && <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400" />}</span>
         <span className="block truncate text-xs text-muted-foreground">
           {typeLine(p, multiFloor)}
+          <RatingInline p={p} />
           {st && <span className={st.open ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}> · {st.open ? 'Open' : 'Closed'}</span>}
         </span>
       </span>
@@ -67,6 +81,7 @@ export function PlaceCard({ p, onOpen, distance }: { p: Place; onOpen: () => voi
         <p className="truncate text-sm font-semibold">{p.name}</p>
         <p className="truncate text-[11px] text-muted-foreground">
           {p.typeLabel ?? VISITOR_CATEGORIES[p.category].label}
+          <RatingInline p={p} />
           {st && <span className={st.open ? 'text-emerald-600' : 'text-amber-600'}> · {st.open ? 'Open now' : 'Closed'}</span>}
         </p>
       </div>
@@ -74,7 +89,7 @@ export function PlaceCard({ p, onOpen, distance }: { p: Place; onOpen: () => voi
   );
 }
 
-export function PlaceDetail({ p, multiFloor, distance, hasElevator, stories, onBack, onNavigate, onShare, onExplore, saved, onSave, onStreetDirections, onReport }: {
+export function PlaceDetail({ p, multiFloor, distance, hasElevator, stories, onBack, onNavigate, onShare, onExplore, saved, onSave, onStreetDirections, onReport, business, reviews }: {
   p: Place; multiFloor: boolean; distance: DistanceOf; hasElevator: boolean;
   stories: ReactNode; onBack: () => void; onNavigate: () => void; onShare: () => void;
   /** Fly the map to this place (Explore = look around; Navigate = get there). */
@@ -83,6 +98,10 @@ export function PlaceDetail({ p, multiFloor, distance, hasElevator, stories, onB
   onStreetDirections?: () => void;
   /** Tell the venue's team something here is wrong. */
   onReport?: () => void;
+  /** A business place's contact, prices and amenities (live, not from the snapshot). */
+  business?: ReactNode;
+  /** Visitor reviews and writing one. */
+  reviews?: ReactNode;
 }) {
   const d = distance(p);
   const st = openStatus(p.hours);
@@ -140,6 +159,7 @@ export function PlaceDetail({ p, multiFloor, distance, hasElevator, stories, onB
         </div>
 
         {p.description && <p className="whitespace-pre-line text-[15px] leading-relaxed">{p.description}</p>}
+        {business}
         {p.trust && <TrustLine trust={p.trust} />}
         <PlaceHours hours={p.hours} />
         <PlaceAccess access={p.access} />
@@ -149,6 +169,7 @@ export function PlaceDetail({ p, multiFloor, distance, hasElevator, stories, onB
             {hasElevator ? 'Reachable by elevator — turn on step-free in directions.' : 'This venue has no elevator mapped yet.'}
           </p>
         )}
+        {reviews}
         {!p.navigable && <p className="text-center text-xs text-muted-foreground">Directions aren't offered to this place. Please ask staff.</p>}
         {onStreetDirections && (
           <button onClick={onStreetDirections} className="flex w-full items-center justify-center gap-1.5 text-xs font-medium text-primary hover:underline">

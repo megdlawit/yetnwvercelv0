@@ -1,7 +1,7 @@
 // What the visitor app works with: places (map spots enriched with the
 // institution's details), floors, and the category icons.
 
-import { Landmark, Flower2, Baby, Coffee, Bath, SquareParking, DoorOpen, Info } from 'lucide-react';
+import { Landmark, Flower2, Baby, Coffee, Bath, SquareParking, DoorOpen, Info, ShoppingBag, BedDouble } from 'lucide-react';
 import type { Room } from '@/data/types';
 import type { Accessibility } from '@/lib/venue/places';
 import type { DiscoverPlace, VisitorCategory } from '@/lib/venue/discover';
@@ -36,12 +36,13 @@ export interface Floor {
 }
 
 export const CATEGORY_ICONS: Record<VisitorCategory, typeof Landmark> = {
-  attractions: Landmark, gardens: Flower2, family: Baby, food: Coffee, restrooms: Bath, parking: SquareParking, entrances: DoorOpen, facilities: Info,
+  attractions: Landmark, gardens: Flower2, family: Baby, food: Coffee, shops: ShoppingBag, stays: BedDouble,
+  restrooms: Bath, parking: SquareParking, entrances: DoorOpen, facilities: Info,
 };
 
 /** One colour per kind of place: map pins (2D and 3D), list icons and chips all match. */
 export const CATEGORY_COLORS: Record<VisitorCategory, string> = {
-  attractions: '#7c3aed', gardens: '#16a34a', family: '#db2777', food: '#d97706',
+  attractions: '#7c3aed', gardens: '#16a34a', family: '#db2777', food: '#d97706', shops: '#c026d3', stays: '#0f766e',
   restrooms: '#0284c7', parking: '#475569', entrances: '#059669', facilities: '#4f46e5',
 };
 

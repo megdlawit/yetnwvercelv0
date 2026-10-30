@@ -5,11 +5,14 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { PlanDrawing } from '@/lib/cad/planDrawing';
+import { packagedDrawing } from '@/lib/offline/venuePackage';
 
 const cache = new Map<string, Promise<PlanDrawing | null>>();
 
 async function load(floorId: string, live: boolean): Promise<PlanDrawing | null> {
   const { data, error } = await supabase.from('floor_drawings').select(live ? 'drawing' : 'published').eq('floor_id', floorId).maybeSingle();
+  // No connection: the drawing saved with the venue for offline use, if any.
+  if (error && !live && /fetch|network|load failed/i.test(error.message)) return packagedDrawing(floorId);
   // No drawing yet, or a database without migration 20261026090000: the plan is drawn from the walls.
   if (error || !data) return null;
   const d = (live ? (data as { drawing: unknown }).drawing : (data as { published: unknown }).published) as PlanDrawing | null;

@@ -3,6 +3,9 @@
  * can show places the user actually picked (not hardcoded demo strings).
  */
 
+/** An entry before it is stamped: the same shapes, without `timestamp` (Omit on the union would merge them). */
+export type SearchHistoryInput = SearchHistoryEntry extends infer E ? (E extends unknown ? Omit<E, 'timestamp'> : never) : never;
+
 export type SearchHistoryEntry =
   | {
       type: 'building';
@@ -58,7 +61,7 @@ function sameEntry(a: SearchHistoryEntry, b: SearchHistoryEntry): boolean {
   return false;
 }
 
-export function addSearchHistoryEntry(entry: Omit<SearchHistoryEntry, 'timestamp'>): SearchHistoryEntry[] {
+export function addSearchHistoryEntry(entry: SearchHistoryInput): SearchHistoryEntry[] {
   const next: SearchHistoryEntry = { ...entry, timestamp: Date.now() } as SearchHistoryEntry;
   const deduped = loadSearchHistory().filter(e => !sameEntry(e, next));
   const updated = [next, ...deduped].slice(0, MAX_ENTRIES);

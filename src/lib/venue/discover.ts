@@ -5,14 +5,16 @@
 import type { PlaceType } from './places';
 import { openStatus, type OpeningHours } from './places';
 
-export type VisitorCategory = 'attractions' | 'gardens' | 'family' | 'food' | 'restrooms' | 'parking' | 'entrances' | 'facilities';
+export type VisitorCategory = 'attractions' | 'gardens' | 'family' | 'food' | 'shops' | 'stays' | 'restrooms' | 'parking' | 'entrances' | 'facilities';
 
 /** Category order and the words people type for each (English + Amharic). */
 export const VISITOR_CATEGORIES: Record<VisitorCategory, { label: string; words: string[] }> = {
   attractions: { label: 'Attractions', words: ['attraction', 'museum', 'history', 'historic', 'culture', 'cultural', 'sight', 'monument', 'palace', 'heritage', 'gallery', 'exhibit', 'zoo', 'viewpoint', 'view', 'ሙዚየም', 'ቤተ', 'ታሪክ'] },
   gardens: { label: 'Gardens', words: ['garden', 'gardens', 'flower', 'flowers', 'nature', 'green', 'trees', 'ገነት', 'አትክልት'] },
   family: { label: 'Family', words: ['kids', 'kid', 'children', 'child', 'play', 'playground', 'family', 'baby', 'ልጆች', 'መጫወቻ'] },
-  food: { label: 'Food & drink', words: ['food', 'eat', 'cafe', 'coffee', 'restaurant', 'drink', 'drinks', 'snack', 'lunch', 'breakfast', 'juice', 'ቡና', 'ምግብ', 'ካፌ'] },
+  food: { label: 'Food & drink', words: ['food', 'eat', 'cafe', 'coffee', 'restaurant', 'drink', 'drinks', 'snack', 'lunch', 'breakfast', 'dinner', 'juice', 'ቡና', 'ምግብ', 'ካፌ'] },
+  shops: { label: 'Shops', words: ['shop', 'shops', 'shopping', 'store', 'souvenir', 'souvenirs', 'gift', 'gifts', 'buy', 'market', 'ሱቅ', 'ገበያ'] },
+  stays: { label: 'Hotels & stays', words: ['hotel', 'hotels', 'lodge', 'stay', 'sleep', 'room', 'rooms', 'guesthouse', 'accommodation', 'ሆቴል', 'ማረፊያ'] },
   restrooms: { label: 'Restrooms', words: ['restroom', 'restrooms', 'toilet', 'toilets', 'wc', 'bathroom', 'washroom', 'loo', 'ሽንት', 'መጸዳጃ'] },
   parking: { label: 'Parking', words: ['parking', 'car', 'cars', 'taxi', 'ማቆሚያ', 'ፓርኪንግ'] },
   entrances: { label: 'Entrances', words: ['entrance', 'entrances', 'gate', 'gates', 'entry', 'exit', 'way in', 'door', 'መግቢያ', 'በር'] },
@@ -22,7 +24,8 @@ export const VISITOR_CATEGORY_LIST = Object.keys(VISITOR_CATEGORIES) as VisitorC
 
 const TYPE_CATEGORY: Record<PlaceType, VisitorCategory> = {
   attraction: 'attractions', cultural_site: 'attractions', viewpoint: 'attractions', custom: 'attractions',
-  garden: 'gardens', play_area: 'family', cafe: 'food', restroom: 'restrooms', parking: 'parking', entrance: 'entrances', info_desk: 'facilities',
+  garden: 'gardens', play_area: 'family', cafe: 'food', restaurant: 'food', shop: 'shops', hotel: 'stays',
+  restroom: 'restrooms', parking: 'parking', entrance: 'entrances', info_desk: 'facilities',
 };
 
 const norm = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
@@ -35,7 +38,7 @@ export function categoryOf(type: PlaceType | null | undefined, name: string, roo
   if (roomType === 'entrance') return 'entrances';
   if (roomType && ['stairs', 'elevator', 'reception', 'utility'].includes(roomType)) return 'facilities';
   const w = wordsOf(name);
-  for (const c of ['restrooms', 'food', 'parking', 'entrances', 'gardens', 'family', 'facilities'] as VisitorCategory[]) {
+  for (const c of ['restrooms', 'food', 'stays', 'shops', 'parking', 'entrances', 'gardens', 'family', 'facilities'] as VisitorCategory[]) {
     if (VISITOR_CATEGORIES[c].words.some(k => w.includes(norm(k)) || (k.length > 3 && norm(name).includes(norm(k))))) return c;
   }
   return 'attractions';

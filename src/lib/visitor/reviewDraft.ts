@@ -46,6 +46,20 @@ export async function postReview(d: Pick<ReviewDraft, 'poiId' | 'venueId' | 'rat
   }
 }
 
+/**
+ * A quiet visitor session (Supabase anonymous sign-in), so a review posts straight away with no
+ * email. Returns false when the project hasn't turned anonymous sign-ins on — then the visitor
+ * confirms an email instead.
+ */
+export async function startVisitorSession(): Promise<boolean> {
+  const { data, error } = await supabase.auth.signInAnonymously();
+  if (error || !data.user) {
+    return false;
+  } else {
+    return true;
+  }
+}
+
 /** Ask for a sign-in link that brings the visitor back to this place. */
 export async function sendReviewLink(email: string, venueId: string, poiId: string): Promise<string | null> {
   const back = `${window.location.origin}/venue/${venueId}?review=${encodeURIComponent(poiId)}`;

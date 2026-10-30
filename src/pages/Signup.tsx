@@ -111,10 +111,12 @@ export default function Signup() {
               aria-label={business ? 'Business name' : 'Institution name'} />
           </label>
           {business ? (
-            <p className="rounded-2xl bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
-              Next you'll find your place on a venue's map and ask to manage it. Yet New checks it's yours, then you keep your
-              phone, prices and photos up to date and answer reviews. Listing is free.
-            </p>
+            <div className="space-y-1.5 rounded-2xl bg-muted/60 px-3 py-2.5 text-xs text-muted-foreground">
+              <p className="font-semibold text-foreground">What happens next</p>
+              <p>1. Pick the venue you’re in (a park, mall, hotel, museum…) and choose your place — or ask the venue to add it.</p>
+              <p>2. Yet New confirms it’s yours, usually within a working day.</p>
+              <p>3. Add your phone, prices and what you offer, and answer reviews. Free — visitors contact you directly.</p>
+            </div>
           ) : (
           <fieldset className="space-y-1.5">
             <legend className="px-0.5 pb-1.5 text-xs font-bold text-foreground/80">What kind of place is it?</legend>
@@ -169,7 +171,7 @@ export default function Signup() {
           </label>
           {error && <p role="alert" className="rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
           <button type="submit" disabled={busy} className="flex h-12 w-full items-center justify-center rounded-2xl bg-primary text-sm font-bold text-primary-foreground shadow-sm hover:opacity-95 disabled:opacity-60">
-            {busy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating your venue…</> : 'Create account'}
+            {busy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {business ? 'Creating your business account…' : 'Creating your venue…'}</> : 'Create account'}
           </button>
           <button type="button" onClick={() => { setStep(1); setError(null); }} className="flex w-full items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground"><ArrowLeft className="h-3.5 w-3.5" /> Back</button>
         </form>

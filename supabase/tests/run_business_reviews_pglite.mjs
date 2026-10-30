@@ -81,6 +81,7 @@ await db.exec(read('20261029090000_visit_insights.sql'));
 await db.exec(read('20261030090000_roles_audit.sql'));
 await db.exec(`update public.institutions set account_type = 'business' where id in ('${BIZI}', '${BIZ2I}');`);
 await db.exec(read('20261103090000_business_reviews_verification.sql'));
+await db.exec(read('20261104090000_business_place_requests.sql'));
 
 let failed = 0;
 const check = (name, ok, detail = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : ` ${detail}`}`); if (!ok) failed++; };
@@ -253,6 +254,58 @@ const log = (await all(`select action from public.audit_log order by id`)).map(r
 check('claims, decisions, releases and moderation are in the audit log',
   ['business.claim_requested', 'business.claim_approved', 'business.claim_rejected', 'business.released', 'review.hidden', 'review.shown'].every(a => log.includes(a)) || log.includes('business.claim_approved') && log.includes('review.hidden') && log.includes('business.released'),
   JSON.stringify([...new Set(log)]));
+
+// ── 20261104090000: browsing venues, and asking a venue to add a place ──
+const JUICE = '10000000-0000-0000-0000-000000000009';
+await as('authenticated', BIZ);
+const venues = await all(`select * from public.business_venues('')`);
+check('a business browses published venues with their business places', venues.some(v => v.building_id === LIVE && Number(v.places) === 2) && !venues.some(v => v.building_id === DRAFT), JSON.stringify(venues));
+const inVenue = await all(`select * from public.business_find_places('', $1)`, [LIVE]);
+check("…and every business place in one venue, no typing needed", inVenue.length === 2 && !inVenue.some(f => f.poi_id === WC), JSON.stringify(inVenue));
+check('…while an empty search over all venues finds nothing', !(await all(`select * from public.business_find_places('', null)`)).length);
+check('searching by name still works', (await all(`select * from public.business_find_places('lodge', null)`)).some(f => f.poi_id === HOTEL));
+const ask = (await one(`select public.request_business_place($1, $2, 'Juice Bar', 'cafe', 'Next to the north gate', '0911 000000') as id`, [BIZI, LIVE])).id;
+check('a business asks a venue to add its place', !!ask);
+check('asking twice gets a friendly answer', /already asked/.test(await err(`select public.request_business_place($1, $2, 'juice bar ', 'cafe', 'North gate')`, [BIZI, LIVE]) ?? ''));
+check("a draft venue can't be asked", /isn't on Yet New/.test(await err(`select public.request_business_place($1, $2, 'Juice Bar', 'cafe', 'North gate')`, [BIZI, DRAFT]) ?? ''));
+check('it has to say where the place is', /where it is/.test(await err(`select public.request_business_place($1, $2, 'Kiosk', 'shop', '')`, [BIZI, LIVE]) ?? ''));
+check('the business sees its request', (await all(`select id from public.business_place_requests`)).length === 1);
+check("requests can't be written directly", (await rows(`update public.business_place_requests set status = 'added' where id = $1`, [ask])) <= 0);
+
+await as('authenticated', STRANGER);
+check('nobody asks for a business they are not on', !!(await err(`select public.request_business_place($1, $2, 'X place', 'cafe', 'Somewhere')`, [BIZI, LIVE])));
+check('a venue account can\'t ask', /business account/.test(await err(`select public.request_business_place($1, $2, 'X place', 'cafe', 'Somewhere')`, [VENUEI, LIVE]) ?? ''));
+check("a stranger doesn't see requests", !(await all(`select id from public.business_place_requests`)).length && !(await all(`select * from public.venue_place_requests($1)`, [LIVE])).length);
+check("…and can't answer them", !!(await err(`select public.answer_business_place_request($1)`, [ask])));
+
+await as('authenticated', OWNER);
+const forVenue = await all(`select * from public.venue_place_requests($1)`, [LIVE]);
+check("the venue's team sees the request with the business's name", forVenue.length === 1 && forVenue[0].business_name === 'Tomoca Coffee' && forVenue[0].where_note === 'Next to the north gate', JSON.stringify(forVenue));
+check("linking a restroom is refused", /café, restaurant/.test(await err(`select public.answer_business_place_request($1, $2)`, [ask, WC]) ?? ''));
+await asSuper();
+await db.query(`insert into public.pois(id, building_id, name, place_type) values ($1, $2, 'Juice Bar', 'cafe')`, [JUICE, LIVE]);
+await as('authenticated', OWNER);
+const linkErr = await err(`select public.answer_business_place_request($1, $2, 'Added on the ground floor')`, [ask, JUICE]);
+check('the team adds the place and links it', !linkErr, linkErr);
+await asSuper();
+const linked = await one(`select business_id, phone from public.business_profiles where poi_id = $1`, [JUICE]);
+check('…which makes the business its manager, with the phone it gave', linked?.business_id === BIZI && linked?.phone === '0911 000000', JSON.stringify(linked));
+check('…and closes the request', (await one(`select status, poi_id from public.business_place_requests where id = $1`, [ask])).status === 'added');
+await as('authenticated', BIZ);
+check('the place is now in the business\'s places', (await all(`select * from public.business_places($1)`, [BIZI])).some(p => p.poi_id === JUICE));
+const kiosk = (await one(`select public.request_business_place($1, $2, 'Kiosk', 'shop', 'By the lake') as id`, [BIZI, LIVE])).id;
+const stand = (await one(`select public.request_business_place($1, $2, 'Stand', 'shop', 'By the zoo') as id`, [BIZI, LIVE])).id;
+await db.query(`select public.withdraw_business_place_request($1)`, [stand]);
+check('a business withdraws a request', (await one(`select status from public.business_place_requests where id = $1`, [stand])).status === 'withdrawn');
+await as('authenticated', ADMIN);
+check('Yet New sees every waiting request', (await all(`select * from public.venue_place_requests(null)`)).map(r => r.id).join() === kiosk);
+await as('authenticated', OWNER);
+await db.query(`select public.answer_business_place_request($1, null, 'We have no kiosks')`, [kiosk]);
+check('the venue declines with a reason', (await one(`select status, decision_note from public.business_place_requests where id = $1`, [kiosk])).decision_note === 'We have no kiosks');
+check('an answered request can\'t be answered again', /no longer waiting/.test(await err(`select public.answer_business_place_request($1)`, [kiosk]) ?? ''));
+await asSuper();
+const log2 = (await all(`select action from public.audit_log`)).map(r => r.action);
+check('requests and their answers are in the audit log', ['business.place_requested', 'business.place_added', 'business.place_request_declined'].every(a => log2.includes(a)), JSON.stringify([...new Set(log2)]));
 
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 process.exit(failed ? 1 : 0);

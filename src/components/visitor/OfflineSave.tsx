@@ -33,8 +33,10 @@ export function useSavedPackage(venueId: string | undefined) {
   return pack;
 }
 
-export default function OfflineSave({ venueId, venueName, publishedAt, offlineSavedAt, className }: {
-  venueId: string; venueName: string; publishedAt: string | null; offlineSavedAt?: string; className?: string;
+export default function OfflineSave({ venueId, venueName, publishedAt, offlineSavedAt, previewing = false, className }: {
+  venueId: string; venueName: string; publishedAt: string | null; offlineSavedAt?: string;
+  /** The venue's team previewing unpublished changes: saving still downloads what visitors get, the published version. */
+  previewing?: boolean; className?: string;
 }) {
   const pack = useSavedPackage(venueId);
   const [step, setStep] = useState<Step | null>(null);
@@ -61,10 +63,11 @@ export default function OfflineSave({ venueId, venueName, publishedAt, offlineSa
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button className={cn('pointer-events-auto relative grid h-10 w-10 place-items-center rounded-2xl', className)}
-          aria-label={pack ? 'Saved for offline use' : 'Save for offline use'} title={pack ? 'Saved for offline use' : 'Save for offline use'}>
-          {step ? <Loader2 className="h-[18px] w-[18px] animate-spin" /> : offlineSavedAt ? <CloudOff className="h-[18px] w-[18px]" /> : <CloudDownload className="h-[18px] w-[18px]" />}
-          {pack && !step && <span className={cn('absolute right-1.5 top-1.5 h-2 w-2 rounded-full', outdated ? 'bg-amber-500' : 'bg-emerald-500')} />}
+        <button className={cn('pointer-events-auto relative flex h-10 items-center gap-1.5 rounded-2xl px-3 text-xs font-semibold', className)}
+          aria-label={pack ? 'Saved for offline use' : 'Save for offline use'} title={pack ? 'Saved for offline use' : 'Save this map to use without internet'}>
+          {step ? <Loader2 className="h-4 w-4 animate-spin" /> : offlineSavedAt ? <CloudOff className="h-4 w-4" /> : pack ? <Check className="h-4 w-4 text-emerald-600" /> : <CloudDownload className="h-4 w-4" />}
+          <span>{step ? `${pct}%` : offlineSavedAt ? 'Offline' : pack ? (outdated ? 'Update' : 'Saved') : 'Save offline'}</span>
+          {pack && !step && outdated && <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-500" />}
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 space-y-3">
@@ -75,6 +78,7 @@ export default function OfflineSave({ venueId, venueName, publishedAt, offlineSa
               ? `Showing the copy of ${venueName} saved on ${dateText(offlineSavedAt)}. Directions, places, photos and notices work; reviews need a connection.`
               : 'Save the map, places, photos and the surrounding street map on this phone — for spots with weak signal.'}
           </p>
+          {previewing && <p className="mt-1.5 rounded-lg bg-amber-100 px-2 py-1 text-[11px] text-amber-900 dark:bg-amber-950 dark:text-amber-200">You're previewing unpublished changes. Saving downloads the published version — what visitors get.</p>}
         </div>
         {step ? (
           <div className="space-y-1.5">

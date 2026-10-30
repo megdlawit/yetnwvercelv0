@@ -1380,6 +1380,60 @@ export type Database = {
         }
         Relationships: []
       }
+      business_place_requests: {
+        Row: {
+          id: string
+          business_id: string
+          building_id: string
+          place_name: string
+          place_type: string
+          where_note: string
+          contact_phone: string | null
+          note: string | null
+          status: string
+          poi_id: string | null
+          requested_by: string | null
+          requested_at: string
+          decided_by: string | null
+          decided_at: string | null
+          decision_note: string | null
+        }
+        Insert: {
+          id?: string
+          business_id: string
+          building_id: string
+          place_name: string
+          place_type: string
+          where_note: string
+          contact_phone?: string | null
+          note?: string | null
+          status?: string
+          poi_id?: string | null
+          requested_by?: string | null
+          requested_at?: string
+          decided_by?: string | null
+          decided_at?: string | null
+          decision_note?: string | null
+        }
+        Update: {
+          id?: string
+          business_id?: string
+          building_id?: string
+          place_name?: string
+          place_type?: string
+          where_note?: string
+          contact_phone?: string | null
+          note?: string | null
+          status?: string
+          poi_id?: string | null
+          requested_by?: string | null
+          requested_at?: string
+          decided_by?: string | null
+          decided_at?: string | null
+          decision_note?: string | null
+        }
+        Relationships: []
+      }
       business_claims: {
         Row: {
           id: string
@@ -1656,6 +1710,12 @@ export type Database = {
       user_is_platform_admin: { Args: Record<PropertyKey, never>; Returns: boolean }
       is_business_place_type: { Args: { t: string }; Returns: boolean }
       user_can_edit_business_profile: { Args: { p: string }; Returns: boolean }
+      business_venues: { Args: { q?: string }; Returns: { building_id: string; venue_name: string; places: number; unclaimed: number }[] }
+      business_find_places: { Args: { q?: string; venue?: string | null }; Returns: { poi_id: string; place_name: string; place_type: string | null; building_id: string; venue_name: string; claimed: boolean }[] }
+      request_business_place: { Args: { business: string; venue: string; place_name: string; place_type: string; where_note: string; phone?: string | null; note?: string | null }; Returns: string }
+      withdraw_business_place_request: { Args: { req: string }; Returns: undefined }
+      venue_place_requests: { Args: { b?: string | null }; Returns: { id: string; business_id: string; business_name: string; building_id: string; venue_name: string; place_name: string; place_type: string; where_note: string; contact_phone: string | null; note: string | null; status: string; poi_id: string | null; requested_at: string; decided_at: string | null }[] }
+      answer_business_place_request: { Args: { req: string; poi?: string | null; note?: string | null }; Returns: undefined }
       business_claimable_places: { Args: { q: string }; Returns: { poi_id: string; place_name: string; place_type: string | null; building_id: string; venue_name: string; claimed: boolean }[] }
       request_business_claim: { Args: { poi: string; business: string; evidence: string; phone?: string | null }; Returns: string }
       withdraw_business_claim: { Args: { claim: string }; Returns: undefined }

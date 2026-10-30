@@ -9,7 +9,7 @@
 // Links: ?from=<place> (a QR code: "you are here"), ?place=<place> (open a place),
 // ?preview=1 (the venue's team sees unpublished changes).
 
-import { useEffect, useMemo, useRef, useState, lazy, Suspense, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, lazy, Suspense, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
@@ -459,8 +459,10 @@ export default function ViewMap() {
         onStreetDirections={anchor && sel.gps ? () => { setStreetTo(sel.gps); gps.start(); setShowStreetRoute(true); setMode('outdoor'); setSnap('peek'); } : undefined}
         business={<PlaceBusiness info={sel.poiId ? extras.business.get(sel.poiId) : null} poiId={sel.poiId}
           claimable={extras.available && building.is_published && !!sel.poiId && isBusinessPlaceType(sel.type)} />}
-        reviews={sel.poiId && extras.available
-          ? <PlaceReviews poiId={sel.poiId} venueId={building.id} placeName={sel.name} published={building.is_published && !previewing} onChanged={extras.reload} />
+        reviews={!sel.poiId ? null
+          : !building.is_published ? <TeamNote>Visitor reviews open here once the venue is published.</TeamNote>
+          : extras.available ? <PlaceReviews poiId={sel.poiId} venueId={building.id} placeName={sel.name} published previewing={previewing} onChanged={extras.reload} />
+          : previewing ? <TeamNote>Reviews and business details need the latest database update (migration 20261103090000).</TeamNote>
           : null}
         stories={linked.length ? <div className="space-y-1.5">{linked.map(c => <ContentRowButton key={c.id} c={c} onOpen={() => setOpenContent(c.id)} />)}</div> : null} />;
     }
@@ -554,11 +556,9 @@ export default function ViewMap() {
           <button onClick={() => navigate(`/visit?v=${buildingId}`)} className={cn('pointer-events-auto grid h-10 w-10 place-items-center rounded-2xl', glass)} aria-label="Venue home">
             <HomeIcon className="h-[18px] w-[18px]" />
           </button>
-          {building.is_published && !previewing && (
-            <OfflineSave venueId={building.id} venueName={building.name} publishedAt={building.published_at} offlineSavedAt={venue.data?.offlineSavedAt} className={glass} />
-          )}
-          {venue.data?.offlineSavedAt && (
-            <span className={cn('pointer-events-auto rounded-full px-3 py-2 text-xs font-medium', glass)}>Offline · saved copy</span>
+          {building.is_published && (
+            <OfflineSave venueId={building.id} venueName={building.name} publishedAt={building.published_at} offlineSavedAt={venue.data?.offlineSavedAt}
+              previewing={previewing} className={glass} />
           )}
           {position && !guiding && (
             <div className={cn('pointer-events-auto flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium', glass)}>
@@ -682,4 +682,9 @@ export default function ViewMap() {
     </div>
     </VenueExtrasContext.Provider>
   );
+}
+
+/** A note for the venue's team on their own preview (visitors never see these). */
+function TeamNote({ children }: { children: ReactNode }) {
+  return <p className="rounded-2xl border border-dashed border-amber-400/60 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">{children}</p>;
 }

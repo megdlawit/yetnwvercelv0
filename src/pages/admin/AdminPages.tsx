@@ -20,6 +20,7 @@ import AuditLogList from '@/components/audit/AuditLogList';
 import { INSTITUTION_KINDS, isInstitutionKind } from '@/lib/accounts';
 import { PLACE_TYPES, type PlaceType } from '@/lib/venue/places';
 import { Stars } from '@/components/reviews/ReviewParts';
+import { PlaceRequestRow, usePlaceRequests } from '@/components/business/PlaceRequests';
 import { STATUS_INFO, trustLevelOf } from '@/lib/venue/trust';
 import { dayLabel } from '@/lib/venue/activity';
 import { useAdminConsole, waitingCount } from './AdminLayout';
@@ -353,6 +354,8 @@ export function Approvals() {
         </Group>
       ) : null}
 
+      {!loading && <AdminPlaceRequests />}
+
       {!loading && flaggedReviews.length ? (
         <Group title={`Flagged reviews · ${flaggedReviews.length}`} footer="Hide only what breaks the rules — abuse, spam, personal details, not about the place. Criticism stays.">
           {flaggedReviews.map(r => (
@@ -635,6 +638,21 @@ export function Activity() {
           <div className="px-5 py-5"><ActivityTimeline rows={q.data ? rows : null} loading={q.loading} /></div>
         </Group>
       </Page>
+    );
+  }
+}
+
+/** Businesses asking a venue to add their place — usually the venue's team answers; Yet New can too. */
+function AdminPlaceRequests() {
+  const { rows, reload } = usePlaceRequests(null);
+  if (!rows || rows.length === 0) {
+    return null;
+  } else {
+    return (
+      <Group title={`Places businesses asked to add · ${rows.length}`} flush
+        footer="The venue's team sees these on its Places page. Step in when a venue is slow to answer: add the place in the venue's editor, then link it.">
+        <ul className="divide-y">{rows.map(r => <PlaceRequestRow key={r.id} r={r} showVenue canAnswer onDone={() => void reload()} />)}</ul>
+      </Group>
     );
   }
 }

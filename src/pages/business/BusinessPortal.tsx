@@ -7,7 +7,8 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
-  Store, Search, Loader2, MapPin, Star, MessageSquare, Pencil, ExternalLink, Clock, Check, X, LogOut, LayoutGrid, Plus, ShieldCheck, Undo2,
+  Store, Search, Loader2, MapPin, MessageSquare, Pencil, ExternalLink, Clock, Check, X, LogOut, LayoutGrid, Plus, ShieldCheck, Undo2,
+  ArrowLeft, Building2, ChevronRight, Sparkles,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
@@ -64,6 +65,18 @@ function Welcome() {
           and answer what visitors say. Free — visitors contact you directly.
         </p>
       </div>
+      <ol className="space-y-2.5 text-left">
+        {[
+          ['Create your account', 'Your business’s name and a sign-in for your team. Two minutes.'],
+          ['Find your place', 'Pick the venue you’re in and choose your place — or ask the venue to add it to their map.'],
+          ['We confirm it’s yours', 'Usually within a working day. Then add your phone, prices and what you offer.'],
+        ].map(([t, d], i) => (
+          <li key={t} className="flex gap-3 rounded-2xl bg-muted/50 p-3">
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary text-xs font-bold text-primary-foreground">{i + 1}</span>
+            <span><span className="block text-sm font-semibold">{t}</span><span className="block text-xs text-muted-foreground">{d}</span></span>
+          </li>
+        ))}
+      </ol>
       <div className="flex flex-col gap-2">
         <Button asChild className="h-11 rounded-2xl"><Link to={`/signup?type=business${claim ? `&claim=${encodeURIComponent(claim)}` : ''}`}><Plus className="mr-1.5 h-4 w-4" /> Create a business account</Link></Button>
         <Button asChild variant="outline" className="h-11 rounded-2xl"><Link to="/login" state={{ from: here }}>I already have an account</Link></Button>
@@ -146,27 +159,32 @@ function Portal({ businessId, businessName, editable, welcome, claimPoi, onClaim
 }) {
   const [places, setPlaces] = useState<MyPlace[] | null>(null);
   const [claims, setClaims] = useState<Claim[] | null>(null);
+  const [asks, setAsks] = useState<PlaceAsk[]>([]);
   const [missing, setMissing] = useState(false);
   const [editing, setEditing] = useState<MyPlace | null>(null);
   const [reviewsOf, setReviewsOf] = useState<MyPlace | null>(null);
   const [claiming, setClaiming] = useState<Found | null>(null);
+  const [asking, setAsking] = useState<{ venueId: string | null; name: string } | null>(null);
 
   const load = useCallback(async () => {
-    const [p, c] = await Promise.all([
+    const [p, c, a] = await Promise.all([
       supabase.rpc('business_places', { business: businessId }),
       supabase.from('business_claims').select('*').eq('business_id', businessId).order('requested_at', { ascending: false }).limit(50),
+      supabase.from('business_place_requests').select('*').eq('business_id', businessId).order('requested_at', { ascending: false }).limit(50),
     ]);
     setMissing(!!p.error && /business_places|schema cache|does not exist|Could not find/i.test(p.error.message));
     setPlaces((p.data ?? []) as unknown as MyPlace[]);
-    // Names for the claims' places (places and published venues are public).
+    // Names for the claims' places and the venues asked (places and published venues are public).
     const ids = [...new Set((c.data ?? []).map(x => x.poi_id))];
     const { data: names } = ids.length ? await supabase.from('pois').select('id, name, building_id').in('id', ids) : { data: [] };
-    const venueIds = [...new Set((names ?? []).map(n => n.building_id))];
+    const venueIds = [...new Set([...(names ?? []).map(n => n.building_id), ...(a.data ?? []).map(x => x.building_id)])];
     const { data: venues } = venueIds.length ? await supabase.from('buildings').select('id, name').in('id', venueIds) : { data: [] };
+    const venueName = (id: string | undefined) => (venues ?? []).find(v => v.id === id)?.name;
     setClaims((c.data ?? []).map(x => {
       const n = (names ?? []).find(y => y.id === x.poi_id);
-      return { ...x, place_name: n?.name, venue_name: (venues ?? []).find(v => v.id === n?.building_id)?.name };
+      return { ...x, place_name: n?.name, venue_name: venueName(n?.building_id) };
     }));
+    setAsks((a.data ?? []).map(x => ({ ...x, venue_name: venueName(x.building_id) })));
   }, [businessId]);
   useEffect(() => { void load(); }, [load]);
 
@@ -188,23 +206,37 @@ function Portal({ businessId, businessName, editable, welcome, claimPoi, onClaim
     }
   }, [claimPoi]); // eslint-disable-line react-hooks/exhaustive-deps -- once per link
 
-  const pending = (claims ?? []).filter(c => c.status === 'pending');
-  const decided = (claims ?? []).filter(c => c.status !== 'pending').slice(0, 5);
+  const requests: RequestItem[] = [
+    ...(claims ?? []).map(c => ({ kind: 'claim' as const, id: c.id, status: c.status, at: c.requested_at, place: c.place_name ?? 'A place', venue: c.venue_name, note: c.decision_note })),
+    ...asks.map(a => ({ kind: 'ask' as const, id: a.id, status: a.status, at: a.requested_at, place: a.place_name, venue: a.venue_name, note: a.decision_note })),
+  ].sort((x, y) => (x.status === 'pending' ? 0 : 1) - (y.status === 'pending' ? 0 : 1) || y.at.localeCompare(x.at));
+  const shownRequests = [...requests.filter(r => r.status === 'pending'), ...requests.filter(r => r.status !== 'pending').slice(0, 6)];
+
+  const withdraw = async (r: RequestItem) => {
+    const { error } = r.kind === 'claim'
+      ? await supabase.rpc('withdraw_business_claim', { claim: r.id })
+      : await supabase.rpc('withdraw_business_place_request', { req: r.id });
+    if (error) { fail(error); } else { toast.success('Request withdrawn'); void load(); }
+  };
 
   if (missing) {
-    return <Panel bodyClassName="p-5"><p className="text-sm text-muted-foreground">Run the 20261103090000_business_reviews_verification migration to turn on Yet New Business.</p></Panel>;
+    return <Panel bodyClassName="p-5"><p className="text-sm text-muted-foreground">Run the 20261103090000 and 20261104090000 migrations to turn on Yet New Business.</p></Panel>;
+  } else if (places === null || claims === null) {
+    return <Spinner />;
   } else {
+    const hasPlaces = places.length > 0;
     return (
       <div className="space-y-6">
-        <PageHeader title={welcome ? `Welcome, ${businessName}` : 'Your places'}
-          description="How your business appears on venue maps. Visitors see your changes right away." />
+        <PageHeader title={hasPlaces ? 'Your places' : `Welcome, ${businessName}`}
+          description={hasPlaces ? 'How your business appears on venue maps. Visitors see your changes right away.'
+            : 'Let’s get your business on Yet New — it takes a few minutes, and it’s free.'} />
 
-        <Panel title="Your places" icon={MapPin} bodyClassName="px-2 pb-2">
-          {places === null ? <Spinner /> : places.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-              No places yet. Find yours below and ask to manage it — Yet New checks it's yours, usually within a working day.
-            </p>
-          ) : (
+        <GettingStarted businessId={businessId} places={places} requests={requests} firstVisit={welcome}
+          onFind={() => document.getElementById('find-your-place')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          onEdit={() => setEditing(places[0] ?? null)} onReviews={() => setReviewsOf(places.find(p => Number(p.unanswered) > 0) ?? places[0] ?? null)} />
+
+        {hasPlaces && (
+          <Panel title="Your places" icon={MapPin} bodyClassName="px-2 pb-2">
             <ul className="divide-y">
               {places.map(p => (
                 <li key={p.poi_id} className="flex flex-wrap items-center gap-3 px-3 py-3.5">
@@ -213,51 +245,45 @@ function Portal({ businessId, businessName, editable, welcome, claimPoi, onClaim
                   <span className="min-w-[180px] flex-1">
                     <span className="block font-semibold">{p.place_name}</span>
                     <span className="block text-xs text-muted-foreground">{typeLabel(p.place_type)} · in {p.venue_name}</span>
-                    <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                       {p.reviews ? <><Stars value={Number(p.rating ?? 0)} size={11} /> {ratingText(Number(p.rating ?? 0))} · {reviewsText(Number(p.reviews))}</> : 'No reviews yet'}
                       {Number(p.unanswered) > 0 && <span className="rounded-full bg-amber-400 px-1.5 text-[10px] font-bold text-amber-950">{p.unanswered} to answer</span>}
+                      {!detailsFilled(p) && <span className="rounded-full bg-sky-500/15 px-1.5 text-[10px] font-bold text-sky-800 dark:text-sky-300">Add your details</span>}
                     </span>
                   </span>
                   <span className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="ghost" className="rounded-xl" asChild>
-                      <a href={`/venue/${p.building_id}?poi=${p.poi_id}`} target="_blank" rel="noreferrer"><ExternalLink className="mr-1.5 h-4 w-4" /> See it</a>
-                    </Button>
-                    <Button size="sm" variant="outline" className="rounded-xl" onClick={() => setReviewsOf(p)}><MessageSquare className="mr-1.5 h-4 w-4" /> Reviews</Button>
                     {editable && <Button size="sm" className="rounded-xl" onClick={() => setEditing(p)}><Pencil className="mr-1.5 h-4 w-4" /> Edit details</Button>}
+                    <Button size="sm" variant="outline" className="rounded-xl" onClick={() => setReviewsOf(p)}><MessageSquare className="mr-1.5 h-4 w-4" /> Reviews</Button>
+                    <Button size="sm" variant="ghost" className="rounded-xl" asChild>
+                      <a href={`/venue/${p.building_id}?poi=${p.poi_id}`} target="_blank" rel="noreferrer"><ExternalLink className="mr-1.5 h-4 w-4" /> See it as a visitor</a>
+                    </Button>
                   </span>
                 </li>
               ))}
             </ul>
-          )}
-        </Panel>
+          </Panel>
+        )}
 
-        {editable && <FindPlace onClaim={setClaiming} />}
-
-        {(pending.length > 0 || decided.length > 0) && (
+        {shownRequests.length > 0 && (
           <Panel title="Your requests" icon={ShieldCheck} bodyClassName="px-2 pb-2">
             <ul className="divide-y">
-              {[...pending, ...decided].map(c => (
-                <li key={c.id} className="flex flex-wrap items-center gap-3 px-3 py-3">
-                  <ClaimIcon status={c.status} />
+              {shownRequests.map(r => (
+                <li key={`${r.kind}-${r.id}`} className="flex flex-wrap items-center gap-3 px-3 py-3">
+                  <ClaimIcon status={r.status} />
                   <span className="min-w-[180px] flex-1">
-                    <span className="block text-sm font-semibold">{c.place_name ?? 'A place'}{c.venue_name ? <span className="font-normal text-muted-foreground"> · {c.venue_name}</span> : null}</span>
-                    <span className="block text-xs text-muted-foreground">
-                      {c.status === 'pending' ? `Waiting for Yet New · asked ${sinceText(c.requested_at)}`
-                        : c.status === 'approved' ? 'Approved — it\'s in your places'
-                        : c.status === 'rejected' ? `Declined${c.decision_note ? `: ${c.decision_note}` : ''}` : 'Withdrawn'}
-                    </span>
+                    <span className="block text-sm font-semibold">{r.place}{r.venue ? <span className="font-normal text-muted-foreground"> · {r.venue}</span> : null}</span>
+                    <span className="block text-xs text-muted-foreground">{requestText(r)}</span>
                   </span>
-                  {c.status === 'pending' && editable && (
-                    <Button size="sm" variant="ghost" className="rounded-xl" onClick={async () => {
-                      const { error } = await supabase.rpc('withdraw_business_claim', { claim: c.id });
-                      if (error) { fail(error); } else { toast.success('Request withdrawn'); void load(); }
-                    }}><Undo2 className="mr-1.5 h-4 w-4" /> Withdraw</Button>
+                  {r.status === 'pending' && editable && (
+                    <Button size="sm" variant="ghost" className="rounded-xl" onClick={() => void withdraw(r)}><Undo2 className="mr-1.5 h-4 w-4" /> Withdraw</Button>
                   )}
                 </li>
               ))}
             </ul>
           </Panel>
         )}
+
+        {editable && <FindPlace onClaim={setClaiming} onAsk={(venueId, name) => setAsking({ venueId, name: name || businessName })} hasPlaces={hasPlaces} />}
 
         <p className="px-1 text-xs text-muted-foreground">
           Listing your business is free. Visitors call, message or visit you directly — Yet New takes no bookings and no commission.
@@ -268,66 +294,311 @@ function Portal({ businessId, businessName, editable, welcome, claimPoi, onClaim
         <ReviewsSheet place={reviewsOf} editable={editable} onClose={() => { setReviewsOf(null); void load(); }} />
         <ClaimDialog place={claiming} businessId={businessId} businessName={businessName} onClose={() => setClaiming(null)}
           onSent={() => { setClaiming(null); void load(); }} />
+        <AskVenueDialog ask={asking} businessId={businessId} onClose={() => setAsking(null)} onSent={() => { setAsking(null); void load(); }} />
       </div>
     );
   }
 }
 
+type PlaceAsk = Tables<'business_place_requests'> & { venue_name?: string };
+type RequestItem = { kind: 'claim' | 'ask'; id: string; status: string; at: string; place: string; venue?: string; note: string | null };
+
+function requestText(r: RequestItem): string {
+  if (r.status === 'pending') {
+    return r.kind === 'claim'
+      ? `Yet New is checking it's yours · asked ${sinceText(r.at)}. Usually within a working day.`
+      : `Waiting for ${r.venue ?? 'the venue'} to add it to their map · asked ${sinceText(r.at)}`;
+  } else if (r.status === 'approved' || r.status === 'added') {
+    return 'Confirmed — it’s in your places above';
+  } else if (r.status === 'rejected' || r.status === 'declined') {
+    return `Declined${r.note ? `: ${r.note}` : ''}`;
+  } else {
+    return 'Withdrawn';
+  }
+}
+
+const detailsFilled = (p: MyPlace) => !!(p.profile.phone || p.profile.whatsapp || p.profile.about || (p.profile.amenities ?? []).length);
+
+/** The steps from a new account to a place visitors can call — ticked off as they happen. */
+function GettingStarted({ businessId, places, requests, firstVisit, onFind, onEdit, onReviews }: {
+  businessId: string; places: MyPlace[]; requests: RequestItem[]; firstVisit: boolean; onFind: () => void; onEdit: () => void; onReviews: () => void;
+}) {
+  const key = `yetnew-business-guide-hidden-${businessId}`;
+  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem(key) === '1'; } catch { return false; } });
+  const asked = requests.some(r => r.status === 'pending' || r.status === 'approved' || r.status === 'added');
+  const waitingOn = requests.find(r => r.status === 'pending');
+  const confirmed = places.length > 0;
+  const detailed = places.some(detailsFilled);
+  const unanswered = places.reduce((n, p) => n + Number(p.unanswered), 0);
+  const steps = [
+    { done: asked || confirmed, title: 'Find your place',
+      text: 'Pick the venue you’re in — a park, mall, hotel, museum or campus — and choose your place. Not on their map yet? Ask the venue to add it.',
+      action: !asked && !confirmed ? <Button size="sm" className="rounded-xl" onClick={onFind}><Search className="mr-1.5 h-4 w-4" /> Find my place</Button> : null },
+    { done: confirmed, title: 'We confirm it’s yours',
+      text: waitingOn && !confirmed
+        ? (waitingOn.kind === 'claim' ? 'Yet New is checking your request — usually within a working day. We may call the number you gave.'
+          : `${waitingOn.venue ?? 'The venue'} is adding your place to their map. Once they link it, it’s yours to manage.`)
+        : 'Yet New (or the venue) checks you run it — usually within a working day. You’ll see the answer on this page.',
+      action: null },
+    { done: detailed, title: 'Add your details',
+      text: 'Phone, WhatsApp, opening info, prices and what you offer (Wi-Fi, telebirr, fasting food…). Visitors see changes right away.',
+      action: confirmed && !detailed ? <Button size="sm" className="rounded-xl" onClick={onEdit}><Pencil className="mr-1.5 h-4 w-4" /> Add details</Button> : null },
+    { done: confirmed && detailed && unanswered === 0, title: 'Answer visitor reviews',
+      text: 'Thank people and reply to feedback. Replies are public and signed with your business’s name.',
+      action: unanswered > 0 ? <Button size="sm" variant="outline" className="rounded-xl" onClick={onReviews}><MessageSquare className="mr-1.5 h-4 w-4" /> {unanswered} to answer</Button> : null },
+  ];
+  const doneCount = steps.filter(s => s.done).length;
+  const next = steps.findIndex(s => !s.done);
+  const hide = () => { try { localStorage.setItem(key, '1'); } catch { /* private mode */ } setHidden(true); };
+
+  if ((hidden && !firstVisit && confirmed) || doneCount === steps.length) {
+    return null;
+  } else {
+    return (
+      <section className="overflow-hidden rounded-3xl border bg-card shadow-sm" aria-label="Getting started">
+        <div className="flex flex-wrap items-center gap-3 border-b bg-primary/5 px-5 py-4">
+          <span className="grid h-10 w-10 place-items-center rounded-2xl bg-primary text-primary-foreground"><Sparkles className="h-5 w-5" /></span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-semibold">Getting started</span>
+            <span className="block text-xs text-muted-foreground">{doneCount} of {steps.length} done · visitors can find and contact you after step 3</span>
+          </span>
+          <div className="h-1.5 w-28 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary transition-all" style={{ width: `${(doneCount / steps.length) * 100}%` }} /></div>
+          {confirmed && <Button variant="ghost" size="sm" className="rounded-xl text-xs" onClick={hide}>Hide</Button>}
+        </div>
+        <ol className="divide-y">
+          {steps.map((s, i) => (
+            <li key={s.title} className={cn('flex gap-3 px-5 py-3.5', i === next ? 'bg-background' : '')}>
+              <span className={cn('mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold',
+                s.done ? 'bg-emerald-500 text-white' : i === next ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
+                {s.done ? <Check className="h-4 w-4" /> : i + 1}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className={cn('block text-sm font-semibold', s.done && 'text-muted-foreground line-through decoration-muted-foreground/40')}>{s.title}</span>
+                {!s.done && <span className="mt-0.5 block text-xs text-muted-foreground">{s.text}</span>}
+                {i === next && s.action && <span className="mt-2 block">{s.action}</span>}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </section>
+    );
+  }
+}
+
 function ClaimIcon({ status }: { status: string }) {
-  const [Icon, cls] = status === 'pending' ? [Clock, 'bg-sky-500/10 text-sky-700'] : status === 'approved' ? [Check, 'bg-emerald-500/10 text-emerald-700']
+  const [Icon, cls] = status === 'pending' ? [Clock, 'bg-sky-500/10 text-sky-700'] : status === 'approved' || status === 'added' ? [Check, 'bg-emerald-500/10 text-emerald-700']
     : [X, 'bg-muted text-muted-foreground'];
   return <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl', cls)}><Icon className="h-4 w-4" /></span>;
 }
 
 const Spinner = () => <div className="flex justify-center p-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
 
-function FindPlace({ onClaim }: { onClaim: (f: Found) => void }) {
+type Venue = { building_id: string; venue_name: string; places: number; unclaimed: number };
+
+/** Pick the venue you're in and your place in it — or search by name. Not there? Ask the venue to add it. */
+function FindPlace({ onClaim, onAsk, hasPlaces }: { onClaim: (f: Found) => void; onAsk: (venueId: string | null, name: string) => void; hasPlaces: boolean }) {
   const [q, setQ] = useState('');
+  const [venue, setVenue] = useState<Venue | null>(null);
+  const [venues, setVenues] = useState<Venue[] | null>(null);
   const [found, setFound] = useState<Found[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const term = q.trim();
+
   useEffect(() => {
-    const term = q.trim();
-    if (term.length >= 2) {
+    void (async () => {
+      const { data, error } = await supabase.rpc('business_venues', { q: '' });
+      if (error) { fail(error); } else { setVenues((data ?? []).map(v => ({ ...v, places: Number(v.places), unclaimed: Number(v.unclaimed) }))); }
+    })();
+  }, []);
+  useEffect(() => {
+    if (venue || term.length >= 2) {
       setBusy(true);
       const t = setTimeout(async () => {
-        const { data, error } = await supabase.rpc('business_claimable_places', { q: term });
+        const { data, error } = await supabase.rpc('business_find_places', { q: term, venue: venue?.building_id ?? null });
         setBusy(false);
         if (error) { fail(error); } else { setFound((data ?? []) as Found[]); }
-      }, 300);
+      }, venue ? 0 : 300);
       return () => clearTimeout(t);
     } else {
       setFound(null);
+      setBusy(false);
       return undefined;
     }
-  }, [q]);
+  }, [term, venue]);
+
+  const venueMatches = (venues ?? []).filter(v => !term || v.venue_name.toLowerCase().includes(term.toLowerCase()));
   return (
-    <Panel title="Find your place" icon={Search} bodyClassName="px-5 pb-5">
-      <p className="mb-3 text-sm text-muted-foreground">Search by your business's name or the venue it's in — a park, museum, mall or campus on Yet New.</p>
-      <label className="flex h-10 items-center gap-2 rounded-xl border bg-card px-3 focus-within:ring-2 focus-within:ring-ring">
-        <Search className="h-4 w-4 text-muted-foreground" />
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="e.g. Garden Café, Unity Park" className="min-w-0 flex-1 bg-transparent text-sm outline-none" aria-label="Search places" />
-        {busy && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-      </label>
-      {found && (
-        found.length === 0 ? (
-          <p className="mt-3 text-sm text-muted-foreground">Nothing found. If your place isn't on the map yet, ask the venue's team to add it — then claim it here.</p>
-        ) : (
-          <ul className="mt-3 divide-y rounded-2xl border">
-            {found.map(f => (
-              <li key={f.poi_id} className="flex items-center gap-3 px-3 py-2.5">
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold">{f.place_name}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{typeLabel(f.place_type)} · {f.venue_name}</span>
-                </span>
-                {f.claimed
-                  ? <span className="text-xs text-muted-foreground">Already managed</span>
-                  : <Button size="sm" className="rounded-xl" onClick={() => onClaim(f)}>This is mine</Button>}
-              </li>
-            ))}
-          </ul>
-        )
-      )}
-    </Panel>
+    <section id="find-your-place" className="scroll-mt-20">
+      <Panel title={hasPlaces ? 'Add another place' : 'Find your place'} icon={Search} bodyClassName="px-5 pb-5">
+        <p className="mb-3 text-sm text-muted-foreground">
+          {venue ? <>Places in <b className="text-foreground">{venue.venue_name}</b>. Choose yours.</>
+            : 'Choose the venue your business is in, or search for your place by name.'}
+        </p>
+        <div className="flex gap-2">
+          {venue && (
+            <button onClick={() => { setVenue(null); setQ(''); }} className="flex h-10 shrink-0 items-center gap-1 rounded-xl border bg-muted/50 px-3 text-sm font-medium hover:bg-muted" aria-label="Choose another venue">
+              <ArrowLeft className="h-4 w-4" /> Venues
+            </button>
+          )}
+          <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl border bg-card px-3 focus-within:ring-2 focus-within:ring-ring">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder={venue ? `Search in ${venue.venue_name}` : 'Your place or the venue, e.g. Garden Café, Unity Park'}
+              className="min-w-0 flex-1 bg-transparent text-sm outline-none" aria-label="Search places" />
+            {busy && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+          </label>
+        </div>
+
+        {/* Your place's results (a venue picked, or a name searched) */}
+        {found && (
+          found.length === 0 ? (
+            <p className="mt-3 rounded-2xl bg-muted/50 p-3 text-sm text-muted-foreground">
+              {venue ? `${venue.venue_name} has no café, restaurant, hotel or shop${term ? ` called “${term}”` : ''} on its map yet.` : `No place called “${term}” yet.`}
+            </p>
+          ) : (
+            <ul className="mt-3 divide-y rounded-2xl border">
+              {found.map(f => (
+                <li key={f.poi_id} className="flex items-center gap-3 px-3 py-2.5">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><Store className="h-4 w-4" /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold">{f.place_name}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{typeLabel(f.place_type)} · {f.venue_name}</span>
+                  </span>
+                  {f.claimed
+                    ? <span className="text-xs text-muted-foreground">Managed by a business</span>
+                    : <Button size="sm" className="rounded-xl" onClick={() => onClaim(f)}>This is mine</Button>}
+                </li>
+              ))}
+            </ul>
+          )
+        )}
+
+        {/* Venues to pick from (nothing picked yet) */}
+        {!venue && (
+          <div className="mt-4">
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">{term ? 'Venues' : 'Venues on Yet New'}</p>
+            {venues === null ? <Spinner /> : venueMatches.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No venue matches “{term}”. Your venue may not be on Yet New yet — tell them about it!</p>
+            ) : (
+              <ul className="grid gap-2 sm:grid-cols-2">
+                {venueMatches.slice(0, 12).map(v => (
+                  <li key={v.building_id}>
+                    <button onClick={() => { setVenue(v); setQ(''); }} className="flex w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left hover:bg-muted/60">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-muted"><Building2 className="h-4 w-4 text-muted-foreground" /></span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold">{v.venue_name}</span>
+                        <span className="block text-xs text-muted-foreground">{v.places ? `${v.places} business ${v.places === 1 ? 'place' : 'places'}` : 'No businesses listed yet'}</span>
+                      </span>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {/* Not there? */}
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-dashed p-3">
+          <span className="min-w-[200px] flex-1 text-sm">
+            <span className="block font-semibold">Can’t find your place?</span>
+            <span className="block text-xs text-muted-foreground">
+              {venue ? `Ask ${venue.venue_name} to add it to their map. They add it, and it becomes yours to manage.`
+                : 'Ask the venue you’re in to add it to their map. They add it, and it becomes yours to manage.'}
+            </span>
+          </span>
+          <Button size="sm" variant="outline" className="rounded-xl" onClick={() => onAsk(venue?.building_id ?? null, term)}>
+            <Plus className="mr-1.5 h-4 w-4" /> {venue ? `Ask ${venue.venue_name}` : 'Ask a venue to add it'}
+          </Button>
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
+const ASK_TYPES = ['cafe', 'restaurant', 'hotel', 'shop', 'custom'] as const;
+
+function AskVenueDialog({ ask, businessId, onClose, onSent }: {
+  ask: { venueId: string | null; name: string } | null; businessId: string; onClose: () => void; onSent: () => void;
+}) {
+  const [venues, setVenues] = useState<{ id: string; name: string }[]>([]);
+  const [f, setF] = useState({ venue: '', name: '', type: 'cafe' as string, where: '', phone: '', note: '' });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (ask) {
+      setF({ venue: ask.venueId ?? '', name: ask.name, type: 'cafe', where: '', phone: '', note: '' });
+      void (async () => {
+        const { data } = await supabase.rpc('business_venues', { q: '' });
+        setVenues((data ?? []).map(v => ({ id: v.building_id, name: v.venue_name })).sort((a, z) => a.name.localeCompare(z.name)));
+      })();
+    } else {
+      // closed
+    }
+  }, [ask]);
+  const venueName = venues.find(v => v.id === f.venue)?.name ?? 'the venue';
+  const ready = !!f.venue && f.name.trim().length >= 2 && f.where.trim().length >= 3;
+  const send = async (e: FormEvent) => {
+    e.preventDefault();
+    if (ready) {
+      setBusy(true);
+      const { error } = await supabase.rpc('request_business_place', {
+        business: businessId, venue: f.venue, place_name: f.name.trim(), place_type: f.type, where_note: f.where.trim(),
+        phone: f.phone.trim() || null, note: f.note.trim() || null,
+      });
+      setBusy(false);
+      if (error) { fail(error); } else { toast.success(`Sent to ${venueName}. When they add your place, it appears under “Your places”.`); onSent(); }
+    } else {
+      toast.error('Choose the venue, and say your place’s name and where it is.');
+    }
+  };
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF(x => ({ ...x, [k]: e.target.value }));
+  return (
+    <Dialog open={!!ask} onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
+        <form onSubmit={send}>
+          <DialogHeader>
+            <DialogTitle>Ask a venue to add your place</DialogTitle>
+            <DialogDescription>The venue’s team puts your place on their map and links it to your account — then you manage its details here.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-4">
+            <label className="block space-y-1">
+              <span className="text-xs font-semibold">The venue you’re in</span>
+              <select value={f.venue} onChange={set('venue')} className="h-10 w-full rounded-xl border bg-card px-3 text-sm" aria-label="Venue">
+                <option value="">Choose…</option>
+                {venues.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </label>
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <label className="block space-y-1">
+                <span className="text-xs font-semibold">Your place’s name</span>
+                <Input maxLength={120} value={f.name} onChange={set('name')} placeholder="Garden Café" />
+              </label>
+              <label className="block space-y-1">
+                <span className="block text-xs font-semibold">Type</span>
+                <select value={f.type} onChange={set('type')} className="h-10 rounded-xl border bg-card px-3 text-sm" aria-label="Type">
+                  {ASK_TYPES.map(t => <option key={t} value={t}>{t === 'custom' ? 'Other' : typeLabel(t)}</option>)}
+                </select>
+              </label>
+            </div>
+            <label className="block space-y-1">
+              <span className="text-xs font-semibold">Where is it in the venue?</span>
+              <Input maxLength={500} value={f.where} onChange={set('where')} placeholder="Ground floor, next to the north gate" />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-xs font-semibold">A phone number the venue can call (optional)</span>
+              <Input maxLength={40} value={f.phone} onChange={set('phone')} placeholder="0911 22 33 44" />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-xs font-semibold">Anything else (optional)</span>
+              <Textarea rows={2} maxLength={1000} value={f.note} onChange={set('note')} placeholder="e.g. We opened in September; unit 12." />
+            </label>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={busy || !ready}>{busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />} Send to {f.venue ? venueName : 'the venue'}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -344,7 +615,7 @@ function ClaimDialog({ place, businessId, businessName, onClose, onSent }: {
       setBusy(true);
       const { error } = await supabase.rpc('request_business_claim', { poi: place.poi_id, business: businessId, evidence: evidence.trim(), phone: phone.trim() || null });
       setBusy(false);
-      if (error) { fail(error); } else { toast.success('Sent — Yet New will check and let you know here.'); onSent(); }
+      if (error) { fail(error); } else { toast.success('Sent! Yet New will check it’s yours — you’ll see the answer on this page.'); onSent(); }
     } else {
       onClose();
     }
@@ -355,7 +626,10 @@ function ClaimDialog({ place, businessId, businessName, onClose, onSent }: {
         <form onSubmit={send}>
           <DialogHeader>
             <DialogTitle>Manage {place?.place_name}</DialogTitle>
-            <DialogDescription>{place ? `${typeLabel(place.place_type)} in ${place.venue_name}. ` : ''}Yet New checks that {businessName} runs it before you can edit it.</DialogDescription>
+            <DialogDescription>
+              {place ? `${typeLabel(place.place_type)} in ${place.venue_name}. ` : ''}Yet New checks that {businessName} runs it — usually within a working day,
+              sometimes with a quick call. Then you can add your phone, prices and what you offer.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-4">
             <label className="block space-y-1">

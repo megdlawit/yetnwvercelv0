@@ -7,13 +7,16 @@ import ContentManager from '@/components/venue/dashboard/ContentManager';
 import QrCodes from '@/components/venue/dashboard/QrCodes';
 import { ATTRACTION_TYPES } from '@/lib/venue/health';
 import { PLACE_TYPE_LIST } from '@/lib/venue/places';
-import { PageHeader } from './ui';
+import { Store } from 'lucide-react';
+import { PlaceRequestRow, usePlaceRequests } from '@/components/business/PlaceRequests';
+import { PageHeader, Panel } from './ui';
 
 export function PlacesPage() {
   const { data, places, reload } = useDashboard();
   return (
     <>
       <PageHeader title="Places" description="Every place visitors can find — restaurants, restrooms, entrances, parking, attractions. Named places on your map appear here automatically; add photos, hours and accessibility to help visitors." />
+      <BusinessRequests venueId={data.building.id} />
       <PlacesManager data={data} places={places} onChanged={reload} newType="cafe" types={PLACE_TYPE_LIST} />
     </>
   );
@@ -57,4 +60,25 @@ export function QrPage() {
       <QrCodes data={data} places={places} />
     </>
   );
+}
+
+/** Businesses asking to be added to this venue's map (Yet New Business). Shown only when there are some. */
+function BusinessRequests({ venueId }: { venueId: string }) {
+  const { canEdit, reload: reloadVenue } = useDashboard();
+  const { rows, reload } = usePlaceRequests(venueId);
+  const waiting = (rows ?? []).filter(r => r.status === 'pending');
+  if (!rows || rows.length === 0) {
+    return null;
+  } else {
+    return (
+      <Panel className="mb-6" title={waiting.length ? `Businesses asking to be on your map · ${waiting.length}` : 'Businesses on your map'} icon={Store} bodyClassName="pb-1">
+        <p className="px-5 pb-2 text-xs text-muted-foreground">
+          Add the place in the editor, set its type (café, restaurant, hotel, shop), then link it here. The business then keeps its phone, prices and photos up to date — you keep its name and spot on the map.
+        </p>
+        <ul className="divide-y border-t">
+          {rows.map(r => <PlaceRequestRow key={r.id} r={r} canAnswer={canEdit} onDone={() => { void reload(); void reloadVenue(); }} />)}
+        </ul>
+      </Panel>
+    );
+  }
 }
